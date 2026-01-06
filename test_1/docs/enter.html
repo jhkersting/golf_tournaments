@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Enter Scores</title>
+</head>
+<body>
+<header>
+  <div class="nav">
+    <div class="brand"><span class="dot"></span> Golf Tournament</div>
+    <div class="actions">
+      <a href="./index.html">Home</a>
+      <a href="./admin.html">Create Tournament</a>
+      <a href="./scoreboard.html">Scoreboard</a>
+    </div>
+  </div>
+</header>
+<div class="container">
+  
+<div class="card">
+  <h1 style="margin:0 0 6px 0;">Enter Scores</h1>
+  <div class="small">
+    Open with your code: <code>enter.html?code=XXXX</code>. Inputs default to <b>4</b>.<br/>
+    If handicaps are enabled for a player-based round, you’ll see per-hole strokes and net totals.
+  </div>
+</div>
+
+<div class="card" id="who" style="display:none;"></div>
+<div id="round_forms"></div>
+
+<script type="module" src="enter.js"></script>
+
+</div>
+</body>
+</html>

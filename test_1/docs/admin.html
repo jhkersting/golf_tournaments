@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Create Tournament</title>
+</head>
+<body>
+<header>
+  <div class="nav">
+    <div class="brand"><span class="dot"></span> Golf Tournament</div>
+    <div class="actions">
+      <a href="./index.html">Home</a>
+      <a href="./admin.html">Create Tournament</a>
+      <a href="./scoreboard.html">Scoreboard</a>
+    </div>
+  </div>
+</header>
+<div class="container">
+  
+<div class="card">
+  <h1 style="margin:0 0 6px 0;">Create Tournament</h1>
+  <div class="small">
+    Define rounds + weights, choose team aggregation for player-based rounds, and define the course (Par + Stroke Index).<br/>
+    Pars default to <b>4</b>. Stroke Index defaults to 1–18.
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Tournament details</h2>
+  <div class="row">
+    <div class="col">
+      <label for="t_name">Tournament name</label>
+      <input id="t_name" placeholder="Annual Golf Trip 2026" />
+    </div>
+    <div class="col">
+      <label for="t_dates">Dates (free text)</label>
+      <input id="t_dates" placeholder="Mar 14–15, 2026" />
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="actions" style="justify-content:space-between;">
+    <h2 style="margin:0;">Rounds</h2>
+    <button class="secondary" id="add_round">+ Add round</button>
+  </div>
+  <div id="rounds"></div>
+  <div class="small">
+    Team aggregation applies to non-scramble rounds when producing the <b>team</b> leaderboard.
+    Individuals always show each player's own (weighted) total for that view.
+  </div>
+</div>
+
+<div class="card">
+  <div class="actions" style="justify-content:space-between; align-items:flex-end;">
+    <div>
+      <h2 style="margin:0;">Course Setup (18 holes)</h2>
+      <div class="small">Stroke Index is a permutation of 1–18 (1 hardest … 18 easiest).</div>
+    </div>
+    <div class="actions">
+      <button class="secondary" id="par4">Set all Pars=4</button>
+      <button class="secondary" id="siReset">Reset Stroke Index 1–18</button>
+    </div>
+  </div>
+
+  <div class="scoregrid" style="margin-top:12px;">
+    <table class="table" id="course_tbl">
+      <thead>
+        <tr>
+          <th class="left">Hole</th>
+          <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th>
+          <th>10</th><th>11</th><th>12</th><th>13</th><th>14</th><th>15</th><th>16</th><th>17</th><th>18</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr id="par_row"><td class="left"><b>Par</b></td></tr>
+        <tr id="si_row"><td class="left"><b>Stroke Index</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="actions">
+    <button id="create_tournament">Create Tournament</button>
+    <span id="create_status" class="small"></span>
+  </div>
+
+  <div id="created_box" style="display:none; margin-top:12px;">
+    <hr/>
+    <div class="row">
+      <div class="col">
+        <div class="pill">Tournament ID: <span id="tid"></span></div>
+        <div class="small" style="margin-top:10px;">Public scoreboard link:</div>
+        <pre id="scoreboard_link" style="white-space:pre-wrap;"></pre>
+      </div>
+      <div class="col">
+        <h3 style="margin-top:0;">Import players CSV</h3>
+        <label for="csv">CSV text (Name,Team,Handicap)</label>
+        <textarea id="csv" placeholder="Paste CSV here..."></textarea>
+        <div class="actions" style="margin-top:10px;">
+          <button class="secondary" id="import_players">Import + Generate Codes CSV</button>
+          <span id="import_status" class="small"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="admin.js"></script>
+
+</div>
+</body>
+</html>
