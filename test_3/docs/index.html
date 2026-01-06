@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Home</title>
+</head>
+<body>
+<header>
+  <div class="nav">
+    <div class="brand"><span class="dot"></span> Golf Tournament</div>
+    <div class="actions">
+      <a href="./index.html">Home</a>
+      <a href="./admin.html">Create Tournament</a>
+      <a href="./scoreboard.html">Scoreboard</a>
+    </div>
+  </div>
+</header>
+<div class="container">
+  
+<div class="card">
+  <h1 style="margin:0 0 6px 0;">Golf Tournament (GitHub Pages + AWS)</h1>
+  <div class="small">
+    Static frontend. Set API URL in <b>docs/app.js</b> (API_BASE). Admin actions may require <code>x-admin-key</code>.
+  </div>
+</div>
+
+<div class="row">
+  <div class="col card">
+    <h2 style="margin-top:0;">1) Create tournament</h2>
+    <div class="small">Add rounds, weights, course Par + Stroke Index, and choose team aggregation (sum/avg, top X).</div>
+    <div class="actions" style="margin-top:10px;"><a href="./admin.html"><button>Create Tournament</button></a></div>
+  </div>
+  <div class="col card">
+    <h2 style="margin-top:0;">2) Enter scores</h2>
+    <div class="small">Players use their unique URL: <code>enter.html?code=XXXX</code>. Hole-by-hole inputs default to 4.</div>
+    <div class="actions" style="margin-top:10px;"><a href="./enter.html"><button class="secondary">Open Enter Page</button></a></div>
+  </div>
+  <div class="col card">
+    <h2 style="margin-top:0;">3) Scoreboard</h2>
+    <div class="small">Public URL: <code>scoreboard.html?t=TOURNAMENT_ID</code>. Filter by round and toggle Team/Individual (if applicable).</div>
+    <div class="actions" style="margin-top:10px;"><a href="./scoreboard.html"><button class="secondary">Open Scoreboard</button></a></div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

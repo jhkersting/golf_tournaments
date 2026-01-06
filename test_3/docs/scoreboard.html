@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Scoreboard</title>
+</head>
+<body>
+<header>
+  <div class="nav">
+    <div class="brand"><span class="dot"></span> Golf Tournament</div>
+    <div class="actions">
+      <a href="./index.html">Home</a>
+      <a href="./admin.html">Create Tournament</a>
+      <a href="./scoreboard.html">Scoreboard</a>
+    </div>
+  </div>
+</header>
+<div class="container">
+  
+<div class="card">
+  <h1 style="margin:0 0 6px 0;">Scoreboard</h1>
+  <div class="small">
+    Open with <code>?t=TOURNAMENT_ID</code>. Filter by round and toggle Team/Individual (if applicable).
+    Hole-by-hole scorecard (with handicap dots) appears when you click a row (round view only).
+  </div>
+</div>
+
+<div class="card">
+  <div class="row" style="align-items:flex-end;">
+    <div class="col">
+      <label for="round_filter">View</label>
+      <select id="round_filter"></select>
+      <div class="small">Full Tournament uses totals only; select a specific round to view hole-by-hole scorecards.</div>
+    </div>
+    <div class="col">
+      <label>Leaderboard</label>
+      <div class="toggle" id="lb_toggle">
+        <button id="btn_team" class="active">Team</button>
+        <button id="btn_player">Individual</button>
+      </div>
+      <div class="small" id="toggle_note"></div>
+    </div>
+    <div class="col" style="min-width:220px;">
+      <div class="pill" id="updated">—</div>
+      <div class="small" id="status" style="margin-top:6px;"></div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col card">
+    <h2 style="margin-top:0;" id="lb_title">Teams</h2>
+    <table class="table" id="lb_tbl">
+      <thead><tr id="lb_head"></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="small" style="margin-top:10px;">Click a row to show a hole-by-hole scorecard below (round view only).</div>
+  </div>
+</div>
+
+<div class="card" id="scorecard_card" style="display:none;">
+  <h2 style="margin-top:0;" id="sc_title">Scorecard</h2>
+  <div class="small" id="sc_sub"></div>
+  <div class="scoregrid" style="margin-top:12px;" id="sc_grid"></div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Debug (raw JSON)</h3>
+  <pre id="raw" style="white-space:pre-wrap;"></pre>
+</div>
+
+<script type="module" src="scoreboard.js"></script>
+
+</div>
+</body>
+</html>
