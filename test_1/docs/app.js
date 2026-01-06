@@ -1,6 +1,6 @@
 // --------- CONFIG ---------
 export const API_BASE = "https://7pe1ewlr9g.execute-api.us-east-1.amazonaws.com/prod";
-export const ADMIN_KEY = "ADMIN_RTR"; // optional if backend checks x-admin-key
+export const ADMIN_KEY = "CHANGE_ME_ADMIN_KEY"; // optional if backend checks x-admin-key
 
 export async function api(path, { method="GET", body=null, headers={} } = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
