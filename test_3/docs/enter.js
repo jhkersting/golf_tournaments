@@ -193,6 +193,7 @@ async function main() {
   // Tournament public JSON (single file)
   const tjson = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, { cacheKey: `t:${tid}` });
 
+  $('body').show();
   who.style.display = "";
   who.className = "card";
   who.innerHTML = `

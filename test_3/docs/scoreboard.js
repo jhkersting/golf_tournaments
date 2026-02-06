@@ -297,16 +297,19 @@ function buildScorecardTable(scores, useHandicap) {
   }
 
   function addDataRow(label, arr, start, end) {
+    const played = sectionPlayedCount(arr, start, end);
+    const totalCell = played ? String(segmentTotal(arr, start, end)) : "";
+    const toParCell = played ? toParStrFromDiff(segmentToPar(arr, par, start, end)) : "";
     const tr = document.createElement("tr");
     tr.innerHTML =
       `<td class="left"><b>${label}</b></td>` +
       Array.from({ length: end - start + 1 }, (_, k) => {
         const i = start + k;
         const v = arr[i];
-        return `<td class="mono">${v == null ? "" : String(v)}</td>`;
+        return `<td class="mono">${isPlayedScore(v) ? String(v) : ""}</td>`;
       }).join("") +
-      `<td class="mono"><b>${segmentTotal(arr, start, end)}</b></td>` +
-      `<td class="mono"><b>${toParStrFromDiff(segmentToPar(arr, par, start, end))}</b></td>`;
+      `<td class="mono"><b>${totalCell}</b></td>` +
+      `<td class="mono"><b>${toParCell}</b></td>`;
     tbody.appendChild(tr);
   }
 
@@ -404,7 +407,7 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
         Array.from({ length: end - start + 1 }, (_, k) => {
           const i = start + k;
           const v = holes[i];
-          return `<td class="mono">${v == null ? "" : String(v)}</td>`;
+          return `<td class="mono">${isPlayedScore(v) ? String(v) : ""}</td>`;
         }).join("") +
         `<td class="mono"><b>${played ? segmentTotal(holes, start, end) : ""}</b></td>` +
         `<td class="mono"><b>${played ? toParStrFromDiff(segmentToPar(holes, par, start, end)) : ""}</b></td>`;
@@ -785,6 +788,7 @@ roundFilter.onchange = () => {
   try {
     TOURN = await loadTournament();
     rememberTournamentId(tid);
+    $('body').show();
 
     roundFilter.innerHTML = `<option value="all">All rounds (weighted)</option>`;
     (TOURN.tournament.rounds || []).forEach((r, idx) => {

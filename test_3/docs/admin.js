@@ -1,5 +1,5 @@
 import { api, downloadText, baseUrlForGithubPages, rememberTournamentId, sum } from "./app.js";
-
+$('body').show();
 const roundsEl = document.getElementById("rounds");
 const addRoundBtn = document.getElementById("add_round");
 const createBtn = document.getElementById("create_tournament");

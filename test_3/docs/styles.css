@@ -79,10 +79,7 @@ body {
   background-image: none;
   line-height: 1.45;
   font-size: 15px;
-}
-
-body.app-loading {
-  visibility: hidden;
+  display: none;
 }
 
 a {
