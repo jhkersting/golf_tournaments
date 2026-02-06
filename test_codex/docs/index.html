@@ -3,8 +3,6 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <script src="theme.js" defer></script>
-  <script src="nav.js" defer></script>
   <link rel="stylesheet" href="styles.css" />
   <title>Home</title>
 </head>
@@ -12,12 +10,10 @@
 <header>
   <div class="nav">
     <div class="brand"><span class="dot"></span> Golf Tournament</div>
-    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
     <div class="actions">
       <a href="./index.html">Home</a>
-      <a href="./enter.html">Enter Scores</a>
-      <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
-      <button type="button" class="theme-toggle" data-theme-toggle></button>
+      <a href="./admin.html">Create Tournament</a>
+      <a href="./scoreboard.html">Scoreboard</a>
     </div>
   </div>
 </header>
@@ -44,7 +40,7 @@
   <div class="col card">
     <h2 style="margin-top:0;">3) Scoreboard</h2>
     <div class="small">Public URL: <code>scoreboard.html?t=TOURNAMENT_ID</code>. Filter by round and toggle Team/Individual (if applicable).</div>
-    <div class="actions" style="margin-top:10px;"><a href="./scoreboard.html" data-scoreboard-link><button class="secondary">Open Scoreboard</button></a></div>
+    <div class="actions" style="margin-top:10px;"><a href="./scoreboard.html"><button class="secondary">Open Scoreboard</button></a></div>
   </div>
 </div>
 

@@ -3,10 +3,6 @@ export const API_BASE = "https://1rmb4h6ty8.execute-api.us-east-1.amazonaws.com/
 export const STATIC_BASE = "https://golf-public.s3.us-east-1.amazonaws.com";
 
 export const ADMIN_KEY = "ADMIN_RTR"; // optional if backend checks x-admin-key
-export const STORAGE_KEYS = {
-  tournamentId: "golf:lastTournamentId",
-  playerCode: "golf:lastPlayerCode",
-};
 
 export async function api(path, { method="GET", body=null, headers={} } = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -76,40 +72,6 @@ export async function staticJson(path, { cacheKey=null } = {}){
 
 export function qs(name){ return new URLSearchParams(location.search).get(name); }
 export function sum(arr){ return arr.reduce((a,b)=>a+b,0); }
-
-function safeGetStorage(key){
-  try{
-    return localStorage.getItem(key);
-  }catch(_){
-    return null;
-  }
-}
-
-function safeSetStorage(key, value){
-  try{
-    localStorage.setItem(key, value);
-  }catch(_){}
-}
-
-export function rememberTournamentId(tournamentId){
-  const tid = String(tournamentId || "").trim();
-  if (!tid) return;
-  safeSetStorage(STORAGE_KEYS.tournamentId, tid);
-}
-
-export function getRememberedTournamentId(){
-  return String(safeGetStorage(STORAGE_KEYS.tournamentId) || "").trim();
-}
-
-export function rememberPlayerCode(playerCode){
-  const code = String(playerCode || "").trim();
-  if (!code) return;
-  safeSetStorage(STORAGE_KEYS.playerCode, code);
-}
-
-export function getRememberedPlayerCode(){
-  return String(safeGetStorage(STORAGE_KEYS.playerCode) || "").trim();
-}
 
 export function downloadText(filename, text){
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });

@@ -1,4 +1,4 @@
-import { api, downloadText, baseUrlForGithubPages, rememberTournamentId, sum } from "./app.js";
+import { api, downloadText, baseUrlForGithubPages, sum } from "./app.js";
 
 const roundsEl = document.getElementById("rounds");
 const addRoundBtn = document.getElementById("add_round");
@@ -199,7 +199,6 @@ createBtn.onclick = async () => {
     createStatus.textContent = "Creating…";
     const out = await api("/tournaments", { method:"POST", body:{ name, dates, rounds, course:{ pars, strokeIndex: si } } });
     const tid = out.tournamentId;
-    rememberTournamentId(tid);
     tidEl.textContent = tid;
 
     const base = baseUrlForGithubPages();

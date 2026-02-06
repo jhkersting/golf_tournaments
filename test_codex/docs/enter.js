@@ -1,14 +1,6 @@
-import {
-  api,
-  staticJson,
-  qs,
-  getRememberedPlayerCode,
-  rememberPlayerCode,
-  rememberTournamentId
-} from "./app.js";
+import { api, staticJson, qs } from "./app.js";
 
-const codeFromQuery = qs("code");
-let code = (codeFromQuery || getRememberedPlayerCode() || "").trim();
+const code = qs("code");
 const who = document.getElementById("who");
 const forms = document.getElementById("round_forms");
 
@@ -104,80 +96,9 @@ function holeLabel(i) {
   return `Hole ${i + 1}`;
 }
 
-function hasAnyScore(arr) {
-  if (!Array.isArray(arr)) return false;
-  for (const v of arr) {
-    if (v != null && Number(v) > 0) return true;
-  }
-  return false;
-}
-
-function rowHasAnyData(row) {
-  if (!row) return false;
-  if (Number(row.thru || 0) > 0) return true;
-  if (Number(row.strokes || 0) > 0) return true;
-  if (Number(row.gross || 0) > 0) return true;
-  if (Number(row.net || 0) > 0) return true;
-  if (Number(row.grossTotal || 0) > 0) return true;
-  if (Number(row.netTotal || 0) > 0) return true;
-  if (hasAnyScore(row.scores?.gross)) return true;
-  if (hasAnyScore(row.scores?.net)) return true;
-  return false;
-}
-
-function leaderboardHasAnyData(leaderboard) {
-  const teams = leaderboard?.teams || [];
-  for (const row of teams) {
-    if (rowHasAnyData(row)) return true;
-  }
-  const players = leaderboard?.players || [];
-  for (const row of players) {
-    if (rowHasAnyData(row)) return true;
-  }
-  return false;
-}
-
-function roundHasAnyData(roundData) {
-  if (!roundData) return false;
-  if (leaderboardHasAnyData(roundData.leaderboard)) return true;
-
-  const teamEntries = Object.values(roundData.team || {});
-  for (const t of teamEntries) {
-    if (hasAnyScore(t?.gross) || hasAnyScore(t?.net)) return true;
-  }
-
-  const playerEntries = Object.values(roundData.player || {});
-  for (const p of playerEntries) {
-    if (hasAnyScore(p?.gross) || hasAnyScore(p?.net)) return true;
-  }
-  return false;
-}
-
 async function main() {
   if (!code) {
-    forms.innerHTML = `
-      <div class="card">
-        <h3 style="margin:0 0 8px 0;">Enter your player code</h3>
-        <div class="small" style="margin-bottom:10px;">Use your code from the player import file.</div>
-        <label for="player_code_input">Player code</label>
-        <input id="player_code_input" placeholder="XXXX" autocomplete="one-time-code" />
-        <div class="actions" style="margin-top:10px;">
-          <button id="player_code_go">Continue</button>
-        </div>
-      </div>
-    `;
-    const input = document.getElementById("player_code_input");
-    const go = document.getElementById("player_code_go");
-    const onContinue = () => {
-      const nextCode = (input?.value || "").trim();
-      if (!nextCode) return;
-      rememberPlayerCode(nextCode);
-      location.search = `?code=${encodeURIComponent(nextCode)}`;
-    };
-    input?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") onContinue();
-    });
-    go?.addEventListener("click", onContinue);
+    forms.innerHTML = `<div class="card"><b>Missing code.</b> Open as <code>enter.html?code=XXXX</code></div>`;
     return;
   }
 
@@ -187,8 +108,6 @@ async function main() {
     forms.innerHTML = `<div class="card"><b>Invalid code.</b></div>`;
     return;
   }
-  rememberPlayerCode(code);
-  rememberTournamentId(tid);
 
   // Tournament public JSON (single file)
   const tjson = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, { cacheKey: `t:${tid}` });
@@ -229,18 +148,6 @@ async function main() {
 
   forms.innerHTML = "";
 
-  // Open newest round that already has data; fallback to round 1.
-  function activeRoundIndex() {
-    if (!rounds.length) return 0;
-    const scoreRounds = tjson.score_data?.rounds || [];
-    for (let i = rounds.length - 1; i >= 0; i--) {
-      if (roundHasAnyData(scoreRounds[i])) return i;
-    }
-    return 0;
-  }
-  const defaultOpenRound = activeRoundIndex();
-  const roundSections = [];
-
   // helper: refresh server tjson without clobbering drafts (drafts are in-memory)
   async function refreshTournamentJson() {
     const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
@@ -254,38 +161,13 @@ async function main() {
     const canGroup = !isScramble;
 
     const roundCard = el("div", { class: "card" });
-    const roundHead = el("div", { class: "actions", style: "justify-content:space-between; margin-bottom:6px;" });
-    roundHead.appendChild(el("h2", { style: "margin:0;" }, `${round.name || `Round ${r + 1}`} — ${fmt}`));
-    const toggleRoundBtn = el("button", { class: "secondary", type: "button" }, "");
-    roundHead.appendChild(toggleRoundBtn);
-    roundCard.appendChild(roundHead);
-
-    const roundBody = el("div");
-    roundCard.appendChild(roundBody);
-    let collapsed = r !== defaultOpenRound;
-    function setCollapsed(nextCollapsed) {
-      collapsed = !!nextCollapsed;
-      roundBody.style.display = collapsed ? "none" : "";
-      toggleRoundBtn.textContent = collapsed ? "Show round" : "Hide round";
-    }
-    setCollapsed(collapsed);
-    roundSections.push({ index: r, setCollapsed });
-    toggleRoundBtn.onclick = () => {
-      if (collapsed) {
-        for (const s of roundSections) {
-          if (s.index !== r) s.setCollapsed(true);
-        }
-        setCollapsed(false);
-        return;
-      }
-      setCollapsed(true);
-    };
+    roundCard.appendChild(el("h2", { style: "margin:0 0 6px 0;" }, `${round.name || `Round ${r + 1}`} — ${fmt}`));
 
     const wrap = el("div", { class: "small", style: "margin-bottom:8px;" });
     wrap.textContent = isScramble
       ? "Scramble: enter one team score per hole."
       : "Singles/Shamble: enter player scores. You can choose who you're playing with to enter for them too.";
-    roundBody.appendChild(wrap);
+    roundCard.appendChild(wrap);
 
     // Group picker
     let groupIds = canGroup
@@ -294,17 +176,17 @@ async function main() {
     const groupPicker = el("div", { class: "small", style: canGroup ? "margin:10px 0;" : "display:none;" });
 
     // panes/tabs created early so render functions can close over them
-    const tabs = el("div", { class: "enter-tabs" });
+    const tabs = el("div", { style: "display:flex; gap:8px; margin:10px 0;" });
     const tabHole = el("button", { class: "secondary", type: "button" }, "Hole-by-hole");
     const tabBulk = el("button", { class: "secondary", type: "button" }, "Bulk input");
     tabs.appendChild(tabHole);
     tabs.appendChild(tabBulk);
-    roundBody.appendChild(tabs);
+    roundCard.appendChild(tabs);
 
     const holePane = el("div");
     const bulkPane = el("div", { style: "display:none;" });
-    roundBody.appendChild(holePane);
-    roundBody.appendChild(bulkPane);
+    roundCard.appendChild(holePane);
+    roundCard.appendChild(bulkPane);
 
     tabHole.onclick = () => {
       holePane.style.display = "";
@@ -318,24 +200,11 @@ async function main() {
     if (canGroup) {
       const pickerTop = el("div", { style: "display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:6px;" });
       pickerTop.appendChild(el("b", {}, "Playing with:"));
-      const list = el("div", {
-        style:
-          "display:flex; flex-wrap:wrap; gap:10px; max-height:220px; overflow:auto; padding:8px; border:1px solid var(--border); border-radius:10px; background:var(--surface-strong);",
-      });
-
-      function syncGroupChecks() {
-        const boxes = list.querySelectorAll("input[type='checkbox'][data-player-id]");
-        boxes.forEach((cb) => {
-          const pid = cb.getAttribute("data-player-id");
-          cb.checked = !!pid && groupIds.includes(pid);
-        });
-      }
 
       const btnMeTeam = el("button", { class: "secondary", type: "button" }, "My team");
       btnMeTeam.onclick = () => {
         groupIds = defaultGroupIds.length ? defaultGroupIds : [myId].filter(Boolean);
         saveGroup(tid, r, groupIds);
-        syncGroupChecks();
         renderHoleForm();
         renderBulkTable();
       };
@@ -344,7 +213,6 @@ async function main() {
       btnAll.onclick = () => {
         groupIds = playersArr.map((p) => p.playerId);
         saveGroup(tid, r, groupIds);
-        syncGroupChecks();
         renderHoleForm();
         renderBulkTable();
       };
@@ -353,12 +221,16 @@ async function main() {
       pickerTop.appendChild(btnAll);
       groupPicker.appendChild(pickerTop);
 
+      const list = el("div", {
+        style:
+          "display:flex; flex-wrap:wrap; gap:10px; max-height:220px; overflow:auto; padding:8px; border:1px solid #ddd; border-radius:10px; background:#fff;",
+      });
+
       for (const p of playersArr) {
         const id = p.playerId;
         const checked = groupIds.includes(id);
         const lbl = el("label", { style: "display:flex; align-items:center; gap:6px; cursor:pointer;" });
         const cb = el("input", { type: "checkbox" });
-        cb.setAttribute("data-player-id", id);
         cb.checked = checked;
         cb.onchange = () => {
           if (cb.checked) {
@@ -368,7 +240,6 @@ async function main() {
           }
           if (!groupIds.includes(myId) && myId) groupIds.unshift(myId);
           saveGroup(tid, r, groupIds);
-          syncGroupChecks();
           renderHoleForm();
           renderBulkTable();
         };
@@ -378,7 +249,7 @@ async function main() {
       }
 
       groupPicker.appendChild(list);
-      roundBody.appendChild(groupPicker);
+      roundCard.appendChild(groupPicker);
     }
 
     // Current saved holes from tournament json
@@ -404,7 +275,7 @@ async function main() {
     let holeManuallySet = false; // only true after user clicks prev/next or selects a hole
 
     const status = el("div", { class: "small", style: "margin-top:10px;" }, "");
-    const conflictBox = el("div", { class: "card", style: "display:none; border:2px solid var(--bad); margin-top:10px;" });
+    const conflictBox = el("div", { class: "card", style: "display:none; border:2px solid #c41c08; margin-top:10px;" });
 
     function renderHoleForm() {
       holePane.innerHTML = "";
@@ -420,7 +291,9 @@ async function main() {
         currentHole = suggested;
       }
 
-      const header = el("div", { class: "hole-header" });
+      const header = el("div", {
+        style: "display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:8px;",
+      });
       header.appendChild(
         el(
           "div",
@@ -429,7 +302,7 @@ async function main() {
         )
       );
 
-      const holeSel = el("select", { style: "padding:6px 10px; border-radius:10px; border:1px solid var(--border);" });
+      const holeSel = el("select", { style: "padding:6px 10px; border-radius:10px; border:1px solid #ddd;" });
       for (let i = 0; i < 18; i++) {
         const opt = el("option", { value: String(i) }, `${i + 1}`);
         if (i === currentHole) opt.selected = true;
@@ -437,7 +310,6 @@ async function main() {
       }
       holeSel.onchange = () => {
         currentHole = Number(holeSel.value);
-        holeManuallySet = true;
         renderHoleForm();
       };
 
@@ -445,7 +317,7 @@ async function main() {
       header.lastChild.appendChild(holeSel);
       holePane.appendChild(header);
 
-      const grid = el("div", { class: "hole-grid" });
+      const grid = el("div", { style: "display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;" });
 
       const inputs = [];
 
@@ -455,7 +327,7 @@ async function main() {
           min: "1",
           max: "20",
           step: "1",
-          style: "width:78px; min-height:38px; padding:6px 8px; border-radius:10px; border:1px solid var(--border); background:var(--field-bg); color:var(--text); font-size:16px;",
+          style: "width:100px; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:16px;",
         });
         inp.value = initialStr ?? "";
         return inp;
@@ -469,11 +341,13 @@ async function main() {
         const draft = getHoleDraft(r, currentHole, teamId);
         const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
 
-        const row = el("div", { class: "hole-row" });
+        const row = el("div", {
+          style: "display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:10px; border:1px solid #eee; border-radius:12px; background:#fff;",
+        });
         row.appendChild(
           el(
             "div",
-            { style: "min-width:0;" },
+            { style: "min-width:180px;" },
             `<b>${enter.team?.teamName || "Team"}</b> <span class="small">(team score)</span><br/><span class="small">Existing: ${existing == null ? "—" : existing
             }</span>`
           )
@@ -497,11 +371,13 @@ async function main() {
           const draft = getHoleDraft(r, currentHole, pid);
           const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
 
-          const row = el("div", { class: "hole-row" });
+          const row = el("div", {
+            style: "display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:10px; border:1px solid #eee; border-radius:12px; background:#fff;",
+          });
           row.appendChild(
             el(
               "div",
-              { style: "min-width:0;" },
+              { style: "min-width:180px;" },
               `<b>${p.name}</b> <span class="small">${p.handicap != null ? `(hcp ${p.handicap})` : ""}</span><br/><span class="small">Existing: ${existing == null ? "—" : existing
               }</span>`
             )
@@ -518,7 +394,7 @@ async function main() {
 
       holePane.appendChild(grid);
 
-      const actions = el("div", { class: "actions hole-actions", style: "margin-top:10px;" });
+      const actions = el("div", { style: "display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px;" });
       const btnSubmit = el("button", { class: "", type: "button" }, "Submit hole");
       const btnNext = el("button", { class: "secondary", type: "button" }, "Next hole →");
       const btnPrev = el("button", { class: "secondary", type: "button" }, "← Prev hole");
@@ -531,12 +407,10 @@ async function main() {
 
       btnPrev.onclick = () => {
         currentHole = Math.max(0, currentHole - 1);
-        holeManuallySet = true;
         renderHoleForm();
       };
       btnNext.onclick = () => {
         currentHole = Math.min(17, currentHole + 1);
-        holeManuallySet = true;
         renderHoleForm();
       };
 
@@ -659,7 +533,7 @@ async function main() {
           inp.style.width = "42px";
           inp.style.padding = "4px 6px";
           inp.style.borderRadius = "8px";
-          inp.style.border = "1px solid var(--border)";
+          inp.style.border = "1px solid #ddd";
 
           // choose value: draft (if present) else saved
           const dv = getBulkDraft(r, id, i);

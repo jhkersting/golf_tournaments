@@ -3,8 +3,6 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <script src="theme.js" defer></script>
-  <script src="nav.js" defer></script>
   <link rel="stylesheet" href="styles.css" />
   <title>Scoreboard</title>
 </head>
@@ -12,12 +10,10 @@
 <header>
   <div class="nav">
     <div class="brand"><span class="dot"></span> Golf Tournament</div>
-    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
     <div class="actions">
       <a href="./index.html">Home</a>
-      <a href="./enter.html">Enter Scores</a>
-      <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
-      <button type="button" class="theme-toggle" data-theme-toggle></button>
+      <a href="./admin.html">Create Tournament</a>
+      <a href="./scoreboard.html">Scoreboard</a>
     </div>
   </div>
 </header>
@@ -41,8 +37,8 @@
     <div class="col">
       <label>Leaderboard</label>
       <div class="toggle" id="lb_toggle">
-        <button id="btn_team">Team</button>
-        <button id="btn_player"  class="active">Individual</button>
+        <button id="btn_team" class="active">Team</button>
+        <button id="btn_player">Individual</button>
       </div>
       <div class="small" id="toggle_note"></div>
     </div>
@@ -55,7 +51,7 @@
 
 <div class="row">
   <div class="col card">
-    <h2 style="margin-top:0;" id="lb_title">Individuals</h2>
+    <h2 style="margin-top:0;" id="lb_title">Teams</h2>
     <table class="table" id="lb_tbl">
       <thead><tr id="lb_head"></tr></thead>
       <tbody></tbody>
