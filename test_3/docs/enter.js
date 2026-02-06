@@ -632,13 +632,14 @@ async function main() {
       );
       bulkPane.appendChild(info);
 
-      const tbl = el("table", { class: "table" });
+      const tableWrap = el("div", { class: "bulk-table-wrap" });
+      const tbl = el("table", { class: "table bulk-table" });
       const thead = el("thead");
       const trH = el("tr");
       trH.innerHTML =
         `<th class="left">${type === "team" ? "Team" : "Player"}</th>` +
-        Array.from({ length: 18 }, (_, i) => `<th>${i + 1}</th>`).join("") +
-        `<th>Submit</th>`;
+        `<th>Side</th>` +
+        Array.from({ length: 9 }, (_, i) => `<th>${i + 1}</th>`).join("");
       thead.appendChild(trH);
       tbl.appendChild(thead);
 
@@ -649,40 +650,58 @@ async function main() {
         const name = type === "team" ? enter.team?.teamName || id : playersById[id]?.name || id;
         const holes = (savedByTarget[id] || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
 
-        const tr = el("tr");
-        tr.appendChild(el("td", { class: "left" }, `<b>${name}</b>`));
+        rowInputs[id] = Array(18).fill(null);
 
-        rowInputs[id] = [];
-        for (let i = 0; i < 18; i++) {
+        const frontRow = el("tr");
+        const nameCell = el("td", { class: "left bulk-player", rowspan: "2" }, `<b>${name}</b>`);
+        frontRow.appendChild(nameCell);
+        frontRow.appendChild(el("td", { class: "mono bulk-side" }, "Front 9"));
+
+        for (let i = 0; i < 9; i++) {
           const td = el("td");
-
-          const inp = el("input", { type: "number", min: "1", max: "20", step: "1", class: "hole-input" });
-          inp.style.width = "42px";
-          inp.style.padding = "4px 6px";
-          inp.style.borderRadius = "8px";
-          inp.style.border = "1px solid var(--border)";
-
-          // choose value: draft (if present) else saved
+          const inp = el("input", {
+            type: "number",
+            min: "1",
+            max: "20",
+            step: "1",
+            class: "hole-input bulk-hole-input",
+          });
           const dv = getBulkDraft(r, id, i);
           const initial = dv !== undefined ? dv : holes[i] == null ? "" : String(holes[i]);
           inp.value = initial ?? "";
-
           inp.addEventListener("input", () => setBulkDraft(r, id, i, inp.value));
-
-          rowInputs[id].push(inp);
+          rowInputs[id][i] = inp;
           td.appendChild(inp);
-          tr.appendChild(td);
+          frontRow.appendChild(td);
         }
 
-        const tdBtn = el("td");
-        tdBtn.appendChild(el("span", { class: "small" }, "Use buttons below"));
-        tr.appendChild(tdBtn);
+        const backRow = el("tr");
+        backRow.appendChild(el("td", { class: "mono bulk-side" }, "Back 9"));
+        for (let i = 9; i < 18; i++) {
+          const td = el("td");
+          const inp = el("input", {
+            type: "number",
+            min: "1",
+            max: "20",
+            step: "1",
+            class: "hole-input bulk-hole-input",
+          });
+          const dv = getBulkDraft(r, id, i);
+          const initial = dv !== undefined ? dv : holes[i] == null ? "" : String(holes[i]);
+          inp.value = initial ?? "";
+          inp.addEventListener("input", () => setBulkDraft(r, id, i, inp.value));
+          rowInputs[id][i] = inp;
+          td.appendChild(inp);
+          backRow.appendChild(td);
+        }
 
-        tbody.appendChild(tr);
+        tbody.appendChild(frontRow);
+        tbody.appendChild(backRow);
       }
 
       tbl.appendChild(tbody);
-      bulkPane.appendChild(tbl);
+      tableWrap.appendChild(tbl);
+      bulkPane.appendChild(tableWrap);
 
       const bulkStatus = el("div", { class: "small", style: "margin-top:10px;" }, "");
       const btnRow = el("div", { style: "display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;" });

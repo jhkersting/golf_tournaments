@@ -19,6 +19,9 @@ const lbTbl = document.getElementById("lb_tbl");
 const updated = document.getElementById("updated");
 const status = document.getElementById("status");
 const raw = document.getElementById("raw");
+const statsMeta = document.getElementById("stats_meta");
+const statsKpis = document.getElementById("stats_kpis");
+const statsHoleTbl = document.getElementById("stats_hole_tbl");
 
 const scorecardCard = document.getElementById("scorecard_card");
 
@@ -29,11 +32,79 @@ let TOURN = null;
 let openInlineKey = null;
 let openInlineRow = null;
 let inlineReqToken = 0;
+const TEAM_COLORS = [
+  "#b287c4",
+  "#8e84d9",
+  "#6e9fd6",
+  "#63b0b4",
+  "#84b676",
+  "#c3a56f",
+  "#c98c6e",
+  "#c67f95"
+];
+
+let teamColorById = new Map();
+let teamColorByName = new Map();
+
+function teamNameKey(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function addTeamColor(teamId, teamName) {
+  const id = teamId == null ? "" : String(teamId);
+  const nKey = teamNameKey(teamName);
+
+  if (id && teamColorById.has(id)) {
+    const color = teamColorById.get(id);
+    if (nKey && !teamColorByName.has(nKey)) teamColorByName.set(nKey, color);
+    return;
+  }
+  if (!id && nKey && teamColorByName.has(nKey)) return;
+
+  const idx = teamColorById.size + teamColorByName.size;
+  const color = TEAM_COLORS[idx % TEAM_COLORS.length];
+
+  if (id) teamColorById.set(id, color);
+  if (nKey) teamColorByName.set(nKey, color);
+}
+
+function rebuildTeamColors(data) {
+  teamColorById = new Map();
+  teamColorByName = new Map();
+
+  (TOURN?.teams || []).forEach((t) => addTeamColor(t?.teamId ?? t?.id, t?.teamName ?? t?.name));
+  (data?.teams || []).forEach((t) => addTeamColor(t?.teamId, t?.teamName));
+  (data?.players || []).forEach((p) => addTeamColor(p?.teamId, p?.teamName));
+}
+
+function colorForTeam(teamId, teamName) {
+  const id = teamId == null ? "" : String(teamId);
+  if (id && teamColorById.has(id)) return teamColorById.get(id);
+  const nKey = teamNameKey(teamName);
+  if (nKey && teamColorByName.has(nKey)) return teamColorByName.get(nKey);
+  addTeamColor(id, teamName);
+  if (id && teamColorById.has(id)) return teamColorById.get(id);
+  if (nKey && teamColorByName.has(nKey)) return teamColorByName.get(nKey);
+  return TEAM_COLORS[0];
+}
 
 function toParStrFromDiff(diff) {
   const d = Math.round(Number(diff) || 0);
   if (d === 0) return "E";
   return d > 0 ? `+${d}` : `${d}`;
+}
+
+function toParStrFromDecimal(diff) {
+  const d = Number(diff) || 0;
+  if (Math.abs(d) < 0.05) return "E";
+  const rounded = Math.round(d * 100) / 100;
+  const out = String(rounded.toFixed(2)).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+  return rounded > 0 ? `+${out}` : out;
+}
+
+function formatDecimal(v) {
+  const n = Number(v) || 0;
+  return String(n.toFixed(2)).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
 }
 
 function sumHoles(arr) {
@@ -114,6 +185,14 @@ function isHandicapRound(viewRound) {
   return !!round.useHandicap && round.format !== "scramble";
 }
 
+function getCoursePars() {
+  const pars = TOURN?.course?.pars;
+  if (Array.isArray(pars) && pars.length === 18 && pars.some((v) => Number(v) > 0)) {
+    return pars.map((v) => Number(v) || 0);
+  }
+  return Array(18).fill(4);
+}
+
 function leaderboardColCount(data) {
   return 5;
 }
@@ -160,6 +239,15 @@ function firstDefined(obj, keys) {
 }
 
 function grossToParForRow(row, data) {
+  // Prefer hole-by-hole computation so unplayed holes never count against par.
+  if (Array.isArray(row?.scores?.gross) && Array.isArray(data?.course?.pars)) {
+    const diff = row.scores.gross.reduce(
+      (a, v, i) => a + (!isPlayedScore(v) ? 0 : Number(v) - Number(data.course.pars[i] || 0)),
+      0
+    );
+    return toParDisplay(diff);
+  }
+
   const explicit = firstDefined(row, [
     "toParGross",
     "grossToPar",
@@ -168,14 +256,6 @@ function grossToParForRow(row, data) {
   ]);
   if (explicit != null) return toParDisplay(explicit);
   if (row?.scores?.grossToParTotal != null) return toParDisplay(row.scores.grossToParTotal);
-
-  if (Array.isArray(row?.scores?.gross) && Array.isArray(data?.course?.pars)) {
-    const diff = row.scores.gross.reduce(
-      (a, v, i) => a + (!isPlayedScore(v) ? 0 : Number(v) - Number(data.course.pars[i] || 0)),
-      0
-    );
-    return toParDisplay(diff);
-  }
 
   const gross = grossForRow(row);
   const parTotal = Number(data?.course?.parTotal || 0);
@@ -186,6 +266,15 @@ function grossToParForRow(row, data) {
 }
 
 function netToParForRow(row, data) {
+  // Prefer hole-by-hole computation so unplayed holes never count against par.
+  if (Array.isArray(row?.scores?.net) && Array.isArray(data?.course?.pars)) {
+    const diff = row.scores.net.reduce(
+      (a, v, i) => a + (!isPlayedScore(v) ? 0 : Number(v) - Number(data.course.pars[i] || 0)),
+      0
+    );
+    return toParDisplay(diff);
+  }
+
   const explicit = firstDefined(row, [
     "toParNet",
     "netToPar",
@@ -194,14 +283,6 @@ function netToParForRow(row, data) {
   ]);
   if (explicit != null) return toParDisplay(explicit);
   if (row?.scores?.netToParTotal != null) return toParDisplay(row.scores.netToParTotal);
-
-  if (Array.isArray(row?.scores?.net) && Array.isArray(data?.course?.pars)) {
-    const diff = row.scores.net.reduce(
-      (a, v, i) => a + (!isPlayedScore(v) ? 0 : Number(v) - Number(data.course.pars[i] || 0)),
-      0
-    );
-    return toParDisplay(diff);
-  }
 
   const net = netForRow(row);
   const parTotal = Number(data?.course?.parTotal || 0);
@@ -237,8 +318,13 @@ function sectionPlayedCount(arr, start, end) {
 function buildScorecardTable(scores, useHandicap) {
   const gross = scores.gross || Array(18).fill(null);
   const net = scores.net || Array(18).fill(null);
-  const par = scores.par || Array(18).fill(0);
+  const defaultPar = getCoursePars();
+  const par =
+    Array.isArray(scores.par) && scores.par.length === 18 && scores.par.some((v) => Number(v) > 0)
+      ? scores.par
+      : defaultPar;
   const dots = scores.handicapShots || Array(18).fill(0);
+  const parTotal18 = segmentTotal(par, 0, 17);
   const grossTotal = scores.grossTotal != null ? scores.grossTotal : sumHoles(gross);
   const netTotal = scores.netTotal != null ? scores.netTotal : sumHoles(net);
   const grossToParTotal =
@@ -314,6 +400,8 @@ function buildScorecardTable(scores, useHandicap) {
   }
 
   function addParRow(start, end) {
+    const sectionPar = segmentTotal(par, start, end);
+    const parTotalCell = start === 9 ? `${sectionPar} (${parTotal18})` : String(sectionPar);
     const tr = document.createElement("tr");
     tr.innerHTML =
       `<td class="left"><b>Par</b></td>` +
@@ -321,7 +409,7 @@ function buildScorecardTable(scores, useHandicap) {
         const i = start + k;
         return `<td class="mono">${String(par[i] || 0)}</td>`;
       }).join("") +
-      `<td class="mono"><b>${segmentTotal(par, start, end)}</b></td>` +
+      `<td class="mono"><b>${parTotalCell}</b></td>` +
       `<td class="mono"><b>E</b></td>`;
     tbody.appendChild(tr);
   }
@@ -373,7 +461,8 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
   const anyData = teamPlayers.some((p) => hasAnyScore(p.gross) || hasAnyScore(p.net));
   if (!anyData) return null;
 
-  const par = TOURN?.course?.pars || Array(18).fill(0);
+  const par = getCoursePars();
+  const parTotal18 = segmentTotal(par, 0, 17);
   const wrap = document.createElement("div");
   wrap.className = "scorecard-one-wrap";
 
@@ -416,6 +505,8 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
   }
 
   function addParRow(start, end) {
+    const sectionPar = segmentTotal(par, start, end);
+    const parTotalCell = start === 9 ? `${sectionPar} (${parTotal18})` : String(sectionPar);
     const tr = document.createElement("tr");
     tr.innerHTML =
       `<td class="left"><b>Par</b></td>` +
@@ -423,7 +514,7 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
         const i = start + k;
         return `<td class="mono">${String(par[i] || 0)}</td>`;
       }).join("") +
-      `<td class="mono"><b>${segmentTotal(par, start, end)}</b></td>` +
+      `<td class="mono"><b>${parTotalCell}</b></td>` +
       `<td class="mono"><b>E</b></td>`;
     tbody.appendChild(tr);
   }
@@ -500,7 +591,7 @@ async function getScorecardScores(data, row) {
     gross: sc.grossHoles || Array(18).fill(null),
     net: sc.netHoles || Array(18).fill(null),
     handicapShots: sc.handicapShots || Array(18).fill(0),
-    par: sc.course?.pars || Array(18).fill(0),
+    par: sc.course?.pars || getCoursePars(),
     grossTotal: sc.grossTotal,
     netTotal: sc.netTotal,
     grossToParTotal: sc.toParGrossTotal,
@@ -530,6 +621,7 @@ function renderLeaderboard(data) {
   const isTeam = mode === "team";
   const showGrossNet = isHandicapRound(data.view?.round);
   lbTitle.textContent = isTeam ? "Teams" : "Individuals";
+  rebuildTeamColors(data);
 
   const head = document.getElementById("lb_head");
   if (showGrossNet) {
@@ -581,11 +673,12 @@ function renderLeaderboard(data) {
     const tr = document.createElement("tr");
     tr.className = "clickable";
     tr.dataset.id = isTeam ? r.teamId : r.playerId;
+    const teamColor = colorForTeam(r.teamId, r.teamName);
 
     const nameCell = `
       <td class="left">
-        <div><b>${isTeam ? r.teamName : r.name}</b></div>
-        ${!isTeam && r.teamName ? `<div class="small muted">${r.teamName}</div>` : ""}
+        <div class="${isTeam ? "team-accent" : ""}" style="--team-accent:${teamColor};"><b>${isTeam ? r.teamName : r.name}</b></div>
+        ${!isTeam && r.teamName ? `<div class="small muted team-accent team-accent-sub" style="--team-accent:${teamColor};">${r.teamName}</div>` : ""}
       </td>
     `;
 
@@ -680,6 +773,122 @@ function renderLeaderboard(data) {
   });
 }
 
+function viewRoundLabel(viewRound) {
+  return viewRound === "all" ? "All rounds" : `Round ${Number(viewRound) + 1}`;
+}
+
+function statRowsFromRound(roundData, isTeamMode) {
+  if (!roundData) return [];
+  const primary = isTeamMode ? (roundData.team || {}) : (roundData.player || {});
+  const fallback = !isTeamMode && !Object.keys(primary).length ? (roundData.team || {}) : null;
+  const source = fallback || primary;
+  const rows = [];
+
+  for (const [id, entry] of Object.entries(source)) {
+    rows.push({
+      id,
+      gross: Array.isArray(entry?.gross) ? entry.gross : Array(18).fill(null)
+    });
+  }
+  return rows;
+}
+
+function renderStats(data) {
+  if (!statsMeta || !statsKpis || !statsHoleTbl) return;
+
+  const isTeamMode = mode === "team";
+  const roundView = data?.view?.round;
+  const rounds = TOURN?.score_data?.rounds || [];
+  const par = Array.isArray(data?.course?.pars) ? data.course.pars : getCoursePars();
+  const statRows =
+    roundView === "all"
+      ? rounds.flatMap((rd) => statRowsFromRound(rd, isTeamMode))
+      : statRowsFromRound(rounds[Number(roundView)], isTeamMode);
+
+  const holeTotals = Array(18).fill(0);
+  const holeCounts = Array(18).fill(0);
+  let holesPlayed = 0;
+  let cardsWithScores = 0;
+  let totalDiff = 0;
+  let eaglePlus = 0;
+  let birdies = 0;
+  let parsCount = 0;
+  let bogeys = 0;
+  let doublePlus = 0;
+
+  for (const row of statRows) {
+    if (hasAnyScore(row.gross)) cardsWithScores++;
+    for (let i = 0; i < 18; i++) {
+      const v = row.gross?.[i];
+      if (!isPlayedScore(v)) continue;
+      const score = Number(v);
+      const p = Number(par[i] || 0);
+      const diff = score - p;
+
+      holeTotals[i] += score;
+      holeCounts[i] += 1;
+      holesPlayed += 1;
+      totalDiff += diff;
+
+      if (diff <= -2) eaglePlus++;
+      else if (diff === -1) birdies++;
+      else if (diff === 0) parsCount++;
+      else if (diff === 1) bogeys++;
+      else if (diff >= 2) doublePlus++;
+    }
+  }
+
+  statsMeta.textContent = `${viewRoundLabel(roundView)} • ${isTeamMode ? "Teams" : "Players"} with scores: ${cardsWithScores} • Holes recorded: ${holesPlayed}`;
+
+  const avgToPar = holesPlayed ? totalDiff / holesPlayed : 0;
+  statsKpis.innerHTML = `
+    <div class="stats-kpi"><span class="small">Eagle+</span><b>${eaglePlus}</b></div>
+    <div class="stats-kpi"><span class="small">Birdies</span><b>${birdies}</b></div>
+    <div class="stats-kpi"><span class="small">Pars</span><b>${parsCount}</b></div>
+    <div class="stats-kpi"><span class="small">Bogeys</span><b>${bogeys}</b></div>
+    <div class="stats-kpi"><span class="small">Double+</span><b>${doublePlus}</b></div>
+    <div class="stats-kpi"><span class="small">Avg ± / hole</span><b>${holesPlayed ? toParStrFromDecimal(avgToPar) : "—"}</b></div>
+  `;
+
+  if (!holesPlayed) {
+    statsHoleTbl.innerHTML = `<tbody><tr><td class="left small">No hole-by-hole scores posted yet for this view.</td></tr></tbody>`;
+    return;
+  }
+
+  function headerRow(label, start, end) {
+    return (
+      `<tr>` +
+      `<th class="left">${label}</th>` +
+      Array.from({ length: end - start + 1 }, (_, k) => `<th>${start + k + 1}</th>`).join("") +
+      `</tr>`
+    );
+  }
+
+  function valueRow(label, start, end, getCell) {
+    return (
+      `<tr>` +
+      `<td class="left"><b>${label}</b></td>` +
+      Array.from({ length: end - start + 1 }, (_, k) => `<td class="mono">${getCell(start + k)}</td>`).join("") +
+      `</tr>`
+    );
+  }
+
+  const front = `
+    ${headerRow("Front 9", 0, 8)}
+    ${valueRow("Avg", 0, 8, (i) => (holeCounts[i] ? formatDecimal(holeTotals[i] / holeCounts[i]) : "—"))}
+    ${valueRow("±", 0, 8, (i) => (holeCounts[i] ? toParStrFromDecimal(holeTotals[i] / holeCounts[i] - Number(par[i] || 0)) : "—"))}
+    ${valueRow("N", 0, 8, (i) => String(holeCounts[i]))}
+  `;
+  const back = `
+    ${headerRow("Back 9", 9, 17)}
+    ${valueRow("Avg", 9, 17, (i) => (holeCounts[i] ? formatDecimal(holeTotals[i] / holeCounts[i]) : "—"))}
+    ${valueRow("±", 9, 17, (i) => (holeCounts[i] ? toParStrFromDecimal(holeTotals[i] / holeCounts[i] - Number(par[i] || 0)) : "—"))}
+    ${valueRow("N", 9, 17, (i) => String(holeCounts[i]))}
+  `;
+
+  statsHoleTbl.innerHTML = `<tbody>${front}<tr class="scorecard-spacer-row"><td colspan="10"></td></tr>${back}</tbody>`;
+}
+
 function buildScoreboardResponse(tournamentJson, viewRound) {
   const course = tournamentJson.course || {
     pars: Array(18).fill(4),
@@ -740,14 +949,14 @@ function render() {
   if (!TOURN) return;
   const data = buildScoreboardResponse(TOURN, currentRound);
 
-  const rLabel =
-    data.view.round === "all" ? "All rounds" : `Round ${Number(data.view.round) + 1}`;
+  const rLabel = viewRoundLabel(data.view.round);
   const handicapInfo = isHandicapRound(data.view.round)
     ? " • leaderboard shows gross + net, scorecards show both"
     : "";
   toggleNote.textContent = `${rLabel}${handicapInfo}`;
 
   renderLeaderboard(data);
+  renderStats(data);
 
   const ts = TOURN.updatedAt ? new Date(TOURN.updatedAt).toLocaleString() : "—";
   updated.textContent = `Updated: ${ts}`;
