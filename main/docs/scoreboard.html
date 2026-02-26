@@ -3,17 +3,22 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="theme.js" defer></script>
+  <script src="nav.js" defer></script>
   <link rel="stylesheet" href="styles.css" />
   <title>Scoreboard</title>
 </head>
-<body>
+<body style="display: none;">
 <header>
   <div class="nav">
     <div class="brand"><span class="dot"></span> Golf Tournament</div>
+    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
     <div class="actions">
       <a href="./index.html">Home</a>
-      <a href="./admin.html">Create Tournament</a>
-      <a href="./scoreboard.html">Scoreboard</a>
+      <a href="./enter.html">Enter Scores</a>
+      <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
+      <button type="button" class="theme-toggle" data-theme-toggle></button>
     </div>
   </div>
 </header>
@@ -23,6 +28,7 @@
   <h1 style="margin:0 0 6px 0;">Scoreboard</h1>
   <div class="small">
     Open with <code>?t=TOURNAMENT_ID</code>. Filter by round and toggle Team/Individual (if applicable).
+    Scramble rounds are team-only.
     Hole-by-hole scorecard (with handicap dots) appears when you click a row (round view only).
   </div>
 </div>
@@ -37,8 +43,8 @@
     <div class="col">
       <label>Leaderboard</label>
       <div class="toggle" id="lb_toggle">
-        <button id="btn_team" class="active">Team</button>
-        <button id="btn_player">Individual</button>
+        <button id="btn_team">Team</button>
+        <button id="btn_player"  class="active">Individual</button>
       </div>
       <div class="small" id="toggle_note"></div>
     </div>
@@ -51,12 +57,21 @@
 
 <div class="row">
   <div class="col card">
-    <h2 style="margin-top:0;" id="lb_title">Teams</h2>
+    <h2 style="margin-top:0;" id="lb_title">Individuals</h2>
     <table class="table" id="lb_tbl">
       <thead><tr id="lb_head"></tr></thead>
       <tbody></tbody>
     </table>
     <div class="small" style="margin-top:10px;">Click a row to show a hole-by-hole scorecard below (round view only).</div>
+    <hr />
+    <div id="stats_panel">
+      <h3 style="margin-top:0;">Stats</h3>
+      <div class="small" id="stats_meta">—</div>
+      <div class="stats-kpis" id="stats_kpis"></div>
+      <div class="scoregrid stats-grid" id="stats_grid">
+        <table class="table stats-hole-table" id="stats_hole_tbl"></table>
+      </div>
+    </div>
   </div>
 </div>
 

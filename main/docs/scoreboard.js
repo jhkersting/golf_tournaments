@@ -46,6 +46,11 @@ const TEAM_COLORS = [
 let teamColorById = new Map();
 let teamColorByName = new Map();
 
+function syncModeButtons() {
+  btnTeam.classList.toggle("active", mode === "team");
+  btnPlayer.classList.toggle("active", mode === "player");
+}
+
 function teamNameKey(name) {
   return String(name || "").trim().toLowerCase();
 }
@@ -183,6 +188,19 @@ function isHandicapRound(viewRound) {
   const round = roundAt(viewRound);
   if (!round) return false;
   return !!round.useHandicap && round.format !== "scramble";
+}
+
+function isScrambleRound(viewRound) {
+  const round = roundAt(viewRound);
+  if (!round) return false;
+  return String(round.format || "").toLowerCase() === "scramble";
+}
+
+function applyModeConstraints(viewRound) {
+  const scrambleRound = isScrambleRound(viewRound);
+  if (scrambleRound && mode !== "team") mode = "team";
+  btnPlayer.disabled = scrambleRound;
+  syncModeButtons();
 }
 
 function getCoursePars() {
@@ -947,13 +965,17 @@ async function loadTournament() {
 
 function render() {
   if (!TOURN) return;
+  applyModeConstraints(currentRound);
   const data = buildScoreboardResponse(TOURN, currentRound);
 
   const rLabel = viewRoundLabel(data.view.round);
   const handicapInfo = isHandicapRound(data.view.round)
     ? " • leaderboard shows gross + net, scorecards show both"
     : "";
-  toggleNote.textContent = `${rLabel}${handicapInfo}`;
+  const scrambleInfo = isScrambleRound(data.view.round)
+    ? " • scramble rounds are team-only"
+    : "";
+  toggleNote.textContent = `${rLabel}${handicapInfo}${scrambleInfo}`;
 
   renderLeaderboard(data);
   renderStats(data);
@@ -966,15 +988,19 @@ function render() {
 
 btnTeam.onclick = () => {
   mode = "team";
-  btnTeam.classList.add("active");
-  btnPlayer.classList.remove("active");
+  syncModeButtons();
   render();
 };
 
 btnPlayer.onclick = () => {
+  if (isScrambleRound(currentRound)) {
+    mode = "team";
+    syncModeButtons();
+    render();
+    return;
+  }
   mode = "player";
-  btnPlayer.classList.add("active");
-  btnTeam.classList.remove("active");
+  syncModeButtons();
   render();
 };
 
