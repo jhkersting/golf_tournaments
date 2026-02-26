@@ -13,14 +13,15 @@ function scoreboardHref(tournamentId) {
 }
 
 function applyScoreboardLinks() {
-  const urlTid = new URLSearchParams(location.search).get("t");
+  const params = new URLSearchParams(location.search);
+  const urlTid = String(params.get("t") || "").trim();
   if (urlTid) {
     try {
       localStorage.setItem(TOURNAMENT_KEY, urlTid);
     } catch (_) {}
   }
 
-  const tid = (urlTid || getTournamentId()).trim();
+  const tid = urlTid || getTournamentId();
   const href = scoreboardHref(tid);
 
   document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {

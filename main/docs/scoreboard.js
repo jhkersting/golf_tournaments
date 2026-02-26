@@ -7,7 +7,7 @@ import {
   rememberTournamentId
 } from "./app.js";
 
-const tidFromQuery = qs("t");
+const tidFromQuery = String(qs("t") || qs("code") || "").trim();
 if (tidFromQuery) rememberTournamentId(tidFromQuery);
 const tid = tidFromQuery || getRememberedTournamentId();
 const roundFilter = document.getElementById("round_filter");

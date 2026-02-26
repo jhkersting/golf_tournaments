@@ -8,7 +8,9 @@ import {
 } from "./app.js";
 
 const codeFromQuery = qs("code");
-let code = (codeFromQuery || getRememberedPlayerCode() || "").trim();
+const normalizedCodeFromQuery = String(codeFromQuery || qs("c") || "").trim();
+if (normalizedCodeFromQuery) rememberPlayerCode(normalizedCodeFromQuery);
+let code = normalizedCodeFromQuery || getRememberedPlayerCode() || "";
 const who = document.getElementById("who");
 const forms = document.getElementById("round_forms");
 
@@ -189,6 +191,9 @@ async function main() {
   }
   rememberPlayerCode(code);
   rememberTournamentId(tid);
+  document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {
+    link.setAttribute("href", `./scoreboard.html?t=${encodeURIComponent(tid)}`);
+  });
 
   // Tournament public JSON (single file)
   const tjson = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, { cacheKey: `t:${tid}` });
