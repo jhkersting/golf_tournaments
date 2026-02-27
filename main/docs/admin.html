@@ -70,6 +70,26 @@
     </div>
   </div>
 
+  <div class="row" style="margin-top:10px;">
+    <div class="col">
+      <label for="course_select">Saved courses</label>
+      <select id="course_select">
+        <option value="">Custom / current values</option>
+      </select>
+      <div class="actions" style="margin-top:8px;">
+        <button class="secondary" id="course_refresh">Refresh courses</button>
+      </div>
+    </div>
+    <div class="col">
+      <label for="course_name">Course name</label>
+      <input id="course_name" placeholder="Pine Valley" />
+      <div class="actions" style="margin-top:8px;">
+        <button class="secondary" id="course_save">Save / Update Course</button>
+        <span id="course_status" class="small"></span>
+      </div>
+    </div>
+  </div>
+
   <div class="scoregrid" style="margin-top:12px;">
     <table class="table" id="course_tbl">
       <thead>

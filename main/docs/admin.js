@@ -15,8 +15,16 @@ const csvEl = document.getElementById("csv");
 
 const parRow = document.getElementById("par_row");
 const siRow = document.getElementById("si_row");
+const courseSelect = document.getElementById("course_select");
+const courseRefreshBtn = document.getElementById("course_refresh");
+const courseNameEl = document.getElementById("course_name");
+const courseSaveBtn = document.getElementById("course_save");
+const courseStatus = document.getElementById("course_status");
 document.getElementById("par4").onclick = () => { for (let h=1;h<=18;h++) parRow.querySelector(`input[data-hole='${h}']`).value="4"; updateParTotal(); };
 document.getElementById("siReset").onclick = () => { for (let h=1;h<=18;h++) siRow.querySelector(`input[data-hole='${h}']`).value=String(h); };
+
+let savedCourses = [];
+let selectedCourseId = "";
 
 function makeInputCell(kind, hole, value, min, max){
   const td = document.createElement("td");
@@ -86,6 +94,129 @@ function validateStrokeIndex(si){
     if (!Number.isInteger(v) || v<1 || v>18) return "Stroke Index values must be integers 1–18.";
   }
   return null;
+}
+
+function normalizeCourse(course){
+  if (!course || typeof course !== "object") return null;
+  const courseId = String(course.courseId || course.id || "").trim();
+  const name = String(course.name || "").trim();
+  const pars = Array.isArray(course.pars) ? course.pars.map((v) => Number(v) || 0) : null;
+  const strokeIndex = Array.isArray(course.strokeIndex)
+    ? course.strokeIndex.map((v) => Number(v) || 0)
+    : null;
+  return { courseId, name, pars, strokeIndex };
+}
+
+function extractCourseList(payload){
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.courses)) return payload.courses;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+}
+
+function fillCourseRows(pars, strokeIndex){
+  if (!Array.isArray(pars) || pars.length !== 18) return;
+  if (!Array.isArray(strokeIndex) || strokeIndex.length !== 18) return;
+  for (let h = 1; h <= 18; h++) {
+    const parInput = parRow.querySelector(`input[data-hole='${h}']`);
+    const siInput = siRow.querySelector(`input[data-hole='${h}']`);
+    if (parInput) parInput.value = String(Number(pars[h - 1]) || 4);
+    if (siInput) siInput.value = String(Number(strokeIndex[h - 1]) || h);
+  }
+  updateParTotal();
+}
+
+function renderCourseOptions(){
+  if (!courseSelect) return;
+  const previous = selectedCourseId || courseSelect.value || "";
+  courseSelect.innerHTML = `<option value="">Custom / current values</option>`;
+  for (const c of savedCourses){
+    const id = String(c.courseId || "").trim();
+    if (!id) continue;
+    const label = c.name || id;
+    courseSelect.innerHTML += `<option value="${id}">${label}</option>`;
+  }
+  const canKeep = previous && savedCourses.some((c) => String(c.courseId || "").trim() === previous);
+  courseSelect.value = canKeep ? previous : "";
+  selectedCourseId = courseSelect.value || "";
+}
+
+async function loadCourses(){
+  if (!courseStatus) return;
+  courseStatus.textContent = "Loading courses…";
+  try {
+    const payload = await api("/courses");
+    savedCourses = extractCourseList(payload)
+      .map(normalizeCourse)
+      .filter((c) => c && c.courseId);
+    renderCourseOptions();
+    courseStatus.textContent = `Loaded ${savedCourses.length} course${savedCourses.length === 1 ? "" : "s"}.`;
+  } catch (e) {
+    console.error(e);
+    courseStatus.textContent = e.message || String(e);
+  }
+}
+
+async function loadCourseById(courseId){
+  const id = String(courseId || "").trim();
+  if (!id) return;
+
+  courseStatus.textContent = "Loading course…";
+  try {
+    const payload = await api(`/courses/${encodeURIComponent(id)}`);
+    const c = normalizeCourse(payload?.course || payload);
+    if (!c || !Array.isArray(c.pars) || c.pars.length !== 18 || !Array.isArray(c.strokeIndex) || c.strokeIndex.length !== 18) {
+      throw new Error("Course response is missing pars/strokeIndex.");
+    }
+    fillCourseRows(c.pars, c.strokeIndex);
+    courseNameEl.value = c.name || "";
+    selectedCourseId = id;
+    courseStatus.textContent = `Loaded course: ${c.name || id}`;
+  } catch (e) {
+    console.error(e);
+    courseStatus.textContent = e.message || String(e);
+  }
+}
+
+async function saveCourse(){
+  const name = String(courseNameEl?.value || "").trim();
+  if (!name) {
+    courseStatus.textContent = "Course name is required.";
+    return;
+  }
+  const pars = getPars();
+  const si = getStrokeIndex();
+  const siErr = validateStrokeIndex(si);
+  if (siErr) {
+    courseStatus.textContent = siErr;
+    return;
+  }
+
+  const course = { name, pars, strokeIndex: si };
+  if (selectedCourseId) course.courseId = selectedCourseId;
+
+  courseStatus.textContent = selectedCourseId ? "Updating course…" : "Saving course…";
+  try {
+    const payload = await api("/courses", {
+      method: "POST",
+      body: { course }
+    });
+
+    const outCourse = normalizeCourse(payload?.course || payload);
+    const returnedId = String(outCourse?.courseId || selectedCourseId || "").trim();
+    if (returnedId) selectedCourseId = returnedId;
+
+    await loadCourses();
+    if (selectedCourseId && courseSelect) {
+      courseSelect.value = selectedCourseId;
+      await loadCourseById(selectedCourseId);
+    } else {
+      courseStatus.textContent = `Saved course: ${name}`;
+    }
+  } catch (e) {
+    console.error(e);
+    courseStatus.textContent = e.message || String(e);
+  }
 }
 
 function roundCard(){
@@ -159,6 +290,21 @@ addRoundBtn.onclick = addRound;
 // Defaults: 2 rounds
 addRound(); addRound();
 rebuildCourseRows();
+if (courseRefreshBtn) courseRefreshBtn.onclick = () => loadCourses();
+if (courseSaveBtn) courseSaveBtn.onclick = () => saveCourse();
+if (courseSelect) {
+  courseSelect.onchange = async () => {
+    const id = String(courseSelect.value || "").trim();
+    if (!id) {
+      selectedCourseId = "";
+      courseStatus.textContent = "Using custom/current course values.";
+      return;
+    }
+    selectedCourseId = id;
+    await loadCourseById(id);
+  };
+}
+loadCourses();
 
 function getRounds(){
   const cards = [...roundsEl.querySelectorAll(".card")];
@@ -191,13 +337,26 @@ createBtn.onclick = async () => {
     if (!name) throw new Error("Tournament name is required.");
     if (!rounds.length) throw new Error("Add at least one round with positive weight.");
 
+    const courseName = document.getElementById("course_name").value.trim();
     const pars = getPars();
     const si = getStrokeIndex();
     const siErr = validateStrokeIndex(si);
     if (siErr) throw new Error(siErr);
 
     createStatus.textContent = "Creating…";
-    const out = await api("/tournaments", { method:"POST", body:{ name, dates, rounds, course:{ pars, strokeIndex: si } } });
+    const out = await api("/tournaments", {
+      method:"POST",
+      body:{
+        name,
+        dates,
+        rounds,
+        course:{
+          ...(courseName ? { name: courseName } : {}),
+          pars,
+          strokeIndex: si
+        }
+      }
+    });
     const tid = out.tournamentId;
     rememberTournamentId(tid);
     tidEl.textContent = tid;
