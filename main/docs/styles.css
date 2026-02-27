@@ -396,6 +396,10 @@ hr {
   pointer-events: none;
 }
 
+.enter-page .score-notifier {
+  bottom: 58px;
+}
+
 .score-notifier.show {
   opacity: 1;
   transform: translateY(0);
@@ -491,10 +495,60 @@ hr {
 }
 
 .rank-col {
-  width: 1%;
+  width: 34px;
   white-space: nowrap;
   padding-left: 2px !important;
   padding-right: 2px !important;
+}
+
+.thru-col {
+  width: 52px;
+  white-space: nowrap;
+  padding-left: 3px !important;
+  padding-right: 3px !important;
+}
+
+.metric-col {
+  width: 84px;
+  white-space: nowrap;
+}
+
+.name-col {
+  width: calc(100% - 34px - 84px - 84px - 52px);
+  min-width: 180px;
+}
+
+#lb_tbl {
+  table-layout: fixed;
+  width: 100%;
+}
+
+#lb_tbl th,
+#lb_tbl td {
+  border-left: 0;
+  border-right: 0;
+}
+
+#lb_tbl .name-col .team-accent,
+#lb_tbl .name-col .team-accent-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#lb_tbl .metric-col,
+#lb_tbl .thru-col,
+#lb_tbl .rank-col {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#lb_tbl .sort-head-btn {
+  justify-content: center;
+}
+
+#lb_tbl .name-col .sort-head-btn {
+  justify-content: flex-start;
 }
 
 .score-hole-cell {
@@ -1003,6 +1057,10 @@ th.dots {
     max-width: none;
   }
 
+  .enter-page .score-notifier {
+    bottom: 74px;
+  }
+
   .enter-page .container {
     padding-bottom: 88px;
   }
@@ -1083,6 +1141,36 @@ th.dots {
 
   .stats-kpi b {
     font-size: 14px;
+  }
+
+  #lb_tbl .rank-col {
+    width: 24px;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+  }
+
+  #lb_tbl .metric-col {
+    width: 60px;
+  }
+
+  #lb_tbl .thru-col {
+    width: 38px;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+  }
+
+  #lb_tbl .name-col {
+    width: calc(100% - 24px - 60px - 60px - 38px);
+    min-width: 0;
+  }
+
+  #lb_tbl .name-col .team-accent,
+  #lb_tbl .name-col .team-accent-sub {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .inline-scoregrid {

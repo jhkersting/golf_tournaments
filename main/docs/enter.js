@@ -17,12 +17,18 @@ const forms = document.getElementById("round_forms");
 const ticker = document.getElementById("enter_ticker");
 const tickerTitle = document.getElementById("enter_ticker_title");
 const tickerTrack = document.getElementById("enter_ticker_track");
+const scoreNotifier = document.getElementById("score_notifier");
 
 const teamColors = createTeamColorRegistry();
 let tickerSectionIndex = 0;
 let tickerRafId = 0;
 let tickerHoldTimerId = 0;
 let tickerRunToken = 0;
+let scoreNotifierTimerId = 0;
+let scoreNotifierQueue = [];
+let scoreNotifierActive = false;
+const SCORE_NOTIFIER_SHOW_MS = 2300;
+const SCORE_NOTIFIER_GAP_MS = 200;
 
 function normalizeTeamId(teamId) {
   return teamId == null ? "" : String(teamId).trim();
@@ -270,6 +276,163 @@ function toParNumber(v) {
   const n = Number(s);
   if (!Number.isNaN(n)) return n;
   return Number.POSITIVE_INFINITY;
+}
+
+function normalizePostedScore(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+function scoreResultLabel(diffToPar) {
+  if (diffToPar <= -3) return "Albatross";
+  if (diffToPar === -2) return "Eagle";
+  if (diffToPar === -1) return "Birdie";
+  if (diffToPar === 0) return "Par";
+  if (diffToPar === 1) return "Bogey";
+  if (diffToPar === 2) return "Double Bogey";
+  if (diffToPar === 3) return "Triple Bogey";
+  return `${diffToPar} Over`;
+}
+
+function leaderboardToParValue(row) {
+  const keys = ["toPar", "netToPar", "toParNet", "toParTotal", "toParNetTotal", "toParGross", "grossToPar"];
+  for (const key of keys) {
+    if (row?.[key] != null) return toParText(row[key]);
+  }
+  return "E";
+}
+
+function scoreSourceForRound(roundData) {
+  const playerEntries = Object.entries(roundData?.player || {});
+  if (playerEntries.length) return { type: "player", entries: playerEntries };
+  const teamEntries = Object.entries(roundData?.team || {});
+  return { type: "team", entries: teamEntries };
+}
+
+function collectNewScoreEvents(prevTournament, nextTournament) {
+  if (!prevTournament || !nextTournament) return [];
+
+  const events = [];
+  const prevRounds = prevTournament?.score_data?.rounds || [];
+  const nextRounds = nextTournament?.score_data?.rounds || [];
+  const coursePars = nextTournament?.course?.pars || Array(18).fill(4);
+
+  const playerNames = new Map();
+  (nextTournament?.players || []).forEach((p) => {
+    const id = String(p?.playerId || "").trim();
+    if (id) playerNames.set(id, p?.name || id);
+  });
+
+  const teamNames = new Map();
+  (nextTournament?.teams || []).forEach((t) => {
+    const id = String(t?.teamId ?? t?.id ?? "").trim();
+    if (id) teamNames.set(id, t?.teamName ?? t?.name ?? id);
+  });
+
+  for (let roundIndex = 0; roundIndex < nextRounds.length; roundIndex++) {
+    const nextRound = nextRounds[roundIndex] || {};
+    const prevRound = prevRounds[roundIndex] || {};
+    const nextSource = scoreSourceForRound(nextRound);
+    if (!nextSource.entries.length) continue;
+
+    const prevSource = scoreSourceForRound(prevRound);
+    const prevById = new Map(
+      prevSource.entries.map(([id, entry]) => [String(id || "").trim(), entry || {}])
+    );
+
+    const playerRows = new Map();
+    (nextRound?.leaderboard?.players || []).forEach((row) => {
+      const id = String(row?.playerId || "").trim();
+      if (id) playerRows.set(id, row);
+    });
+
+    const teamRows = new Map();
+    (nextRound?.leaderboard?.teams || []).forEach((row) => {
+      const id = String(row?.teamId || "").trim();
+      if (id) teamRows.set(id, row);
+    });
+
+    for (const [idRaw, nextEntry] of nextSource.entries) {
+      const id = String(idRaw || "").trim();
+      if (!id) continue;
+
+      const prevEntry = prevSource.type === nextSource.type ? prevById.get(id) : null;
+      const row = nextSource.type === "player" ? playerRows.get(id) : teamRows.get(id);
+      const name =
+        nextSource.type === "player"
+          ? row?.name || playerNames.get(id) || id
+          : row?.teamName || teamNames.get(id) || id;
+
+      for (let holeIndex = 0; holeIndex < 18; holeIndex++) {
+        const nextGross = normalizePostedScore(nextEntry?.gross?.[holeIndex]);
+        if (nextGross == null) continue;
+
+        const prevGross = normalizePostedScore(prevEntry?.gross?.[holeIndex]);
+        if (prevGross != null) continue;
+
+        const par = Number(coursePars?.[holeIndex] || 0);
+        const diffToPar = par > 0 ? nextGross - par : 0;
+        events.push({
+          name,
+          result: scoreResultLabel(diffToPar),
+          toPar: leaderboardToParValue(row),
+          hole: holeIndex + 1,
+          diffToPar
+        });
+      }
+    }
+  }
+
+  return events;
+}
+
+function renderScoreNotifierEvent(event) {
+  if (!scoreNotifier || !event) return;
+  scoreNotifier.innerHTML = "";
+  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+
+  const diffToPar = Number(event.diffToPar);
+  let toneClass = "score-even";
+  if (diffToPar < 0) toneClass = "score-under";
+  if (diffToPar > 0) toneClass = "score-over";
+  const shadeClass = Math.abs(diffToPar) >= 2 ? "score-dark" : "score-light";
+  scoreNotifier.classList.add(toneClass);
+  if (toneClass !== "score-even") scoreNotifier.classList.add(shadeClass);
+
+  const line = document.createElement("div");
+  line.className = "score-notifier-line";
+  line.textContent = `${event.name} ${event.result} (${event.toPar}) ${event.hole}`;
+  scoreNotifier.appendChild(line);
+}
+
+function pumpScoreNotifierQueue() {
+  if (!scoreNotifier || scoreNotifierActive || !scoreNotifierQueue.length) return;
+  scoreNotifierActive = true;
+
+  const next = scoreNotifierQueue.shift();
+  renderScoreNotifierEvent(next);
+  scoreNotifier.classList.add("show");
+  if (scoreNotifierTimerId) clearTimeout(scoreNotifierTimerId);
+
+  scoreNotifierTimerId = window.setTimeout(() => {
+    scoreNotifier.classList.remove("show");
+    scoreNotifierTimerId = window.setTimeout(() => {
+      scoreNotifierActive = false;
+      if (scoreNotifierQueue.length) {
+        pumpScoreNotifierQueue();
+        return;
+      }
+      scoreNotifier.innerHTML = "";
+      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+    }, SCORE_NOTIFIER_GAP_MS);
+  }, SCORE_NOTIFIER_SHOW_MS);
+}
+
+function showScoreNotifier(events) {
+  if (!scoreNotifier || !events.length) return;
+  scoreNotifierQueue.push(...events);
+  pumpScoreNotifierQueue();
 }
 
 function sortTickerEntries(entries) {
@@ -709,11 +872,29 @@ async function main() {
   const defaultOpenRound = activeRoundIndex();
   let tickerRoundIndex = defaultOpenRound;
   const roundSections = [];
+  let refreshTournamentPromise = null;
 
   // helper: refresh server tjson without clobbering drafts (drafts are in-memory)
   async function refreshTournamentJson() {
-    const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
-    Object.assign(tjson, fresh);
+    if (refreshTournamentPromise) return refreshTournamentPromise;
+    refreshTournamentPromise = (async () => {
+      const previousTournament = {
+        score_data: tjson?.score_data || { rounds: [] },
+        players: tjson?.players || [],
+        teams: tjson?.teams || [],
+        course: tjson?.course || { pars: Array(18).fill(4) }
+      };
+      const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
+      const newEvents = collectNewScoreEvents(previousTournament, fresh);
+      Object.assign(tjson, fresh);
+      if (newEvents.length) showScoreNotifier(newEvents);
+      return fresh;
+    })();
+    try {
+      return await refreshTournamentPromise;
+    } finally {
+      refreshTournamentPromise = null;
+    }
   }
 
   for (let r = 0; r < rounds.length; r++) {
