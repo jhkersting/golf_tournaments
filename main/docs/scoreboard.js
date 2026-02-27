@@ -202,10 +202,23 @@ function isScrambleRound(viewRound) {
   return String(round.format || "").toLowerCase() === "scramble";
 }
 
+function tournamentHasAnyScrambleRound() {
+  const rounds = TOURN?.tournament?.rounds || [];
+  return rounds.some((r) => String(r?.format || "").toLowerCase() === "scramble");
+}
+
+function isIndividualDefaultRound(viewRound) {
+  const round = roundAt(viewRound);
+  if (!round) return false;
+  const format = String(round.format || "").toLowerCase();
+  return format === "singles" || format === "shamble" || format === "shambles";
+}
+
 function applyModeConstraints(viewRound) {
   const scrambleRound = isScrambleRound(viewRound);
-  if (scrambleRound && mode !== "team") mode = "team";
-  btnPlayer.disabled = scrambleRound;
+  const allRoundsTeamOnly = viewRound === "all" && tournamentHasAnyScrambleRound();
+  if ((scrambleRound || allRoundsTeamOnly) && mode !== "team") mode = "team";
+  btnPlayer.disabled = scrambleRound || allRoundsTeamOnly;
   syncModeButtons();
 }
 
@@ -280,7 +293,13 @@ function leaderboardToParValue(row) {
   return s;
 }
 
-function scoreSourceForRound(roundData) {
+function scoreSourceForRound(roundData, roundCfg) {
+  const format = String(roundCfg?.format || "").toLowerCase();
+  if (format === "scramble") {
+    const teamEntries = Object.entries(roundData?.team || {});
+    return { type: "team", entries: teamEntries };
+  }
+
   const playerEntries = Object.entries(roundData?.player || {});
   if (playerEntries.length) return { type: "player", entries: playerEntries };
   const teamEntries = Object.entries(roundData?.team || {});
@@ -293,6 +312,8 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   const events = [];
   const prevRounds = prevTournament?.score_data?.rounds || [];
   const nextRounds = nextTournament?.score_data?.rounds || [];
+  const prevRoundCfgs = prevTournament?.tournament?.rounds || [];
+  const nextRoundCfgs = nextTournament?.tournament?.rounds || [];
   const coursePars = nextTournament?.course?.pars || Array(18).fill(4);
 
   const playerNames = new Map();
@@ -310,10 +331,12 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   for (let roundIndex = 0; roundIndex < nextRounds.length; roundIndex++) {
     const nextRound = nextRounds[roundIndex] || {};
     const prevRound = prevRounds[roundIndex] || {};
-    const nextSource = scoreSourceForRound(nextRound);
+    const nextRoundCfg = nextRoundCfgs[roundIndex] || {};
+    const prevRoundCfg = prevRoundCfgs[roundIndex] || nextRoundCfg;
+    const nextSource = scoreSourceForRound(nextRound, nextRoundCfg);
     if (!nextSource.entries.length) continue;
 
-    const prevSource = scoreSourceForRound(prevRound);
+    const prevSource = scoreSourceForRound(prevRound, prevRoundCfg);
     const prevById = new Map(
       prevSource.entries.map(([id, entry]) => [String(id || "").trim(), entry || {}])
     );
@@ -1016,6 +1039,7 @@ function inlineScorecardHeading(host, title, subtitle) {
 function renderLeaderboard(data) {
   const isTeam = mode === "team";
   const isAllRounds = data.view?.round === "all";
+  const allowInlineScorecard = data.view?.round !== "all";
   const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
   lbTitle.textContent = isTeam ? "Teams" : "Individuals";
   rebuildTeamColors();
@@ -1113,7 +1137,7 @@ function renderLeaderboard(data) {
   const displayedRanks = new Set();
   sortedRows.forEach((r) => {
     const tr = document.createElement("tr");
-    tr.className = "clickable";
+    tr.className = allowInlineScorecard ? "clickable" : "";
     tr.dataset.id = isTeam ? r.teamId : r.playerId;
     const rowKey = rowIdentityKey(data, r);
     if (recentUpdatedRowKeys.has(rowKey)) tr.classList.add("row-updated");
@@ -1156,7 +1180,7 @@ function renderLeaderboard(data) {
       `;
     }
 
-    tr.onclick = async () => {
+    if (allowInlineScorecard) tr.onclick = async () => {
       const key = rowIdentityKey(data, r);
       if (openInlineKey === key) {
         clearInlineScorecardRow();
@@ -1188,7 +1212,7 @@ function renderLeaderboard(data) {
 
       const token = ++inlineReqToken;
       try {
-        if (mode === "team") {
+        if (mode === "team" && !isScrambleRound(data.view?.round)) {
           const teamTable = buildTeamMembersScorecard(rIdx, r, showGrossNet);
           if (token !== inlineReqToken || openInlineKey !== key) return;
           if (teamTable) {
@@ -1239,11 +1263,257 @@ function viewRoundLabel(viewRound) {
   return viewRound === "all" ? "All rounds" : `Round ${Number(viewRound) + 1}`;
 }
 
-function statRowsFromRound(roundData, isTeamMode) {
+function normalizeTeamId(teamId) {
+  return teamId == null ? "" : String(teamId).trim();
+}
+
+function roundAggregationConfig(roundCfg) {
+  const agg = roundCfg?.teamAggregation || {};
+  const mode = String(agg.mode || "sum").toLowerCase() === "avg" ? "avg" : "sum";
+  const rawTopX = Number(agg.topX);
+  const topX = Math.max(1, Math.min(4, Number.isFinite(rawTopX) ? Math.floor(rawTopX) : 4));
+  return { mode, topX };
+}
+
+function asPlayedNumber(v) {
+  if (!isPlayedScore(v)) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function aggregateNumbers(values, mode) {
+  if (!values.length) return null;
+  const total = values.reduce((a, v) => a + Number(v || 0), 0);
+  if (mode === "avg") return total / values.length;
+  return total;
+}
+
+function roundTeamNameLookup(tournamentJson, leaderboardRows = []) {
+  const out = new Map();
+  (tournamentJson?.teams || []).forEach((t) => {
+    const id = normalizeTeamId(t?.teamId ?? t?.id);
+    if (!id) return;
+    out.set(id, String(t?.teamName ?? t?.name ?? id));
+  });
+  (tournamentJson?.players || []).forEach((p) => {
+    const id = normalizeTeamId(p?.teamId);
+    if (!id || out.has(id)) return;
+    out.set(id, String(p?.teamName || id));
+  });
+  (leaderboardRows || []).forEach((row) => {
+    const id = normalizeTeamId(row?.teamId);
+    if (!id || out.has(id)) return;
+    out.set(id, String(row?.teamName || id));
+  });
+  return out;
+}
+
+function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNames, seedTeamIds = []) {
+  const byTeam = roundData?.team || {};
+  const teamIds = new Set(seedTeamIds.map((id) => normalizeTeamId(id)).filter(Boolean));
+  Object.keys(byTeam).forEach((id) => teamIds.add(normalizeTeamId(id)));
+
+  const rows = [];
+  for (const teamId of teamIds) {
+    const entry = byTeam[teamId] || {};
+    const gross = Array.isArray(entry?.gross) ? entry.gross : Array(18).fill(null);
+    const net = Array.isArray(entry?.net) ? entry.net : gross.slice();
+    let thru = 0;
+    let grossToParTotal = 0;
+    let netToParTotal = 0;
+    for (let i = 0; i < 18; i++) {
+      const grossV = asPlayedNumber(gross[i]);
+      const netV = asPlayedNumber(net[i]);
+      const par = Number(coursePars?.[i] || 0);
+      if (grossV != null || netV != null) thru += 1;
+      if (grossV != null) grossToParTotal += grossV - par;
+      if (netV != null) netToParTotal += netV - par;
+    }
+
+    const grossTotal = sumHoles(gross);
+    const netTotal = sumHoles(net);
+    rows.push({
+      teamId,
+      teamName: teamNames.get(teamId) || teamId || "Team",
+      thru,
+      gross: grossTotal,
+      net: netTotal,
+      strokes: useHandicap ? netTotal : grossTotal,
+      toPar: useHandicap ? netToParTotal : grossToParTotal,
+      toParGross: grossToParTotal,
+      toParNet: netToParTotal,
+      scores: {
+        gross,
+        net,
+        grossTotal,
+        netTotal,
+        grossToParTotal,
+        netToParTotal,
+        thru
+      }
+    });
+  }
+  return rows;
+}
+
+function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundData, coursePars, leaderboardRows = []) {
+  const roundCfg = (tournamentJson?.tournament?.rounds || [])[roundIndex] || {};
+  const useHandicap = !!roundCfg.useHandicap;
+  const { mode, topX } = roundAggregationConfig(roundCfg);
+  const playerById = roundData?.player || {};
+  const playerMetaById = new Map();
+  (tournamentJson?.players || []).forEach((p) => {
+    const byPlayerId = String(p?.playerId || "").trim();
+    const byId = String(p?.id || "").trim();
+    if (byPlayerId) playerMetaById.set(byPlayerId, p || {});
+    if (byId) playerMetaById.set(byId, p || {});
+  });
+  const teamNames = roundTeamNameLookup(tournamentJson, roundData?.leaderboard?.teams || []);
+
+  const seedTeamIds = new Set();
+  (tournamentJson?.teams || []).forEach((t) => seedTeamIds.add(normalizeTeamId(t?.teamId ?? t?.id)));
+  (tournamentJson?.players || []).forEach((p) => seedTeamIds.add(normalizeTeamId(p?.teamId)));
+  (leaderboardRows || []).forEach((row) => seedTeamIds.add(normalizeTeamId(row?.teamId)));
+
+  const playersByTeam = new Map();
+  for (const [playerId, entry] of Object.entries(playerById)) {
+    const meta = playerMetaById.get(String(playerId || "")) || {};
+    const teamId = normalizeTeamId(meta?.teamId);
+    if (!teamId) continue;
+    if (!playersByTeam.has(teamId)) playersByTeam.set(teamId, []);
+    playersByTeam.get(teamId).push({
+      playerId,
+      gross: Array.isArray(entry?.gross) ? entry.gross : Array(18).fill(null),
+      net: Array.isArray(entry?.net) ? entry.net : null
+    });
+    seedTeamIds.add(teamId);
+  }
+
+  const rows = [];
+  for (const teamId of seedTeamIds) {
+    if (!teamId) continue;
+    const teamPlayers = playersByTeam.get(teamId) || [];
+    const grossHoles = Array(18).fill(null);
+    const netHoles = Array(18).fill(null);
+    const selectedCountByHole = Array(18).fill(0);
+
+    for (let i = 0; i < 18; i++) {
+      const candidates = [];
+      for (const p of teamPlayers) {
+        const grossScore = asPlayedNumber(p.gross?.[i]);
+        const netRaw = asPlayedNumber(p.net?.[i]);
+        const netScore = netRaw != null ? netRaw : grossScore;
+        const metricScore = useHandicap ? netScore : grossScore;
+        if (metricScore == null) continue;
+        candidates.push({ gross: grossScore, net: netScore, metric: metricScore });
+      }
+      if (!candidates.length) continue;
+      candidates.sort((a, b) => a.metric - b.metric);
+      const picked = candidates.slice(0, topX);
+      selectedCountByHole[i] = picked.length;
+
+      const grossValues = picked.map((x) => x.gross).filter((v) => v != null);
+      const netValues = picked.map((x) => x.net).filter((v) => v != null);
+      const grossAgg = aggregateNumbers(grossValues, mode);
+      const netAgg = aggregateNumbers(netValues, mode);
+      if (grossAgg != null) grossHoles[i] = grossAgg;
+      if (netAgg != null) netHoles[i] = netAgg;
+    }
+
+    const thru = selectedCountByHole.reduce((a, count) => a + (count > 0 ? 1 : 0), 0);
+    const grossTotal = sumHoles(grossHoles);
+    const netTotal = sumHoles(netHoles);
+
+    let grossToParTotal = 0;
+    let netToParTotal = 0;
+    for (let i = 0; i < 18; i++) {
+      const count = selectedCountByHole[i];
+      if (!count) continue;
+      const parBase = Number(coursePars?.[i] || 0) * (mode === "avg" ? 1 : count);
+      const grossV = grossHoles[i];
+      const netV = netHoles[i];
+      if (grossV != null) grossToParTotal += Number(grossV) - parBase;
+      if (netV != null) netToParTotal += Number(netV) - parBase;
+    }
+
+    rows.push({
+      teamId,
+      teamName: teamNames.get(teamId) || teamId || "Team",
+      thru,
+      gross: grossTotal,
+      net: netTotal,
+      strokes: useHandicap ? netTotal : grossTotal,
+      toPar: useHandicap ? netToParTotal : grossToParTotal,
+      toParGross: grossToParTotal,
+      toParNet: netToParTotal,
+      scores: {
+        gross: grossHoles,
+        net: netHoles,
+        grossTotal,
+        netTotal,
+        grossToParTotal,
+        netToParTotal,
+        thru
+      }
+    });
+  }
+
+  return rows;
+}
+
+function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, leaderboardRows = []) {
+  const roundCfg = (tournamentJson?.tournament?.rounds || [])[roundIndex] || {};
+  const format = String(roundCfg.format || "").toLowerCase();
+  const useHandicap = !!roundCfg.useHandicap;
+  const teamNames = roundTeamNameLookup(tournamentJson, leaderboardRows);
+  const seedTeamIds = (leaderboardRows || []).map((row) => row?.teamId);
+  const fallbackRows = leaderboardRows || [];
+  if (fallbackRows.some((row) => rowHasAnyData(row))) return fallbackRows;
+
+  if (format === "scramble") {
+    const fromTeamEntries = buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNames, seedTeamIds);
+    if (fromTeamEntries.some((row) => rowHasAnyData(row))) return fromTeamEntries;
+    if (fallbackRows.length) return fallbackRows;
+    return fromTeamEntries;
+  }
+
+  const aggregated = buildAggregatedTeamRowsFromPlayers(
+    tournamentJson,
+    roundIndex,
+    roundData,
+    coursePars,
+    leaderboardRows
+  );
+  if (aggregated.some((row) => rowHasAnyData(row))) return aggregated;
+  if (fallbackRows.length) return fallbackRows;
+  return aggregated;
+}
+
+function statRowsFromRound(roundData, isTeamMode, roundIndex) {
   if (!roundData) return [];
-  const primary = isTeamMode ? (roundData.team || {}) : (roundData.player || {});
-  const fallback = !isTeamMode && !Object.keys(primary).length ? (roundData.team || {}) : null;
-  const source = fallback || primary;
+  let source;
+  if (isTeamMode) {
+    const primary = roundData.team || {};
+    if (Object.keys(primary).length) {
+      source = primary;
+    } else {
+      const course = TOURN?.course || { pars: Array(18).fill(4) };
+      const derivedRows = buildRoundTeamRows(
+        TOURN,
+        roundIndex,
+        roundData,
+        course.pars || Array(18).fill(4),
+        roundData?.leaderboard?.teams || []
+      );
+      source = Object.fromEntries(
+        derivedRows.map((row) => [row.teamId, { gross: row?.scores?.gross || Array(18).fill(null) }])
+      );
+    }
+  } else {
+    const primary = roundData.player || {};
+    const fallback = !Object.keys(primary).length ? (roundData.team || {}) : null;
+    source = fallback || primary;
+  }
   const rows = [];
 
   for (const [id, entry] of Object.entries(source)) {
@@ -1264,8 +1534,8 @@ function renderStats(data) {
   const par = Array.isArray(data?.course?.pars) ? data.course.pars : getCoursePars();
   const statRows =
     roundView === "all"
-      ? rounds.flatMap((rd) => statRowsFromRound(rd, isTeamMode))
-      : statRowsFromRound(rounds[Number(roundView)], isTeamMode);
+      ? rounds.flatMap((rd, idx) => statRowsFromRound(rd, isTeamMode, idx))
+      : statRowsFromRound(rounds[Number(roundView)], isTeamMode, Number(roundView));
 
   const holeTotals = Array(18).fill(0);
   const holeCounts = Array(18).fill(0);
@@ -1373,6 +1643,13 @@ function buildScoreboardResponse(tournamentJson, viewRound) {
 
   const rIdx = Number(viewRound);
   const derived = tournamentJson.score_data?.rounds?.[rIdx];
+  const derivedTeams = buildRoundTeamRows(
+    tournamentJson,
+    rIdx,
+    derived || {},
+    course.pars,
+    derived?.leaderboard?.teams || []
+  );
   return {
     tournament: tournamentJson.tournament,
     view: { round: rIdx },
@@ -1381,7 +1658,7 @@ function buildScoreboardResponse(tournamentJson, viewRound) {
       pars: course.pars,
       strokeIndex: course.strokeIndex
     },
-    teams: derived?.leaderboard?.teams || [],
+    teams: derivedTeams,
     players: derived?.leaderboard?.players || []
   };
 }
@@ -1468,7 +1745,11 @@ function render() {
   const scrambleInfo = isScrambleRound(data.view.round)
     ? " • scramble rounds are team-only"
     : "";
-  toggleNote.textContent = `${rLabel}${handicapInfo}${scrambleInfo}`;
+  const allRoundsInfo =
+    data.view.round === "all" && tournamentHasAnyScrambleRound()
+      ? " • all rounds view is team-only (scramble in tournament)"
+      : "";
+  toggleNote.textContent = `${rLabel}${handicapInfo}${scrambleInfo}${allRoundsInfo}`;
 
   renderLeaderboard(data);
   renderStats(data);
@@ -1499,7 +1780,12 @@ btnPlayer.onclick = () => {
 
 roundFilter.onchange = () => {
   const v = roundFilter.value;
-  currentRound = v === "all" ? "all" : Number(v);
+  const nextRound = v === "all" ? "all" : Number(v);
+  const switchedRounds = String(nextRound) !== String(currentRound);
+  currentRound = nextRound;
+  if (switchedRounds && isIndividualDefaultRound(currentRound) && !isScrambleRound(currentRound)) {
+    mode = "player";
+  }
   render();
 };
 

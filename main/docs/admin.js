@@ -256,17 +256,9 @@ function roundCard(){
 
     <div class="row" style="margin-top:8px;" data-aggrow>
       <div class="col">
-        <label>Team aggregation</label>
-        <select data-aggmode>
-          <option value="sum">Sum</option>
-          <option value="avg">Average</option>
-        </select>
-        <div class="small">How team score is computed from players for this round (team leaderboard only).</div>
-      </div>
-      <div class="col">
         <label>Top X scores taken</label>
         <input data-topx type="number" min="1" max="4" step="1" value="4" />
-        <div class="small">Sort players by net (or gross) and take best X (lowest) for team score.</div>
+        <div class="small">Team score uses the average of the best X players (lowest net or gross).</div>
       </div>
     </div>
   `;
@@ -312,7 +304,6 @@ function getRounds(){
     const format = c.querySelector("[data-format]")?.value;
     const useHandicap = c.querySelector("[data-handicap]")?.value === "true";
     const weight = Number(c.querySelector("[data-weight]")?.value || 0);
-    const aggMode = c.querySelector("[data-aggmode]")?.value || "sum";
     const topX = Number(c.querySelector("[data-topx]")?.value || 4);
 
     return {
@@ -321,7 +312,7 @@ function getRounds(){
       useHandicap,
       weight,
       teamAggregation: {
-        mode: aggMode,               // sum | avg
+        mode: "avg",
         topX: Math.max(1, Math.min(4, Math.floor(topX || 4)))
       }
     };

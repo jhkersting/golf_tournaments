@@ -3,6 +3,7 @@ import {
   staticJson,
   qs,
   createTeamColorRegistry,
+  STORAGE_KEYS,
   getRememberedPlayerCode,
   rememberPlayerCode,
   rememberTournamentId
@@ -326,7 +327,13 @@ function leaderboardToParValue(row) {
   return "E";
 }
 
-function scoreSourceForRound(roundData) {
+function scoreSourceForRound(roundData, roundCfg) {
+  const format = String(roundCfg?.format || "").toLowerCase();
+  if (format === "scramble") {
+    const teamEntries = Object.entries(roundData?.team || {});
+    return { type: "team", entries: teamEntries };
+  }
+
   const playerEntries = Object.entries(roundData?.player || {});
   if (playerEntries.length) return { type: "player", entries: playerEntries };
   const teamEntries = Object.entries(roundData?.team || {});
@@ -339,6 +346,8 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   const events = [];
   const prevRounds = prevTournament?.score_data?.rounds || [];
   const nextRounds = nextTournament?.score_data?.rounds || [];
+  const prevRoundCfgs = prevTournament?.tournament?.rounds || [];
+  const nextRoundCfgs = nextTournament?.tournament?.rounds || [];
   const coursePars = nextTournament?.course?.pars || Array(18).fill(4);
 
   const playerNames = new Map();
@@ -356,10 +365,12 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   for (let roundIndex = 0; roundIndex < nextRounds.length; roundIndex++) {
     const nextRound = nextRounds[roundIndex] || {};
     const prevRound = prevRounds[roundIndex] || {};
-    const nextSource = scoreSourceForRound(nextRound);
+    const nextRoundCfg = nextRoundCfgs[roundIndex] || {};
+    const prevRoundCfg = prevRoundCfgs[roundIndex] || nextRoundCfg;
+    const nextSource = scoreSourceForRound(nextRound, nextRoundCfg);
     if (!nextSource.entries.length) continue;
 
-    const prevSource = scoreSourceForRound(prevRound);
+    const prevSource = scoreSourceForRound(prevRound, prevRoundCfg);
     const prevById = new Map(
       prevSource.entries.map(([id, entry]) => [String(id || "").trim(), entry || {}])
     );
@@ -820,6 +831,15 @@ function roundHasAnyData(roundData) {
 }
 
 async function main() {
+  function clearCodeAndReload() {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.playerCode);
+    } catch { }
+    const u = new URL(location.href);
+    u.search = "";
+    location.href = u.toString();
+  }
+
   if (!code) {
     // No code provided: show page immediately so the code entry prompt is visible.
     $('body').show();
@@ -854,7 +874,15 @@ async function main() {
   if (!tid) {
     // Code was provided but invalid; reveal page to show the error.
     $('body').show();
-    forms.innerHTML = `<div class="card"><b>Invalid code.</b></div>`;
+    forms.innerHTML = `
+      <div class="card">
+        <b>Invalid code.</b>
+        <div class="actions" style="margin-top:10px;">
+          <button id="change_code_btn_invalid" class="secondary" type="button">Use different code</button>
+        </div>
+      </div>
+    `;
+    document.getElementById("change_code_btn_invalid")?.addEventListener("click", clearCodeAndReload);
     return;
   }
   rememberPlayerCode(code);
@@ -884,9 +912,13 @@ async function main() {
         <div class="small">Team</div>
         <div><b>${enter.team?.teamName || enter.team?.teamId || ""}</b></div>
         <div class="small" id="team_current_score" style="margin-top:4px;">Current score: —</div>
+        <div style="margin-top:8px;">
+          <button id="change_code_btn" class="secondary" type="button">Change code</button>
+        </div>
       </div>
     </div>
   `;
+  document.getElementById("change_code_btn")?.addEventListener("click", clearCodeAndReload);
 
   const rounds = tjson.tournament?.rounds || [];
   const course = tjson.course || { pars: Array(18).fill(4), strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1) };
@@ -1151,6 +1183,40 @@ async function main() {
     const status = el("div", { class: "small", style: "margin-top:10px;" }, "");
     const conflictBox = el("div", { class: "card", style: "display:none; border:2px solid var(--bad); margin-top:10px;" });
 
+    function captureActiveInputState() {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLInputElement)) return null;
+      if (!holePane.contains(active) && !bulkPane.contains(active)) return null;
+      const scope = active.getAttribute("data-enter-scope");
+      const targetId = active.getAttribute("data-target-id");
+      const holeIndex = active.getAttribute("data-hole-index");
+      if (!scope || !targetId || holeIndex == null) return null;
+      return {
+        scope,
+        targetId,
+        holeIndex,
+        selectionStart: active.selectionStart,
+        selectionEnd: active.selectionEnd,
+        selectionDirection: active.selectionDirection
+      };
+    }
+
+    function restoreActiveInputState(state) {
+      if (!state) return;
+      const root = state.scope === "bulk" ? bulkPane : holePane;
+      const candidates = root.querySelectorAll(
+        `input[data-enter-scope="${state.scope}"][data-hole-index="${state.holeIndex}"]`
+      );
+      const input = Array.from(candidates).find((n) => n.getAttribute("data-target-id") === state.targetId);
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      if (typeof state.selectionStart === "number" && typeof state.selectionEnd === "number") {
+        try {
+          input.setSelectionRange(state.selectionStart, state.selectionEnd, state.selectionDirection || undefined);
+        } catch { }
+      }
+    }
+
     function renderHoleForm() {
       holePane.innerHTML = "";
 
@@ -1229,6 +1295,9 @@ async function main() {
         );
 
         const inp = makeScoreInput(initial);
+        inp.setAttribute("data-enter-scope", "hole");
+        inp.setAttribute("data-target-id", teamId);
+        inp.setAttribute("data-hole-index", String(currentHole));
         inp.addEventListener("input", () => setHoleDraft(r, currentHole, teamId, inp.value));
         inputs.push({ targetId: teamId, input: inp });
 
@@ -1258,6 +1327,9 @@ async function main() {
           );
 
           const inp = makeScoreInput(initial);
+          inp.setAttribute("data-enter-scope", "hole");
+          inp.setAttribute("data-target-id", pid);
+          inp.setAttribute("data-hole-index", String(currentHole));
           inp.addEventListener("input", () => setHoleDraft(r, currentHole, pid, inp.value));
           inputs.push({ targetId: pid, input: inp });
 
@@ -1431,6 +1503,9 @@ async function main() {
           const dv = getBulkDraft(r, id, i);
           const initial = dv !== undefined ? dv : holes[i] == null ? "" : String(holes[i]);
           inp.value = initial ?? "";
+          inp.setAttribute("data-enter-scope", "bulk");
+          inp.setAttribute("data-target-id", id);
+          inp.setAttribute("data-hole-index", String(i));
           inp.addEventListener("input", () => setBulkDraft(r, id, i, inp.value));
           rowInputs[id][i] = inp;
           td.appendChild(inp);
@@ -1451,6 +1526,9 @@ async function main() {
           const dv = getBulkDraft(r, id, i);
           const initial = dv !== undefined ? dv : holes[i] == null ? "" : String(holes[i]);
           inp.value = initial ?? "";
+          inp.setAttribute("data-enter-scope", "bulk");
+          inp.setAttribute("data-target-id", id);
+          inp.setAttribute("data-hole-index", String(i));
           inp.addEventListener("input", () => setBulkDraft(r, id, i, inp.value));
           rowInputs[id][i] = inp;
           td.appendChild(inp);
@@ -1528,8 +1606,10 @@ async function main() {
       try {
         await refreshTournamentJson();
         renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
+        const activeInputState = captureActiveInputState();
         renderHoleForm();
         renderBulkTable();
+        restoreActiveInputState(activeInputState);
       } catch { }
     }, 10_000);
 
