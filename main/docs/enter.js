@@ -306,6 +306,7 @@ function stopTickerRotation() {
 
 function setTickerSection(section, token, onDone) {
   if (!ticker || !tickerTrack || !tickerTitle) return;
+  const startDelayMs = 3000;
   const nextDelayMs = 3000;
   tickerTitle.textContent = section.label;
 
@@ -330,7 +331,7 @@ function setTickerSection(section, token, onDone) {
   }
 
   const speedPxPerSec = 52;
-  const startX = viewport.clientWidth;
+  const startX = 0;
   const endX = -run.offsetWidth;
   let x = startX;
   let prevTs = 0;
@@ -356,7 +357,10 @@ function setTickerSection(section, token, onDone) {
     tickerRafId = requestAnimationFrame(frame);
   }
 
-  tickerRafId = requestAnimationFrame(frame);
+  tickerHoldTimerId = setTimeout(() => {
+    if (token !== tickerRunToken) return;
+    tickerRafId = requestAnimationFrame(frame);
+  }, startDelayMs);
 }
 
 function renderTicker(tjson, playersById, teamsById, roundIndex) {
