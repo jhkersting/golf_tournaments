@@ -3,6 +3,7 @@ import {
   staticJson,
   qs,
   dotsForStrokes,
+  createTeamColorRegistry,
   getRememberedTournamentId,
   rememberTournamentId
 } from "./app.js";
@@ -22,6 +23,7 @@ const raw = document.getElementById("raw");
 const statsMeta = document.getElementById("stats_meta");
 const statsKpis = document.getElementById("stats_kpis");
 const statsHoleTbl = document.getElementById("stats_hole_tbl");
+const scoreNotifier = document.getElementById("score_notifier");
 
 const scorecardCard = document.getElementById("scorecard_card");
 
@@ -36,65 +38,45 @@ let sortState = { key: "score", dir: "asc" };
 const AUTO_REFRESH_MS = 30000;
 let refreshTimerId = null;
 let refreshInFlight = false;
-const TEAM_COLORS = [
-  "#b287c4",
-  "#8e84d9",
-  "#6e9fd6",
-  "#63b0b4",
-  "#84b676",
-  "#c3a56f",
-  "#c98c6e",
-  "#c67f95"
-];
-
-let teamColorById = new Map();
-let teamColorByName = new Map();
+let scoreNotifierTimerId = 0;
+const teamColors = createTeamColorRegistry();
 
 function syncModeButtons() {
   btnTeam.classList.toggle("active", mode === "team");
   btnPlayer.classList.toggle("active", mode === "player");
 }
 
-function teamNameKey(name) {
-  return String(name || "").trim().toLowerCase();
-}
-
-function addTeamColor(teamId, teamName) {
-  const id = teamId == null ? "" : String(teamId);
-  const nKey = teamNameKey(teamName);
-
-  if (id && teamColorById.has(id)) {
-    const color = teamColorById.get(id);
-    if (nKey && !teamColorByName.has(nKey)) teamColorByName.set(nKey, color);
-    return;
-  }
-  if (!id && nKey && teamColorByName.has(nKey)) return;
-
-  const idx = teamColorById.size + teamColorByName.size;
-  const color = TEAM_COLORS[idx % TEAM_COLORS.length];
-
-  if (id) teamColorById.set(id, color);
-  if (nKey) teamColorByName.set(nKey, color);
-}
-
 function rebuildTeamColors(data) {
-  teamColorById = new Map();
-  teamColorByName = new Map();
+  const entries = [];
+  const seenIds = new Set();
+  const seenNames = new Set();
 
-  (TOURN?.teams || []).forEach((t) => addTeamColor(t?.teamId ?? t?.id, t?.teamName ?? t?.name));
-  (data?.teams || []).forEach((t) => addTeamColor(t?.teamId, t?.teamName));
-  (data?.players || []).forEach((p) => addTeamColor(p?.teamId, p?.teamName));
+  function pushEntry(teamId, teamName) {
+    const id = teamId == null ? "" : String(teamId).trim();
+    const name = String(teamName || "").trim();
+    const nKey = name.toLowerCase();
+    if (id) {
+      if (seenIds.has(id)) return;
+      seenIds.add(id);
+    } else if (nKey) {
+      if (seenNames.has(nKey)) return;
+      seenNames.add(nKey);
+    } else {
+      return;
+    }
+    entries.push({ teamId: id, teamName: name });
+  }
+
+  (TOURN?.teams || []).forEach((t) => pushEntry(t?.teamId ?? t?.id, t?.teamName ?? t?.name));
+  (data?.teams || []).forEach((t) => pushEntry(t?.teamId, t?.teamName));
+  (data?.players || []).forEach((p) => pushEntry(p?.teamId, p?.teamName));
+
+  teamColors.reset(entries.length);
+  entries.forEach((e) => teamColors.add(e.teamId, e.teamName));
 }
 
 function colorForTeam(teamId, teamName) {
-  const id = teamId == null ? "" : String(teamId);
-  if (id && teamColorById.has(id)) return teamColorById.get(id);
-  const nKey = teamNameKey(teamName);
-  if (nKey && teamColorByName.has(nKey)) return teamColorByName.get(nKey);
-  addTeamColor(id, teamName);
-  if (id && teamColorById.has(id)) return teamColorById.get(id);
-  if (nKey && teamColorByName.has(nKey)) return teamColorByName.get(nKey);
-  return TEAM_COLORS[0];
+  return teamColors.get(teamId, teamName);
 }
 
 function toParStrFromDiff(diff) {
@@ -232,6 +214,153 @@ function toParNumber(v) {
   if (up === "E" || up === "EVEN" || s === "0" || s === "+0" || s === "-0") return 0;
   const n = Number(s);
   return Number.isNaN(n) ? null : n;
+}
+
+function normalizePostedScore(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+function scoreResultLabel(diffToPar) {
+  if (diffToPar <= -3) return "Albatross";
+  if (diffToPar === -2) return "Eagle";
+  if (diffToPar === -1) return "Birdie";
+  if (diffToPar === 0) return "Par";
+  if (diffToPar === 1) return "Bogey";
+  if (diffToPar === 2) return "Double Bogey";
+  if (diffToPar === 3) return "Triple Bogey";
+  return `${diffToPar} Over`;
+}
+
+function leaderboardToParValue(row) {
+  const raw = firstDefined(row, [
+    "toPar",
+    "netToPar",
+    "toParNet",
+    "toParTotal",
+    "toParNetTotal",
+    "toParGross",
+    "grossToPar"
+  ]);
+  const n = toParNumber(raw);
+  if (n != null) return n > 0 ? `+${n}` : `${n}`;
+
+  const s = String(raw == null ? "" : raw).trim();
+  if (!s) return "E";
+  if (s.toUpperCase() === "EVEN") return "E";
+  return s;
+}
+
+function scoreSourceForRound(roundData) {
+  const playerEntries = Object.entries(roundData?.player || {});
+  if (playerEntries.length) return { type: "player", entries: playerEntries };
+  const teamEntries = Object.entries(roundData?.team || {});
+  return { type: "team", entries: teamEntries };
+}
+
+function collectNewScoreEvents(prevTournament, nextTournament) {
+  if (!prevTournament || !nextTournament) return [];
+
+  const events = [];
+  const prevRounds = prevTournament?.score_data?.rounds || [];
+  const nextRounds = nextTournament?.score_data?.rounds || [];
+  const coursePars = nextTournament?.course?.pars || Array(18).fill(4);
+
+  const playerNames = new Map();
+  (nextTournament?.players || []).forEach((p) => {
+    const id = String(p?.playerId || "").trim();
+    if (id) playerNames.set(id, p?.name || id);
+  });
+
+  const teamNames = new Map();
+  (nextTournament?.teams || []).forEach((t) => {
+    const id = String(t?.teamId ?? t?.id ?? "").trim();
+    if (id) teamNames.set(id, t?.teamName ?? t?.name ?? id);
+  });
+
+  for (let roundIndex = 0; roundIndex < nextRounds.length; roundIndex++) {
+    const nextRound = nextRounds[roundIndex] || {};
+    const prevRound = prevRounds[roundIndex] || {};
+    const nextSource = scoreSourceForRound(nextRound);
+    if (!nextSource.entries.length) continue;
+
+    const prevSource = scoreSourceForRound(prevRound);
+    const prevById = new Map(
+      prevSource.entries.map(([id, entry]) => [String(id || "").trim(), entry || {}])
+    );
+
+    const playerRows = new Map();
+    (nextRound?.leaderboard?.players || []).forEach((row) => {
+      const id = String(row?.playerId || "").trim();
+      if (id) playerRows.set(id, row);
+    });
+
+    const teamRows = new Map();
+    (nextRound?.leaderboard?.teams || []).forEach((row) => {
+      const id = String(row?.teamId || "").trim();
+      if (id) teamRows.set(id, row);
+    });
+
+    for (const [idRaw, nextEntry] of nextSource.entries) {
+      const id = String(idRaw || "").trim();
+      if (!id) continue;
+
+      const prevEntry = prevSource.type === nextSource.type ? prevById.get(id) : null;
+      const row = nextSource.type === "player" ? playerRows.get(id) : teamRows.get(id);
+      const name =
+        nextSource.type === "player"
+          ? row?.name || playerNames.get(id) || id
+          : row?.teamName || teamNames.get(id) || id;
+
+      for (let holeIndex = 0; holeIndex < 18; holeIndex++) {
+        const nextGross = normalizePostedScore(nextEntry?.gross?.[holeIndex]);
+        if (nextGross == null) continue;
+
+        const prevGross = normalizePostedScore(prevEntry?.gross?.[holeIndex]);
+        if (prevGross != null) continue;
+
+        const par = Number(coursePars?.[holeIndex] || 0);
+        const diffToPar = par > 0 ? nextGross - par : 0;
+        events.push({
+          name,
+          result: scoreResultLabel(diffToPar),
+          toPar: leaderboardToParValue(row),
+          hole: holeIndex + 1,
+          diffToPar
+        });
+      }
+    }
+  }
+
+  return events;
+}
+
+function showScoreNotifier(events) {
+  if (!scoreNotifier || !events.length) return;
+
+  const latest = events[events.length - 1];
+  scoreNotifier.innerHTML = "";
+  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+
+  const diffToPar = Number(latest.diffToPar);
+  let toneClass = "score-even";
+  if (diffToPar < 0) toneClass = "score-under";
+  if (diffToPar > 0) toneClass = "score-over";
+  const shadeClass = Math.abs(diffToPar) >= 2 ? "score-dark" : "score-light";
+  scoreNotifier.classList.add(toneClass);
+  if (toneClass !== "score-even") scoreNotifier.classList.add(shadeClass);
+
+  const line = document.createElement("div");
+  line.className = "score-notifier-line";
+  line.textContent = `${latest.name} ${latest.result} (${latest.toPar}) ${latest.hole}`;
+  scoreNotifier.appendChild(line);
+
+  scoreNotifier.classList.add("show");
+  if (scoreNotifierTimerId) clearTimeout(scoreNotifierTimerId);
+  scoreNotifierTimerId = window.setTimeout(() => {
+    scoreNotifier.classList.remove("show");
+  }, 5200);
 }
 
 function holesPlayedForRow(row) {
@@ -1188,9 +1317,13 @@ async function refreshTournamentData() {
   if (refreshInFlight || !tid) return;
   refreshInFlight = true;
   try {
-    TOURN = await loadTournament();
+    const previousTournament = TOURN;
+    const nextTournament = await loadTournament();
+    const newEvents = collectNewScoreEvents(previousTournament, nextTournament);
+    TOURN = nextTournament;
     syncRoundFilterOptions();
     render();
+    if (newEvents.length) showScoreNotifier(newEvents);
   } catch (e) {
     console.error("Scoreboard auto-refresh failed:", e);
   } finally {

@@ -2,6 +2,7 @@ import {
   api,
   staticJson,
   qs,
+  createTeamColorRegistry,
   getRememberedPlayerCode,
   rememberPlayerCode,
   rememberTournamentId
@@ -17,18 +18,7 @@ const ticker = document.getElementById("enter_ticker");
 const tickerTitle = document.getElementById("enter_ticker_title");
 const tickerTrack = document.getElementById("enter_ticker_track");
 
-const TEAM_COLORS = [
-  "#b287c4",
-  "#8e84d9",
-  "#6e9fd6",
-  "#63b0b4",
-  "#84b676",
-  "#c3a56f",
-  "#c98c6e",
-  "#c67f95"
-];
-
-let teamColorById = new Map();
+const teamColors = createTeamColorRegistry();
 let tickerSectionIndex = 0;
 let tickerRafId = 0;
 let tickerHoldTimerId = 0;
@@ -39,27 +29,26 @@ function normalizeTeamId(teamId) {
 }
 
 function seedTeamColors(tjson, playersById) {
-  teamColorById = new Map();
   const seen = new Set();
+  let totalTeams = 0;
   const add = (teamId) => {
     const id = normalizeTeamId(teamId);
     if (!id || seen.has(id)) return;
     seen.add(id);
-    const color = TEAM_COLORS[(seen.size - 1) % TEAM_COLORS.length];
-    teamColorById.set(id, color);
+    totalTeams += 1;
   };
   (tjson?.teams || []).forEach((t) => add(t?.teamId || t?.id));
   Object.values(playersById || {}).forEach((p) => add(p?.teamId));
+
+  teamColors.reset(totalTeams);
+  seen.forEach((id) => {
+    teamColors.add(id);
+  });
 }
 
 function colorForTeam(teamId) {
   const id = normalizeTeamId(teamId);
-  if (!id) return TEAM_COLORS[0];
-  if (!teamColorById.has(id)) {
-    const color = TEAM_COLORS[teamColorById.size % TEAM_COLORS.length];
-    teamColorById.set(id, color);
-  }
-  return teamColorById.get(id);
+  return teamColors.get(id);
 }
 
 /**
@@ -378,6 +367,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   const safeRound = Number.isInteger(currentRound) && currentRound >= 0 && currentRound < rounds.length ? currentRound : 0;
   const roundData = tjson?.score_data?.rounds?.[safeRound] || {};
   const roundCfg = rounds[safeRound] || {};
+  const isSingleRoundTournament = rounds.length === 1;
   const isScrambleRound = String(roundCfg.format || "").toLowerCase() === "scramble";
   const showIndividualGross = !isScrambleRound;
   const showIndividualNet =
@@ -520,19 +510,50 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   sortTickerEntries(teamRoundEntries);
   const teamRoundItems = teamRoundEntries.map((x) => x.node);
 
+  const teamRoundGrossEntries = allTeamIds.map((teamId) => {
+    const row = teamRoundById[teamId] || null;
+    const color = colorForTeam(teamId);
+    const hasData = rowHasAnyData(row);
+    const holeText = holeDisplayFromThru(row);
+    const teamName = row?.teamName || teamsById[teamId]?.teamName || teamId || "Team";
+    const parText = grossToParText(row, pars);
+    return {
+      name: teamName,
+      hasData,
+      parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
+      node: el(
+        "span",
+        { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
+        `${teamName} ${parText} ${holeText}`
+      )
+    };
+  });
+  sortTickerEntries(teamRoundGrossEntries);
+  const teamRoundGrossItems = teamRoundGrossEntries.map((x) => x.node);
+
   const sections = [];
-  if (showIndividualGross) {
-    sections.push({ label: `${roundLabel} (Gross)`, items: playerGrossItems });
-  }
-  if (showIndividualNet) {
-    sections.push({ label: `${roundLabel} (Net)`, items: playerNetItems });
-  }
-  if (isScrambleRound) {
-    sections.push({ label: `${roundLabel} (Team Net)`, items: teamRoundItems });
-    sections.push({ label: "Tournament (Team Net)", items: teamTournamentItems });
+  if (isSingleRoundTournament) {
+    if (isScrambleRound) {
+      sections.push({ label: `${roundLabel} (Net)`, items: teamRoundItems });
+      sections.push({ label: `${roundLabel} (Gross)`, items: teamRoundGrossItems });
+    } else {
+      sections.push({ label: `${roundLabel} (Gross)`, items: playerGrossItems });
+      sections.push({ label: `${roundLabel} (Net)`, items: playerNetItems });
+    }
   } else {
-    sections.push({ label: "Tournament (Team Net)", items: teamTournamentItems });
-    sections.push({ label: `${roundLabel} (Team Net)`, items: teamRoundItems });
+    if (showIndividualGross) {
+      sections.push({ label: `${roundLabel} (Gross)`, items: playerGrossItems });
+    }
+    if (showIndividualNet) {
+      sections.push({ label: `${roundLabel} (Net)`, items: playerNetItems });
+    }
+    if (isScrambleRound) {
+      sections.push({ label: `${roundLabel} (Net)`, items: teamRoundItems });
+      sections.push({ label: "Tournament (Net)", items: teamTournamentItems });
+    } else {
+      sections.push({ label: "Tournament (Team Net)", items: teamTournamentItems });
+      sections.push({ label: `${roundLabel} (Team Net)`, items: teamRoundItems });
+    }
   }
 
   if (!sections.length) {

@@ -379,6 +379,66 @@ hr {
   font-weight: 700;
 }
 
+.score-notifier {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 120;
+  max-width: min(90vw, 420px);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+  box-shadow: var(--shadow);
+  padding: 9px 11px;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+.score-notifier.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.score-notifier.score-under.score-light {
+  background: rgba(39, 146, 63, 0.30);
+  border-color: rgba(20, 98, 40, 0.55);
+}
+
+.score-notifier.score-under.score-dark {
+  background: rgba(20, 98, 40, 0.92);
+  border-color: rgba(20, 98, 40, 0.95);
+}
+
+.score-notifier.score-over.score-light {
+  background: rgba(197, 56, 56, 0.32);
+  border-color: rgba(138, 24, 24, 0.55);
+}
+
+.score-notifier.score-over.score-dark {
+  background: rgba(138, 24, 24, 0.92);
+  border-color: rgba(138, 24, 24, 0.95);
+}
+
+.score-notifier.score-even {
+  background: color-mix(in srgb, var(--link-bg) 36%, transparent);
+}
+
+.score-notifier-line {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.score-notifier.score-under.score-dark .score-notifier-line,
+.score-notifier.score-over.score-dark .score-notifier-line {
+  color: var(--WHITE);
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -538,13 +598,26 @@ hr {
 }
 
 .team-accent {
-  border-left: 2px solid var(--team-accent, var(--border-strong));
-  padding-left: 8px;
+  border-left: 4px solid var(--team-accent, var(--border-strong));
+  padding-left: 10px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--team-accent, var(--border-strong)) 18%, transparent) 0%,
+    transparent 60%
+  );
+  border-radius: 4px;
 }
 
 .team-accent-sub {
   margin-top: 3px;
   width: fit-content;
+  padding-right: 6px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--team-accent, var(--border-strong)) 14%, transparent) 0%,
+    transparent 70%
+  );
+  border-radius: 4px;
 }
 
 .enter-ticker {
@@ -578,7 +651,6 @@ hr {
   background: color-mix(in srgb, var(--surface) 86%, var(--bg));
   padding: 8px 10px 8px 0;
   border-right: 1px solid var(--border);
-  min-width: 170px;
   white-space: nowrap;
 }
 
@@ -611,8 +683,14 @@ hr {
   padding: 2px 8px 2px 8px;
 }
 .enter-ticker-item.team-accent {
-  border-left: 3px solid var(--team-accent, var(--border-strong));
+  border-left: 4px solid var(--team-accent, var(--border-strong));
   padding-left: 10px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--team-accent, var(--border-strong)) 18%, transparent) 0%,
+    transparent 60%
+  );
+  border-radius: 4px;
 }
 
 .stats-kpis {
@@ -905,6 +983,13 @@ th.dots {
 
   .container {
     padding: 10px 10px 20px;
+  }
+
+  .score-notifier {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    max-width: none;
   }
 
   .enter-page .container {
