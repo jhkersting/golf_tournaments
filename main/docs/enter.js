@@ -17,6 +17,7 @@ const forms = document.getElementById("round_forms");
 const ticker = document.getElementById("enter_ticker");
 const tickerTitle = document.getElementById("enter_ticker_title");
 const tickerTrack = document.getElementById("enter_ticker_track");
+const brandDot = document.querySelector(".brand .dot");
 const scoreNotifier = document.getElementById("score_notifier");
 
 const teamColors = createTeamColorRegistry();
@@ -32,6 +33,17 @@ const SCORE_NOTIFIER_GAP_MS = 200;
 
 function normalizeTeamId(teamId) {
   return teamId == null ? "" : String(teamId).trim();
+}
+
+function setBrandDotColor(color) {
+  if (!brandDot) return;
+  if (!color) {
+    brandDot.style.removeProperty("background");
+    brandDot.style.removeProperty("box-shadow");
+    return;
+  }
+  brandDot.style.background = color;
+  brandDot.style.boxShadow = `0 0 0 6px color-mix(in srgb, ${color} 24%, transparent)`;
 }
 
 function seedTeamColors(tjson, playersById) {
@@ -640,6 +652,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
     const parText = netToParText(row, pars);
     return {
       name: teamName,
+      color,
       hasData,
       parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
       node: el(
@@ -661,6 +674,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
     const parText = netToParText(row, pars);
     return {
       name: teamName,
+      color,
       hasData,
       parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
       node: el(
@@ -682,6 +696,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
     const parText = grossToParText(row, pars);
     return {
       name: teamName,
+      color,
       hasData,
       parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
       node: el(
@@ -693,6 +708,11 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   });
   sortTickerEntries(teamRoundGrossEntries);
   const teamRoundGrossItems = teamRoundGrossEntries.map((x) => x.node);
+
+  // Update brand dot to current leading team color (active round first, then tournament fallback).
+  const leadingRoundTeam = teamRoundEntries.find((x) => x.hasData);
+  const leadingTournamentTeam = teamTournamentEntries.find((x) => x.hasData);
+  setBrandDotColor((leadingRoundTeam || leadingTournamentTeam || null)?.color || null);
 
   const sections = [];
   if (isSingleRoundTournament) {
@@ -1421,7 +1441,7 @@ async function main() {
     renderHoleForm();
     renderBulkTable();
 
-    // Auto-refresh to pick up others' scores quickly (every 30s) without clobbering drafts
+    // Auto-refresh to pick up others' scores quickly (every 10s) without clobbering drafts
     const refreshTimer = setInterval(async () => {
       try {
         await refreshTournamentJson();
@@ -1429,7 +1449,7 @@ async function main() {
         renderHoleForm();
         renderBulkTable();
       } catch { }
-    }, 30_000);
+    }, 10_000);
 
     // keep the timer from being GC'd (optional)
     roundCard._refreshTimer = refreshTimer;

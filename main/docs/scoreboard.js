@@ -35,7 +35,7 @@ let openInlineKey = null;
 let openInlineRow = null;
 let inlineReqToken = 0;
 let sortState = { key: "score", dir: "asc" };
-const AUTO_REFRESH_MS = 30000;
+const AUTO_REFRESH_MS = 10000;
 let refreshTimerId = null;
 let refreshInFlight = false;
 let scoreNotifierTimerId = 0;
@@ -45,10 +45,22 @@ const SCORE_NOTIFIER_SHOW_MS = 2300;
 const SCORE_NOTIFIER_GAP_MS = 200;
 const teamColors = createTeamColorRegistry();
 let teamColorsSeeded = false;
+const brandDot = document.querySelector(".brand .dot");
 
 function syncModeButtons() {
   btnTeam.classList.toggle("active", mode === "team");
   btnPlayer.classList.toggle("active", mode === "player");
+}
+
+function setBrandDotColor(color) {
+  if (!brandDot) return;
+  if (!color) {
+    brandDot.style.removeProperty("background");
+    brandDot.style.removeProperty("box-shadow");
+    return;
+  }
+  brandDot.style.background = color;
+  brandDot.style.boxShadow = `0 0 0 6px color-mix(in srgb, ${color} 24%, transparent)`;
 }
 
 function rebuildTeamColors() {
@@ -1049,6 +1061,14 @@ function renderLeaderboard(data) {
       return compareRows(a.row, b.row, sortState.key, sortState.dir, showGrossNet, data, isTeam);
     })
     .map((x) => x.row);
+
+  const leader = sortedRows.find((row) => hasPostedScores(row)) || null;
+  if (leader) {
+    const leaderColor = colorForTeam(leader?.teamId, leader?.teamName);
+    setBrandDotColor(leaderColor);
+  } else {
+    setBrandDotColor(null);
+  }
 
   const colCount = leaderboardColCount(data);
   const rowByKey = new Map();
