@@ -720,6 +720,17 @@ hr {
 
 .stats-hole-table {
   min-width: 640px;
+  table-layout: fixed;
+}
+
+.stats-hole-table th:first-child,
+.stats-hole-table td:first-child {
+  width: 72px;
+}
+
+.stats-hole-table th:nth-child(n + 2):nth-child(-n + 10),
+.stats-hole-table td:nth-child(n + 2):nth-child(-n + 10) {
+  width: 52px;
 }
 
 .clickable {
