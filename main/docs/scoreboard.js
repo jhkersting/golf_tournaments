@@ -32,6 +32,10 @@ let TOURN = null;
 let openInlineKey = null;
 let openInlineRow = null;
 let inlineReqToken = 0;
+let sortState = { key: "score", dir: "asc" };
+const AUTO_REFRESH_MS = 30000;
+let refreshTimerId = null;
+let refreshInFlight = false;
 const TEAM_COLORS = [
   "#b287c4",
   "#8e84d9",
@@ -219,6 +223,140 @@ function scoreValue(v) {
   return v == null || Number.isNaN(Number(v)) ? "—" : String(v);
 }
 
+function toParNumber(v) {
+  if (v == null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const s = String(v).trim();
+  if (!s) return null;
+  const up = s.toUpperCase();
+  if (up === "E" || up === "EVEN" || s === "0" || s === "+0" || s === "-0") return 0;
+  const n = Number(s);
+  return Number.isNaN(n) ? null : n;
+}
+
+function holesPlayedForRow(row) {
+  const thru = Number(row?.thru);
+  if (Number.isFinite(thru) && thru > 0) return thru;
+  const gross = row?.scores?.gross;
+  if (Array.isArray(gross)) return gross.reduce((a, v) => a + (isPlayedScore(v) ? 1 : 0), 0);
+  const net = row?.scores?.net;
+  if (Array.isArray(net)) return net.reduce((a, v) => a + (isPlayedScore(v) ? 1 : 0), 0);
+  return 0;
+}
+
+function textCellValue(v) {
+  return String(v || "").toLowerCase();
+}
+
+function compareNullableNumber(a, b, dir) {
+  const aNull = a == null || Number.isNaN(Number(a));
+  const bNull = b == null || Number.isNaN(Number(b));
+  if (aNull && bNull) return 0;
+  if (aNull) return 1;
+  if (bNull) return -1;
+  const out = Number(a) - Number(b);
+  return dir === "desc" ? -out : out;
+}
+
+function defaultScoreForSort(row, showGrossNet, data) {
+  if (showGrossNet) return toParNumber(netToParForRow(row, data));
+  return toParNumber(firstDefined(row, ["toPar", "netToPar", "toParNet", "toParTotal"]));
+}
+
+function defaultSortComparator(a, b, showGrossNet, data) {
+  const scoreCmp = compareNullableNumber(
+    defaultScoreForSort(a, showGrossNet, data),
+    defaultScoreForSort(b, showGrossNet, data),
+    "asc"
+  );
+  if (scoreCmp !== 0) return scoreCmp;
+  const holesCmp = compareNullableNumber(holesPlayedForRow(a), holesPlayedForRow(b), "desc");
+  if (holesCmp !== 0) return holesCmp;
+  return textCellValue(a?.teamName || a?.name).localeCompare(textCellValue(b?.teamName || b?.name));
+}
+
+function compareRows(a, b, sortKey, sortDir, showGrossNet, data, isTeam) {
+  const nameA = isTeam ? a?.teamName : a?.name;
+  const nameB = isTeam ? b?.teamName : b?.name;
+
+  if (sortKey === "name") {
+    const out = textCellValue(nameA).localeCompare(textCellValue(nameB));
+    if (out !== 0) return sortDir === "desc" ? -out : out;
+    return defaultSortComparator(a, b, showGrossNet, data);
+  }
+
+  if (sortKey === "thru") {
+    const out = compareNullableNumber(holesPlayedForRow(a), holesPlayedForRow(b), sortDir);
+    if (out !== 0) return out;
+    return defaultSortComparator(a, b, showGrossNet, data);
+  }
+
+  if (sortKey === "gross") {
+    const out = compareNullableNumber(
+      toParNumber(grossToParForRow(a, data)),
+      toParNumber(grossToParForRow(b, data)),
+      sortDir
+    );
+    if (out !== 0) return out;
+    return defaultSortComparator(a, b, showGrossNet, data);
+  }
+
+  if (sortKey === "net") {
+    const out = compareNullableNumber(
+      toParNumber(netToParForRow(a, data)),
+      toParNumber(netToParForRow(b, data)),
+      sortDir
+    );
+    if (out !== 0) return out;
+    return defaultSortComparator(a, b, showGrossNet, data);
+  }
+
+  if (sortKey === "toPar") {
+    const out = compareNullableNumber(
+      toParNumber(firstDefined(a, ["toPar", "netToPar", "toParNet", "toParTotal"])),
+      toParNumber(firstDefined(b, ["toPar", "netToPar", "toParNet", "toParTotal"])),
+      sortDir
+    );
+    if (out !== 0) return out;
+    return defaultSortComparator(a, b, showGrossNet, data);
+  }
+
+  if (sortKey === "strokes") {
+    const out = compareNullableNumber(
+      firstDefined(a, ["strokes", "net", "netTotal"]),
+      firstDefined(b, ["strokes", "net", "netTotal"]),
+      sortDir
+    );
+    if (out !== 0) return out;
+    return defaultSortComparator(a, b, showGrossNet, data);
+  }
+
+  return defaultSortComparator(a, b, showGrossNet, data);
+}
+
+function rowStableId(row, isTeam) {
+  return isTeam ? String(row?.teamId || "") : String(row?.playerId || "");
+}
+
+function buildStandingRankMap(rows, showGrossNet, data, isTeam) {
+  const rankById = new Map();
+  const rowsWithData = rows.filter((r) => rowHasAnyData(r));
+  const sorted = [...rowsWithData].sort((a, b) => defaultSortComparator(a, b, showGrossNet, data));
+
+  let lastScore = null;
+  let rank = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const row = sorted[i];
+    const score = defaultScoreForSort(row, showGrossNet, data);
+    if (i === 0 || score !== lastScore) {
+      rank = i + 1;
+      lastScore = score;
+    }
+    rankById.set(rowStableId(row, isTeam), rank);
+  }
+  return rankById;
+}
+
 function grossForRow(row) {
   if (row?.gross != null) return row.gross;
   if (row?.grossTotal != null) return row.grossTotal;
@@ -333,6 +471,27 @@ function sectionPlayedCount(arr, start, end) {
   return count;
 }
 
+function holeScoreCell(value, parValue) {
+  if (!isPlayedScore(value)) return `<td class="mono"></td>`;
+
+  const score = Number(value);
+  const diff = score - Number(parValue || 0);
+  const absDiff = Math.min(Math.abs(diff), 4);
+
+  let toneClass = "score-even";
+  if (diff < 0) toneClass = "score-under";
+  if (diff > 0) toneClass = "score-over";
+  const shadeClass = absDiff >= 2 ? " score-dark" : " score-light";
+
+  const title = `${toParStrFromDiff(diff)} to par`;
+  let shapeClass = "";
+  if (diff < 0) shapeClass = " score-hole-circle";
+  if (diff === 1) shapeClass = " score-hole-square";
+  const content = `<span class="score-hole-pill ${toneClass}${shadeClass}${shapeClass}">${String(value)}</span>`;
+
+  return `<td class="mono score-hole-cell" title="${title}">${content}</td>`;
+}
+
 function buildScorecardTable(scores, useHandicap) {
   const gross = scores.gross || Array(18).fill(null);
   const net = scores.net || Array(18).fill(null);
@@ -409,8 +568,7 @@ function buildScorecardTable(scores, useHandicap) {
       `<td class="left"><b>${label}</b></td>` +
       Array.from({ length: end - start + 1 }, (_, k) => {
         const i = start + k;
-        const v = arr[i];
-        return `<td class="mono">${isPlayedScore(v) ? String(v) : ""}</td>`;
+        return holeScoreCell(arr[i], par[i]);
       }).join("") +
       `<td class="mono"><b>${totalCell}</b></td>` +
       `<td class="mono"><b>${toParCell}</b></td>`;
@@ -513,8 +671,7 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
         `<td class="left"><b>${p.name}</b></td>` +
         Array.from({ length: end - start + 1 }, (_, k) => {
           const i = start + k;
-          const v = holes[i];
-          return `<td class="mono">${isPlayedScore(v) ? String(v) : ""}</td>`;
+          return holeScoreCell(holes[i], par[i]);
         }).join("") +
         `<td class="mono"><b>${played ? segmentTotal(holes, start, end) : ""}</b></td>` +
         `<td class="mono"><b>${played ? toParStrFromDiff(segmentToPar(holes, par, start, end)) : ""}</b></td>`;
@@ -642,29 +799,47 @@ function renderLeaderboard(data) {
   rebuildTeamColors(data);
 
   const head = document.getElementById("lb_head");
+  const prevSortKey = sortState?.key || "score";
+  const defaultSortKey = showGrossNet ? "net" : "toPar";
+  const allowedSortKeys = showGrossNet
+    ? new Set(["name", "thru", "gross", "net", "score"])
+    : new Set(["name", "toPar", "thru", "strokes", "score"]);
+  if (!allowedSortKeys.has(prevSortKey)) sortState = { key: defaultSortKey, dir: "asc" };
+  if (sortState.key === "score") sortState = { key: defaultSortKey, dir: "asc" };
+
+  function sortArrow(key) {
+    return sortState.key === key ? (sortState.dir === "asc" ? "▲" : "▼") : "";
+  }
+
+  function headBtn(label, key, left = false) {
+    return `<button type="button" class="sort-head-btn ${left ? "left" : ""}" data-sort-key="${key}">${label}<span class="sort-arrow">${sortArrow(key)}</span></button>`;
+  }
+
   if (showGrossNet) {
     head.innerHTML = `
-      <th class="left">#</th>
-      <th class="left">${isTeam ? "Team" : "Player"}</th>
-      <th>Thru</th>
-      <th>Gross ±</th>
-      <th>Net ±</th>
+      <th class="rank-col"></th>
+      <th class="left">${headBtn(isTeam ? "Team" : "Player", "name", true)}</th>
+      <th>${headBtn("Thru", "thru")}</th>
+      <th>${headBtn("Gross ±", "gross")}</th>
+      <th>${headBtn("Net ±", "net")}</th>
     `;
   } else {
     head.innerHTML = `
-      <th class="left">#</th>
-      <th class="left">${isTeam ? "Team" : "Player"}</th>
-      <th>±</th>
-      <th>Thru</th>
-      <th>Strokes</th>
+      <th class="rank-col"></th>
+      <th class="left">${headBtn(isTeam ? "Team" : "Player", "name", true)}</th>
+      <th>${headBtn("±", "toPar")}</th>
+      <th>${headBtn("Thru", "thru")}</th>
+      <th>${headBtn("Strokes", "strokes")}</th>
     `;
   }
 
   const tbody = lbTbl.querySelector("tbody");
+  const reopenKey = openInlineKey;
   tbody.innerHTML = "";
   clearInlineScorecardRow();
 
   const rows = isTeam ? data.teams || [] : data.players || [];
+  const standingRanks = buildStandingRankMap(rows, showGrossNet, data, isTeam);
   function hasPostedScores(row) {
     if (Number(row?.thru || 0) > 0) return true;
     if (Number(row?.strokes || 0) > 0) return true;
@@ -678,19 +853,38 @@ function renderLeaderboard(data) {
   }
 
   const sortedRows = rows
-    .map((row, idx) => ({ row, idx, hasData: hasPostedScores(row) }))
+    .map((row) => ({ row, hasData: hasPostedScores(row) }))
     .sort((a, b) => {
-      if (a.hasData === b.hasData) return a.idx - b.idx;
-      return a.hasData ? -1 : 1;
+      if (a.hasData !== b.hasData) return a.hasData ? -1 : 1;
+      return compareRows(a.row, b.row, sortState.key, sortState.dir, showGrossNet, data, isTeam);
     })
     .map((x) => x.row);
 
   const colCount = leaderboardColCount(data);
+  const rowByKey = new Map();
+  head.querySelectorAll("button[data-sort-key]").forEach((btn) => {
+    btn.onclick = () => {
+      const key = btn.dataset.sortKey;
+      if (!key) return;
+      if (sortState.key === key) {
+        sortState = { key, dir: sortState.dir === "asc" ? "desc" : "asc" };
+      } else {
+        sortState = { key, dir: "asc" };
+      }
+      render();
+    };
+  });
 
-  sortedRows.forEach((r, idx) => {
+  const displayedRanks = new Set();
+  sortedRows.forEach((r) => {
     const tr = document.createElement("tr");
     tr.className = "clickable";
     tr.dataset.id = isTeam ? r.teamId : r.playerId;
+    const rid = rowStableId(r, isTeam);
+    const standingRank = standingRanks.get(rid);
+    const rankCellValue =
+      standingRank == null || displayedRanks.has(standingRank) ? "" : `${standingRank}`;
+    if (standingRank != null) displayedRanks.add(standingRank);
     const teamColor = colorForTeam(r.teamId, r.teamName);
 
     const nameCell = `
@@ -702,7 +896,7 @@ function renderLeaderboard(data) {
 
     if (showGrossNet) {
       tr.innerHTML = `
-        <td class="mono">${idx + 1}</td>
+        <td class="mono rank-col">${rankCellValue}</td>
         ${nameCell}
         <td class="mono">${r.thru == null ? "—" : String(r.thru)}</td>
         <td class="mono"><b>${grossToParForRow(r, data)}</b></td>
@@ -710,7 +904,7 @@ function renderLeaderboard(data) {
       `;
     } else {
       tr.innerHTML = `
-        <td class="mono">${idx + 1}</td>
+        <td class="mono rank-col">${rankCellValue}</td>
         ${nameCell}
         <td class="mono"><b>${r.toPar ?? "E"}</b></td>
         <td class="mono">${r.thru == null ? "—" : String(r.thru)}</td>
@@ -787,8 +981,14 @@ function renderLeaderboard(data) {
       }
     };
 
+    rowByKey.set(rowIdentityKey(data, r), tr);
     tbody.appendChild(tr);
   });
+
+  if (reopenKey && rowByKey.has(reopenKey)) {
+    const reopenRow = rowByKey.get(reopenKey);
+    if (reopenRow) reopenRow.click();
+  }
 }
 
 function viewRoundLabel(viewRound) {
@@ -963,6 +1163,48 @@ async function loadTournament() {
   }
 }
 
+function syncRoundFilterOptions() {
+  const previous = currentRound;
+  roundFilter.innerHTML = `<option value="all">All rounds (weighted)</option>`;
+  (TOURN?.tournament?.rounds || []).forEach((r, idx) => {
+    roundFilter.innerHTML += `<option value="${idx}">Round ${idx + 1}: ${r.name || `Round ${idx + 1}`}</option>`;
+  });
+
+  const roundCount = (TOURN?.tournament?.rounds || []).length;
+  if (roundCount <= 0) {
+    currentRound = "all";
+  } else if (previous === "all") {
+    currentRound = "all";
+  } else if (Number(previous) >= 0 && Number(previous) < roundCount) {
+    currentRound = Number(previous);
+  } else {
+    currentRound = newestRoundWithDataIndex(TOURN);
+  }
+
+  roundFilter.value = String(currentRound);
+}
+
+async function refreshTournamentData() {
+  if (refreshInFlight || !tid) return;
+  refreshInFlight = true;
+  try {
+    TOURN = await loadTournament();
+    syncRoundFilterOptions();
+    render();
+  } catch (e) {
+    console.error("Scoreboard auto-refresh failed:", e);
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+function startAutoRefresh() {
+  if (refreshTimerId) clearInterval(refreshTimerId);
+  refreshTimerId = setInterval(() => {
+    refreshTournamentData();
+  }, AUTO_REFRESH_MS);
+}
+
 function render() {
   if (!TOURN) return;
   applyModeConstraints(currentRound);
@@ -1025,21 +1267,13 @@ roundFilter.onchange = () => {
     rememberTournamentId(tid);
     $('body').show();
 
-    roundFilter.innerHTML = `<option value="all">All rounds (weighted)</option>`;
-    (TOURN.tournament.rounds || []).forEach((r, idx) => {
-      roundFilter.innerHTML += `<option value="${idx}">Round ${idx + 1}: ${r.name || `Round ${idx + 1}`}</option>`;
-    });
-
     const roundCount = (TOURN.tournament.rounds || []).length;
-    if (roundCount > 0) {
-      currentRound = newestRoundWithDataIndex(TOURN);
-    } else {
-      currentRound = "all";
-    }
-    roundFilter.value = String(currentRound);
+    currentRound = roundCount > 0 ? newestRoundWithDataIndex(TOURN) : "all";
+    syncRoundFilterOptions();
 
     status.textContent = "";
     render();
+    startAutoRefresh();
   } catch (e) {
     console.error(e);
     status.textContent = e.message || String(e);
