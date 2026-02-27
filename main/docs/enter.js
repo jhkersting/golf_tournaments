@@ -607,6 +607,8 @@ function roundHasAnyData(roundData) {
 
 async function main() {
   if (!code) {
+    // No code provided: show page immediately so the code entry prompt is visible.
+    $('body').show();
     forms.innerHTML = `
       <div class="card">
         <h3 style="margin:0 0 8px 0;">Enter your player code</h3>
@@ -636,6 +638,8 @@ async function main() {
   const enter = await staticJson(`/enter/${encodeURIComponent(code)}.json`, { cacheKey: `enter:${code}` });
   const tid = enter?.tournamentId;
   if (!tid) {
+    // Code was provided but invalid; reveal page to show the error.
+    $('body').show();
     forms.innerHTML = `<div class="card"><b>Invalid code.</b></div>`;
     return;
   }
@@ -648,6 +652,7 @@ async function main() {
   // Tournament public JSON (single file)
   const tjson = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, { cacheKey: `t:${tid}` });
 
+  // Code path: reveal only after required data has loaded.
   $('body').show();
   who.style.display = "";
   who.className = "card";

@@ -39,6 +39,10 @@ const AUTO_REFRESH_MS = 30000;
 let refreshTimerId = null;
 let refreshInFlight = false;
 let scoreNotifierTimerId = 0;
+let scoreNotifierQueue = [];
+let scoreNotifierActive = false;
+const SCORE_NOTIFIER_SHOW_MS = 2300;
+const SCORE_NOTIFIER_GAP_MS = 200;
 const teamColors = createTeamColorRegistry();
 
 function syncModeButtons() {
@@ -336,14 +340,12 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   return events;
 }
 
-function showScoreNotifier(events) {
-  if (!scoreNotifier || !events.length) return;
-
-  const latest = events[events.length - 1];
+function renderScoreNotifierEvent(event) {
+  if (!scoreNotifier || !event) return;
   scoreNotifier.innerHTML = "";
   scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
 
-  const diffToPar = Number(latest.diffToPar);
+  const diffToPar = Number(event.diffToPar);
   let toneClass = "score-even";
   if (diffToPar < 0) toneClass = "score-under";
   if (diffToPar > 0) toneClass = "score-over";
@@ -353,14 +355,37 @@ function showScoreNotifier(events) {
 
   const line = document.createElement("div");
   line.className = "score-notifier-line";
-  line.textContent = `${latest.name} ${latest.result} (${latest.toPar}) ${latest.hole}`;
+  line.textContent = `${event.name} ${event.result} (${event.toPar}) ${event.hole}`;
   scoreNotifier.appendChild(line);
+}
 
+function pumpScoreNotifierQueue() {
+  if (!scoreNotifier || scoreNotifierActive || !scoreNotifierQueue.length) return;
+  scoreNotifierActive = true;
+
+  const next = scoreNotifierQueue.shift();
+  renderScoreNotifierEvent(next);
   scoreNotifier.classList.add("show");
   if (scoreNotifierTimerId) clearTimeout(scoreNotifierTimerId);
+
   scoreNotifierTimerId = window.setTimeout(() => {
     scoreNotifier.classList.remove("show");
-  }, 5200);
+    scoreNotifierTimerId = window.setTimeout(() => {
+      scoreNotifierActive = false;
+      if (scoreNotifierQueue.length) {
+        pumpScoreNotifierQueue();
+        return;
+      }
+      scoreNotifier.innerHTML = "";
+      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+    }, SCORE_NOTIFIER_GAP_MS);
+  }, SCORE_NOTIFIER_SHOW_MS);
+}
+
+function showScoreNotifier(events) {
+  if (!scoreNotifier || !events.length) return;
+  scoreNotifierQueue.push(...events);
+  pumpScoreNotifierQueue();
 }
 
 function holesPlayedForRow(row) {
