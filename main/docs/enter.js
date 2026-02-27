@@ -25,11 +25,22 @@ let tickerSectionIndex = 0;
 let tickerRafId = 0;
 let tickerHoldTimerId = 0;
 let tickerRunToken = 0;
+let tickerLoopRunning = false;
+let tickerSections = [];
+let tickerRunEl = null;
+let tickerCurrentX = 0;
+let tickerEndX = 0;
+let tickerPrevTs = 0;
+let tickerPhase = "hold";
+let tickerPhaseStartedAt = 0;
 let scoreNotifierTimerId = 0;
 let scoreNotifierQueue = [];
 let scoreNotifierActive = false;
 const SCORE_NOTIFIER_SHOW_MS = 2300;
 const SCORE_NOTIFIER_GAP_MS = 200;
+const TICKER_SPEED_PX_PER_SEC = 52;
+const TICKER_START_DELAY_MS = 3000;
+const TICKER_NEXT_DELAY_MS = 3000;
 
 function normalizeTeamId(teamId) {
   return teamId == null ? "" : String(teamId).trim();
@@ -458,6 +469,7 @@ function sortTickerEntries(entries) {
 
 function stopTickerRotation() {
   tickerRunToken += 1;
+  tickerLoopRunning = false;
   if (tickerRafId) {
     cancelAnimationFrame(tickerRafId);
     tickerRafId = 0;
@@ -466,76 +478,90 @@ function stopTickerRotation() {
     clearTimeout(tickerHoldTimerId);
     tickerHoldTimerId = 0;
   }
+  tickerRunEl = null;
+  tickerSections = [];
 }
 
-function setTickerSection(section, token, onDone) {
-  if (!ticker || !tickerTrack || !tickerTitle) return;
-  const startDelayMs = 3000;
-  const nextDelayMs = 3000;
-  tickerTitle.textContent = section.label;
-
+function buildTickerRun(section) {
   const run = el("div", { class: "enter-ticker-run" });
   if (section.items.length) {
     section.items.forEach((item) => run.appendChild(item));
   } else {
     run.appendChild(el("span", { class: "small" }, "No scores yet"));
   }
+  return run;
+}
+
+function setTickerSection(section, preservePosition = false) {
+  if (!ticker || !tickerTrack || !tickerTitle) return;
+  tickerTitle.textContent = section.label;
+
+  const run = buildTickerRun(section);
 
   tickerTrack.innerHTML = "";
   tickerTrack.appendChild(run);
+  tickerRunEl = run;
 
   const viewport = tickerTrack.parentElement;
-  if (!viewport) return;
-  if (!section.items.length) {
-    tickerHoldTimerId = setTimeout(() => {
-      if (token !== tickerRunToken) return;
-      onDone();
-    }, nextDelayMs);
+  tickerEndX = viewport ? -run.offsetWidth : 0;
+  if (!preservePosition) tickerCurrentX = 0;
+  if (tickerCurrentX < tickerEndX) tickerCurrentX = tickerEndX;
+
+  run.style.transform = `translateX(${Math.round(tickerCurrentX)}px)`;
+  run.style.willChange = "transform";
+  if (!preservePosition) {
+    tickerPhase = "hold";
+    tickerPhaseStartedAt = performance.now();
+    tickerPrevTs = 0;
+  }
+}
+
+function runTickerFrame(ts) {
+  if (!tickerLoopRunning || !tickerSections.length) return;
+  if (!tickerRunEl) {
+    tickerRafId = requestAnimationFrame(runTickerFrame);
     return;
   }
 
-  const speedPxPerSec = 52;
-  const startX = 0;
-  const endX = -run.offsetWidth;
-  let x = startX;
-  let prevTs = 0;
+  if (!tickerPrevTs) tickerPrevTs = ts;
+  const dt = (ts - tickerPrevTs) / 1000;
+  tickerPrevTs = ts;
 
-  run.style.transform = `translateX(${Math.round(x)}px)`;
-  run.style.willChange = "transform";
-
-  function frame(ts) {
-    if (token !== tickerRunToken) return;
-    if (!prevTs) prevTs = ts;
-    const dt = (ts - prevTs) / 1000;
-    prevTs = ts;
-    x -= speedPxPerSec * dt;
-    run.style.transform = `translateX(${Math.round(x)}px)`;
-    if (x <= endX) {
-      run.style.willChange = "auto";
-      tickerHoldTimerId = setTimeout(() => {
-        if (token !== tickerRunToken) return;
-        onDone();
-      }, nextDelayMs);
-      return;
+  if (tickerPhase === "hold") {
+    if (ts - tickerPhaseStartedAt >= TICKER_START_DELAY_MS) {
+      tickerPhase = "scroll";
     }
-    tickerRafId = requestAnimationFrame(frame);
+  } else if (tickerPhase === "scroll") {
+    tickerCurrentX -= TICKER_SPEED_PX_PER_SEC * dt;
+    tickerRunEl.style.transform = `translateX(${Math.round(tickerCurrentX)}px)`;
+    if (tickerCurrentX <= tickerEndX) {
+      tickerCurrentX = tickerEndX;
+      tickerRunEl.style.transform = `translateX(${Math.round(tickerCurrentX)}px)`;
+      tickerPhase = "next_hold";
+      tickerPhaseStartedAt = ts;
+    }
+  } else if (tickerPhase === "next_hold") {
+    if (ts - tickerPhaseStartedAt >= TICKER_NEXT_DELAY_MS) {
+      tickerSectionIndex = (tickerSectionIndex + 1) % tickerSections.length;
+      setTickerSection(tickerSections[tickerSectionIndex], false);
+    }
   }
 
-  tickerHoldTimerId = setTimeout(() => {
-    if (token !== tickerRunToken) return;
-    tickerRafId = requestAnimationFrame(frame);
-  }, startDelayMs);
+  tickerRafId = requestAnimationFrame(runTickerFrame);
 }
 
 function renderTicker(tjson, playersById, teamsById, roundIndex) {
   if (!ticker || !tickerTrack || !tickerTitle) return;
-  stopTickerRotation();
 
   const rounds = tjson?.tournament?.rounds || [];
   if (!rounds.length) {
-    ticker.style.display = "none";
-    tickerTitle.textContent = "";
+    stopTickerRotation();
+    ticker.style.display = "";
+    tickerTitle.textContent = "Scores";
+    const run = el("div", { class: "enter-ticker-run" });
+    run.appendChild(el("span", { class: "small" }, "No rounds yet"));
     tickerTrack.innerHTML = "";
+    tickerTrack.appendChild(run);
     return;
   }
   const currentRound = Number(roundIndex);
@@ -740,24 +766,29 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   }
 
   if (!sections.length) {
-    ticker.style.display = "none";
-    tickerTitle.textContent = "";
+    stopTickerRotation();
+    ticker.style.display = "";
+    tickerTitle.textContent = "Scores";
+    const run = el("div", { class: "enter-ticker-run" });
+    run.appendChild(el("span", { class: "small" }, "No scores yet"));
     tickerTrack.innerHTML = "";
+    tickerTrack.appendChild(run);
     return;
   }
 
   ticker.style.display = "";
-  const token = tickerRunToken;
-  tickerSectionIndex = 0;
-  const playNext = () => {
-    if (token !== tickerRunToken) return;
-    setTickerSection(sections[tickerSectionIndex], token, () => {
-      if (token !== tickerRunToken) return;
-      tickerSectionIndex = (tickerSectionIndex + 1) % sections.length;
-      playNext();
-    });
-  };
-  playNext();
+  tickerSections = sections;
+  if (!tickerLoopRunning) {
+    tickerLoopRunning = true;
+    tickerSectionIndex = 0;
+    tickerCurrentX = 0;
+    setTickerSection(tickerSections[tickerSectionIndex], false);
+    tickerRafId = requestAnimationFrame(runTickerFrame);
+    return;
+  }
+
+  if (tickerSectionIndex >= tickerSections.length) tickerSectionIndex = 0;
+  setTickerSection(tickerSections[tickerSectionIndex], true);
 }
 
 function leaderboardHasAnyData(leaderboard) {
@@ -852,6 +883,7 @@ async function main() {
       <div>
         <div class="small">Team</div>
         <div><b>${enter.team?.teamName || enter.team?.teamId || ""}</b></div>
+        <div class="small" id="team_current_score" style="margin-top:4px;">Current score: —</div>
       </div>
     </div>
   `;
@@ -894,6 +926,43 @@ async function main() {
   const roundSections = [];
   let refreshTournamentPromise = null;
 
+  function renderTeamCurrentScore() {
+    const target = document.getElementById("team_current_score");
+    if (!target) return;
+
+    const teamId = String(myTeamId || enter.team?.teamId || "").trim();
+    if (!teamId) {
+      target.textContent = "Current score: —";
+      return;
+    }
+
+    const roundCount = rounds.length;
+    if (!roundCount) {
+      target.textContent = "Current score: —";
+      return;
+    }
+
+    if (!Number.isInteger(tickerRoundIndex) || tickerRoundIndex < 0) tickerRoundIndex = 0;
+    if (tickerRoundIndex >= roundCount) tickerRoundIndex = roundCount - 1;
+
+    const roundCfg = rounds[tickerRoundIndex] || {};
+    const isScrambleRound = String(roundCfg.format || "").toLowerCase() === "scramble";
+    const useNet = !!roundCfg.useHandicap || isScrambleRound;
+    const roundLabel = `R${tickerRoundIndex + 1}`;
+    const pars = tjson?.course?.pars || course.pars || Array(18).fill(4);
+
+    const teamRows = tjson?.score_data?.rounds?.[tickerRoundIndex]?.leaderboard?.teams || [];
+    const teamRow = teamRows.find((row) => String(row?.teamId || "").trim() === teamId);
+    if (!teamRow || !rowHasAnyData(teamRow)) {
+      target.textContent = `Current score (${roundLabel}): —`;
+      return;
+    }
+
+    const toPar = useNet ? netToParText(teamRow, pars) : grossToParText(teamRow, pars);
+    const thru = holeDisplayFromThru(teamRow);
+    target.textContent = `Current score (${roundLabel}): ${toPar} ${thru}`;
+  }
+
   // helper: refresh server tjson without clobbering drafts (drafts are in-memory)
   async function refreshTournamentJson() {
     if (refreshTournamentPromise) return refreshTournamentPromise;
@@ -907,6 +976,8 @@ async function main() {
       const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
       const newEvents = collectNewScoreEvents(previousTournament, fresh);
       Object.assign(tjson, fresh);
+      if (tickerRoundIndex >= rounds.length) tickerRoundIndex = Math.max(0, rounds.length - 1);
+      renderTeamCurrentScore();
       if (newEvents.length) showScoreNotifier(newEvents);
       return fresh;
     })();
@@ -947,6 +1018,7 @@ async function main() {
         }
         setCollapsed(false);
         tickerRoundIndex = r;
+        renderTeamCurrentScore();
         renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
         return;
       }
@@ -1074,14 +1146,13 @@ async function main() {
 
     let currentHole = null;      // not chosen yet
     let holeManuallySet = false; // only true after user clicks prev/next or selects a hole
+    let pendingHoleConflict = null;
 
     const status = el("div", { class: "small", style: "margin-top:10px;" }, "");
     const conflictBox = el("div", { class: "card", style: "display:none; border:2px solid var(--bad); margin-top:10px;" });
 
     function renderHoleForm() {
       holePane.innerHTML = "";
-      conflictBox.style.display = "none";
-      status.textContent = "";
 
       const { type, savedByTarget, targetIds } = getSavedForRound();
       // set currentHole to next unplayed, but keep user-selected if they already moved it manually
@@ -1091,6 +1162,11 @@ async function main() {
       if (!holeManuallySet || currentHole == null || Number.isNaN(currentHole) || currentHole < 0 || currentHole > 17) {
         currentHole = suggested;
       }
+      if (pendingHoleConflict && pendingHoleConflict.holeIndex !== currentHole) {
+        pendingHoleConflict = null;
+      }
+      conflictBox.style.display = "none";
+      status.textContent = "";
 
       const header = el("div", { class: "hole-header" });
       header.appendChild(
@@ -1216,6 +1292,7 @@ async function main() {
 
       async function doSubmit(withOverride = false) {
         status.textContent = "Submitting…";
+        pendingHoleConflict = null;
         conflictBox.style.display = "none";
 
         const entries = [];
@@ -1242,6 +1319,7 @@ async function main() {
             },
           });
 
+          pendingHoleConflict = null;
           status.textContent = "Saved.";
 
           // clear drafts ONLY for the targets you actually submitted (for this hole)
@@ -1271,6 +1349,7 @@ async function main() {
       }
 
       function showConflict(j) {
+        pendingHoleConflict = { holeIndex: currentHole, data: j };
         const conflicts = j.conflicts || [];
         const names = conflicts.map((c) => {
           const p = playersById[c.targetId];
@@ -1291,6 +1370,9 @@ async function main() {
       }
 
       btnSubmit.onclick = () => doSubmit(false);
+      if (pendingHoleConflict && pendingHoleConflict.holeIndex === currentHole) {
+        showConflict(pendingHoleConflict.data);
+      }
     }
 
     function renderBulkTable() {
@@ -1457,6 +1539,7 @@ async function main() {
     forms.appendChild(roundCard);
   }
 
+  renderTeamCurrentScore();
   renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
 }
 

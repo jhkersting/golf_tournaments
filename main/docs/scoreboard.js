@@ -41,8 +41,11 @@ let refreshInFlight = false;
 let scoreNotifierTimerId = 0;
 let scoreNotifierQueue = [];
 let scoreNotifierActive = false;
+let recentUpdatedRowKeys = new Set();
+let recentUpdatedClearTimerId = 0;
 const SCORE_NOTIFIER_SHOW_MS = 2300;
 const SCORE_NOTIFIER_GAP_MS = 200;
+const ROW_UPDATE_HIGHLIGHT_MS = 12000;
 const teamColors = createTeamColorRegistry();
 let teamColorsSeeded = false;
 const brandDot = document.querySelector(".brand .dot");
@@ -348,6 +351,9 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
         const par = Number(coursePars?.[holeIndex] || 0);
         const diffToPar = par > 0 ? nextGross - par : 0;
         events.push({
+          entityType: nextSource.type,
+          entityId: id,
+          roundIndex,
           name,
           result: scoreResultLabel(diffToPar),
           toPar: leaderboardToParValue(row),
@@ -359,6 +365,25 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   }
 
   return events;
+}
+
+function setRecentUpdatedRowsFromEvents(events) {
+  const nextKeys = new Set();
+  for (const ev of events || []) {
+    const id = String(ev?.entityId || "").trim();
+    if (!id) continue;
+    const modeKey = ev?.entityType === "team" ? "team" : "player";
+    const roundKey = Number.isInteger(ev?.roundIndex) ? String(ev.roundIndex) : "";
+    if (roundKey) nextKeys.add(`${modeKey}:${roundKey}:${id}`);
+    nextKeys.add(`${modeKey}:all:${id}`);
+  }
+  recentUpdatedRowKeys = nextKeys;
+  if (recentUpdatedClearTimerId) clearTimeout(recentUpdatedClearTimerId);
+  if (!recentUpdatedRowKeys.size) return;
+  recentUpdatedClearTimerId = setTimeout(() => {
+    recentUpdatedRowKeys = new Set();
+    render();
+  }, ROW_UPDATE_HIGHLIGHT_MS);
 }
 
 function renderScoreNotifierEvent(event) {
@@ -1090,6 +1115,8 @@ function renderLeaderboard(data) {
     const tr = document.createElement("tr");
     tr.className = "clickable";
     tr.dataset.id = isTeam ? r.teamId : r.playerId;
+    const rowKey = rowIdentityKey(data, r);
+    if (recentUpdatedRowKeys.has(rowKey)) tr.classList.add("row-updated");
     const rid = rowStableId(r, isTeam);
     const standingRank = standingRanks.get(rid);
     const rankCellValue =
@@ -1198,7 +1225,7 @@ function renderLeaderboard(data) {
       }
     };
 
-    rowByKey.set(rowIdentityKey(data, r), tr);
+    rowByKey.set(rowKey, tr);
     tbody.appendChild(tr);
   });
 
@@ -1411,6 +1438,7 @@ async function refreshTournamentData() {
     TOURN = nextTournament;
     teamColorsSeeded = false;
     rebuildTeamColors();
+    setRecentUpdatedRowsFromEvents(newEvents);
     syncRoundFilterOptions();
     render();
     if (newEvents.length) showScoreNotifier(newEvents);

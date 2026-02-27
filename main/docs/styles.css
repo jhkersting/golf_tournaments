@@ -426,7 +426,8 @@ hr {
 }
 
 .score-notifier.score-even {
-  background: color-mix(in srgb, var(--link-bg) 36%, transparent);
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.32);
 }
 
 .score-notifier-line {
@@ -793,6 +794,14 @@ hr {
 
 .clickable:hover {
   background: color-mix(in srgb, var(--link-bg) 55%, transparent);
+}
+
+#lb_tbl tr.row-updated {
+  background: rgba(180, 180, 180, 0.24);
+}
+
+#lb_tbl tr.row-updated:hover {
+  background: rgba(180, 180, 180, 0.32);
 }
 
 .scoregrid {
