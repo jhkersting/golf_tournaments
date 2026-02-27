@@ -13,6 +13,54 @@ if (normalizedCodeFromQuery) rememberPlayerCode(normalizedCodeFromQuery);
 let code = normalizedCodeFromQuery || getRememberedPlayerCode() || "";
 const who = document.getElementById("who");
 const forms = document.getElementById("round_forms");
+const ticker = document.getElementById("enter_ticker");
+const tickerTitle = document.getElementById("enter_ticker_title");
+const tickerTrack = document.getElementById("enter_ticker_track");
+
+const TEAM_COLORS = [
+  "#b287c4",
+  "#8e84d9",
+  "#6e9fd6",
+  "#63b0b4",
+  "#84b676",
+  "#c3a56f",
+  "#c98c6e",
+  "#c67f95"
+];
+
+let teamColorById = new Map();
+let tickerSectionIndex = 0;
+let tickerRafId = 0;
+let tickerHoldTimerId = 0;
+let tickerRunToken = 0;
+
+function normalizeTeamId(teamId) {
+  return teamId == null ? "" : String(teamId).trim();
+}
+
+function seedTeamColors(tjson, playersById) {
+  teamColorById = new Map();
+  const seen = new Set();
+  const add = (teamId) => {
+    const id = normalizeTeamId(teamId);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    const color = TEAM_COLORS[(seen.size - 1) % TEAM_COLORS.length];
+    teamColorById.set(id, color);
+  };
+  (tjson?.teams || []).forEach((t) => add(t?.teamId || t?.id));
+  Object.values(playersById || {}).forEach((p) => add(p?.teamId));
+}
+
+function colorForTeam(teamId) {
+  const id = normalizeTeamId(teamId);
+  if (!id) return TEAM_COLORS[0];
+  if (!teamColorById.has(id)) {
+    const color = TEAM_COLORS[teamColorById.size % TEAM_COLORS.length];
+    teamColorById.set(id, color);
+  }
+  return teamColorById.get(id);
+}
 
 /**
  * Draft (unsent) edits so auto-refresh + rerenders never clobber typing.
@@ -127,6 +175,383 @@ function rowHasAnyData(row) {
   return false;
 }
 
+function toParText(v) {
+  if (v == null || v === "") return "E";
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return "E";
+    const up = s.toUpperCase();
+    if (up === "E" || up === "EVEN" || s === "0" || s === "+0" || s === "-0") return "E";
+    const n = Number(s);
+    if (!Number.isNaN(n)) return n > 0 ? `+${Math.round(n)}` : `${Math.round(n)}`;
+    return s;
+  }
+  const n = Number(v);
+  if (!Number.isFinite(n) || Math.round(n) === 0) return "E";
+  const d = Math.round(n);
+  return d > 0 ? `+${d}` : `${d}`;
+}
+
+function toParFromKeys(row, keys) {
+  for (const key of keys) {
+    if (row?.[key] != null) return toParText(row[key]);
+  }
+  return null;
+}
+
+function sumHoles(arr) {
+  return (arr || []).reduce((a, v) => a + (v == null ? 0 : Number(v) || 0), 0);
+}
+
+function grossForRow(row) {
+  if (row?.gross != null) return row.gross;
+  if (row?.grossTotal != null) return row.grossTotal;
+  if (row?.scores?.grossTotal != null) return row.scores.grossTotal;
+  if (Array.isArray(row?.scores?.gross)) return sumHoles(row.scores.gross);
+  return null;
+}
+
+function netForRow(row) {
+  if (row?.net != null) return row.net;
+  if (row?.netTotal != null) return row.netTotal;
+  if (row?.strokes != null) return row.strokes;
+  if (row?.scores?.netTotal != null) return row.scores.netTotal;
+  if (Array.isArray(row?.scores?.net)) return sumHoles(row.scores.net);
+  return null;
+}
+
+function parDiffFromHoles(holes, pars) {
+  if (!Array.isArray(holes) || !Array.isArray(pars)) return null;
+  let diff = 0;
+  let played = 0;
+  for (let i = 0; i < 18; i++) {
+    const score = holes[i];
+    if (score == null || Number(score) <= 0) continue;
+    played++;
+    diff += Number(score) - Number(pars[i] || 0);
+  }
+  return played ? toParText(diff) : null;
+}
+
+function grossToParText(row, pars) {
+  const explicit = toParFromKeys(row, [
+    "toParGross",
+    "grossToPar",
+    "toParGrossTotal",
+    "grossToParTotal"
+  ]);
+  if (explicit != null) return explicit;
+  const fromScores = parDiffFromHoles(row?.scores?.gross, pars);
+  if (fromScores != null) return fromScores;
+  const gross = grossForRow(row);
+  const parTotal = sumHoles(pars);
+  if (gross != null && parTotal > 0 && Number(row?.thru || 0) >= 18) {
+    return toParText(Number(gross) - parTotal);
+  }
+  return toParText(row?.toPar);
+}
+
+function netToParText(row, pars) {
+  const explicit = toParFromKeys(row, [
+    "toParNet",
+    "netToPar",
+    "toParNetTotal",
+    "netToParTotal"
+  ]);
+  if (explicit != null) return explicit;
+  const fromScores = parDiffFromHoles(row?.scores?.net, pars);
+  if (fromScores != null) return fromScores;
+  const net = netForRow(row);
+  const parTotal = sumHoles(pars);
+  if (net != null && parTotal > 0 && Number(row?.thru || 0) >= 18) {
+    return toParText(Number(net) - parTotal);
+  }
+  return toParText(row?.toPar);
+}
+
+function holeDisplayFromThru(row) {
+  const thru = Number(row?.thru || 0);
+  if (!Number.isFinite(thru) || thru <= 0) return "(-)";
+  return `(${Math.floor(thru)})`;
+}
+
+function toParNumber(v) {
+  const s = String(v == null ? "" : v).trim().toUpperCase();
+  if (!s || s === "E" || s === "EVEN") return 0;
+  const n = Number(s);
+  if (!Number.isNaN(n)) return n;
+  return Number.POSITIVE_INFINITY;
+}
+
+function sortTickerEntries(entries) {
+  entries.sort((a, b) => {
+    if (a.hasData !== b.hasData) return a.hasData ? -1 : 1;
+    if (a.parNum !== b.parNum) return a.parNum - b.parNum;
+    return a.name.localeCompare(b.name);
+  });
+  return entries;
+}
+
+function stopTickerRotation() {
+  tickerRunToken += 1;
+  if (tickerRafId) {
+    cancelAnimationFrame(tickerRafId);
+    tickerRafId = 0;
+  }
+  if (tickerHoldTimerId) {
+    clearTimeout(tickerHoldTimerId);
+    tickerHoldTimerId = 0;
+  }
+}
+
+function setTickerSection(section, token, onDone) {
+  if (!ticker || !tickerTrack || !tickerTitle) return;
+  const nextDelayMs = 3000;
+  tickerTitle.textContent = section.label;
+
+  const run = el("div", { class: "enter-ticker-run" });
+  if (section.items.length) {
+    section.items.forEach((item) => run.appendChild(item));
+  } else {
+    run.appendChild(el("span", { class: "small" }, "No scores yet"));
+  }
+
+  tickerTrack.innerHTML = "";
+  tickerTrack.appendChild(run);
+
+  const viewport = tickerTrack.parentElement;
+  if (!viewport) return;
+  if (!section.items.length) {
+    tickerHoldTimerId = setTimeout(() => {
+      if (token !== tickerRunToken) return;
+      onDone();
+    }, nextDelayMs);
+    return;
+  }
+
+  const speedPxPerSec = 52;
+  const startX = viewport.clientWidth;
+  const endX = -run.offsetWidth;
+  let x = startX;
+  let prevTs = 0;
+
+  run.style.transform = `translateX(${Math.round(x)}px)`;
+  run.style.willChange = "transform";
+
+  function frame(ts) {
+    if (token !== tickerRunToken) return;
+    if (!prevTs) prevTs = ts;
+    const dt = (ts - prevTs) / 1000;
+    prevTs = ts;
+    x -= speedPxPerSec * dt;
+    run.style.transform = `translateX(${Math.round(x)}px)`;
+    if (x <= endX) {
+      run.style.willChange = "auto";
+      tickerHoldTimerId = setTimeout(() => {
+        if (token !== tickerRunToken) return;
+        onDone();
+      }, nextDelayMs);
+      return;
+    }
+    tickerRafId = requestAnimationFrame(frame);
+  }
+
+  tickerRafId = requestAnimationFrame(frame);
+}
+
+function renderTicker(tjson, playersById, teamsById, roundIndex) {
+  if (!ticker || !tickerTrack || !tickerTitle) return;
+  stopTickerRotation();
+
+  const rounds = tjson?.tournament?.rounds || [];
+  if (!rounds.length) {
+    ticker.style.display = "none";
+    tickerTitle.textContent = "";
+    tickerTrack.innerHTML = "";
+    return;
+  }
+  const currentRound = Number(roundIndex);
+  const safeRound = Number.isInteger(currentRound) && currentRound >= 0 && currentRound < rounds.length ? currentRound : 0;
+  const roundData = tjson?.score_data?.rounds?.[safeRound] || {};
+  const roundCfg = rounds[safeRound] || {};
+  const isScrambleRound = String(roundCfg.format || "").toLowerCase() === "scramble";
+  const showIndividualGross = !isScrambleRound;
+  const showIndividualNet =
+    !!roundCfg.useHandicap && !isScrambleRound;
+  const pars = tjson?.course?.pars || Array(18).fill(4);
+
+  const playerLeaderboardRows = roundData?.leaderboard?.players || [];
+  const playerRowById = Object.create(null);
+  for (const row of playerLeaderboardRows) {
+    const id = String(row?.playerId || "").trim();
+    if (!id) continue;
+    playerRowById[id] = row;
+  }
+  const teamLeaderboardAll = tjson?.score_data?.leaderboard_all?.teams || [];
+  const teamLeaderboardRound = roundData?.leaderboard?.teams || [];
+  const teamDefs = tjson?.teams || [];
+
+  const allTeamIds = [];
+  const seenTeamIds = new Set();
+  function addTeamId(teamId) {
+    const id = normalizeTeamId(teamId);
+    if (!id || seenTeamIds.has(id)) return;
+    seenTeamIds.add(id);
+    allTeamIds.push(id);
+  }
+  teamDefs.forEach((t) => addTeamId(t?.teamId || t?.id));
+  teamLeaderboardAll.forEach((row) => addTeamId(row?.teamId));
+  teamLeaderboardRound.forEach((row) => addTeamId(row?.teamId));
+
+  const teamAllById = Object.create(null);
+  for (const row of teamLeaderboardAll) {
+    const id = normalizeTeamId(row?.teamId);
+    if (!id) continue;
+    teamAllById[id] = row;
+  }
+  const teamRoundById = Object.create(null);
+  for (const row of teamLeaderboardRound) {
+    const id = normalizeTeamId(row?.teamId);
+    if (!id) continue;
+    teamRoundById[id] = row;
+  }
+
+  const roundLabel = `Round ${safeRound + 1}`;
+
+  const allPlayerIds = [];
+  const seenPlayerIds = new Set();
+  function addPlayerId(playerId) {
+    const id = String(playerId || "").trim();
+    if (!id || seenPlayerIds.has(id)) return;
+    seenPlayerIds.add(id);
+    allPlayerIds.push(id);
+  }
+  Object.keys(playersById || {}).forEach(addPlayerId);
+  playerLeaderboardRows.forEach((row) => addPlayerId(row?.playerId));
+
+  const playerGrossEntries = allPlayerIds.map((playerId) => {
+    const row = playerRowById[playerId] || null;
+    const p = playersById[playerId] || {};
+    const name = row?.name || p?.name || playerId || "Player";
+    const teamId = row?.teamId || p?.teamId;
+    const color = colorForTeam(teamId);
+    const hasData = rowHasAnyData(row);
+    const holeText = holeDisplayFromThru(row);
+    const parText = grossToParText(row, pars);
+    return {
+      name,
+      hasData,
+      parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
+      node: el(
+        "span",
+        { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
+        `${name} ${parText} ${holeText}`
+      )
+    };
+  });
+  sortTickerEntries(playerGrossEntries);
+  const playerGrossItems = playerGrossEntries.map((x) => x.node);
+
+  const playerNetEntries = allPlayerIds.map((playerId) => {
+    const row = playerRowById[playerId] || null;
+    const p = playersById[playerId] || {};
+    const name = row?.name || p?.name || playerId || "Player";
+    const teamId = row?.teamId || p?.teamId;
+    const color = colorForTeam(teamId);
+    const hasData = rowHasAnyData(row);
+    const holeText = holeDisplayFromThru(row);
+    const parText = netToParText(row, pars);
+    return {
+      name,
+      hasData,
+      parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
+      node: el(
+        "span",
+        { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
+        `${name} ${parText} ${holeText}`
+      )
+    };
+  });
+  sortTickerEntries(playerNetEntries);
+  const playerNetItems = playerNetEntries.map((x) => x.node);
+
+  const teamTournamentEntries = allTeamIds.map((teamId) => {
+    const row = teamAllById[teamId] || null;
+    const color = colorForTeam(teamId);
+    const hasData = rowHasAnyData(row);
+    const teamName = row?.teamName || teamsById[teamId]?.teamName || teamId || "Team";
+    const parText = netToParText(row, pars);
+    return {
+      name: teamName,
+      hasData,
+      parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
+      node: el(
+        "span",
+        { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
+        `${teamName} ${parText}`
+      )
+    };
+  });
+  sortTickerEntries(teamTournamentEntries);
+  const teamTournamentItems = teamTournamentEntries.map((x) => x.node);
+
+  const teamRoundEntries = allTeamIds.map((teamId) => {
+    const row = teamRoundById[teamId] || null;
+    const color = colorForTeam(teamId);
+    const hasData = rowHasAnyData(row);
+    const holeText = holeDisplayFromThru(row);
+    const teamName = row?.teamName || teamsById[teamId]?.teamName || teamId || "Team";
+    const parText = netToParText(row, pars);
+    return {
+      name: teamName,
+      hasData,
+      parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
+      node: el(
+        "span",
+        { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
+        `${teamName} ${parText} ${holeText}`
+      )
+    };
+  });
+  sortTickerEntries(teamRoundEntries);
+  const teamRoundItems = teamRoundEntries.map((x) => x.node);
+
+  const sections = [];
+  if (showIndividualGross) {
+    sections.push({ label: `${roundLabel} (Gross)`, items: playerGrossItems });
+  }
+  if (showIndividualNet) {
+    sections.push({ label: `${roundLabel} (Net)`, items: playerNetItems });
+  }
+  if (isScrambleRound) {
+    sections.push({ label: `${roundLabel} (Team Net)`, items: teamRoundItems });
+    sections.push({ label: "Tournament (Team Net)", items: teamTournamentItems });
+  } else {
+    sections.push({ label: "Tournament (Team Net)", items: teamTournamentItems });
+    sections.push({ label: `${roundLabel} (Team Net)`, items: teamRoundItems });
+  }
+
+  if (!sections.length) {
+    ticker.style.display = "none";
+    tickerTitle.textContent = "";
+    tickerTrack.innerHTML = "";
+    return;
+  }
+
+  ticker.style.display = "";
+  const token = tickerRunToken;
+  tickerSectionIndex = 0;
+  const playNext = () => {
+    if (token !== tickerRunToken) return;
+    setTickerSection(sections[tickerSectionIndex], token, () => {
+      if (token !== tickerRunToken) return;
+      tickerSectionIndex = (tickerSectionIndex + 1) % sections.length;
+      playNext();
+    });
+  };
+  playNext();
+}
+
 function leaderboardHasAnyData(leaderboard) {
   const teams = leaderboard?.teams || [];
   for (const row of teams) {
@@ -224,6 +649,13 @@ async function main() {
   const playersArr = tjson.players || [];
   const playersById = {};
   for (const p of playersArr) playersById[p.playerId] = p;
+  const teamsById = {};
+  for (const t of tjson.teams || []) {
+    const teamId = t?.teamId || t?.id;
+    if (!teamId) continue;
+    teamsById[teamId] = t;
+  }
+  seedTeamColors(tjson, playersById);
 
   // Default group: self + same team players
   const myId = enter.player?.playerId;
@@ -245,6 +677,7 @@ async function main() {
     return 0;
   }
   const defaultOpenRound = activeRoundIndex();
+  let tickerRoundIndex = defaultOpenRound;
   const roundSections = [];
 
   // helper: refresh server tjson without clobbering drafts (drafts are in-memory)
@@ -282,6 +715,8 @@ async function main() {
           if (s.index !== r) s.setCollapsed(true);
         }
         setCollapsed(false);
+        tickerRoundIndex = r;
+        renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
         return;
       }
       setCollapsed(true);
@@ -469,13 +904,14 @@ async function main() {
 
       if (type === "team") {
         const teamId = targetIds[0];
+        const teamColor = colorForTeam(teamId);
         const existingRaw = (savedByTarget[teamId] || Array(18).fill(null))[currentHole];
         const existing = isEmptyScore(existingRaw) ? null : existingRaw;
 
         const draft = getHoleDraft(r, currentHole, teamId);
         const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
 
-        const row = el("div", { class: "hole-row" });
+        const row = el("div", { class: "hole-row team-accent", style: `--team-accent:${teamColor};` });
         row.appendChild(
           el(
             "div",
@@ -496,6 +932,7 @@ async function main() {
         for (const pid of ids) {
           const p = playersById[pid];
           if (!p) continue;
+          const teamColor = colorForTeam(p.teamId);
 
           const existingRaw = (savedByTarget[pid] || Array(18).fill(null))[currentHole];
           const existing = isEmptyScore(existingRaw) ? null : existingRaw;
@@ -503,7 +940,7 @@ async function main() {
           const draft = getHoleDraft(r, currentHole, pid);
           const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
 
-          const row = el("div", { class: "hole-row" });
+          const row = el("div", { class: "hole-row team-accent", style: `--team-accent:${teamColor};` });
           row.appendChild(
             el(
               "div",
@@ -585,6 +1022,7 @@ async function main() {
 
           // refresh tournament json quickly (cache-bust)
           await refreshTournamentJson();
+          renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
 
           // advance to next unplayed hole for group
           const nowSaved = getSavedForRound();
@@ -653,12 +1091,18 @@ async function main() {
 
       for (const id of ids) {
         const name = type === "team" ? enter.team?.teamName || id : playersById[id]?.name || id;
+        const teamId = type === "team" ? id : playersById[id]?.teamId;
+        const teamColor = colorForTeam(teamId);
         const holes = (savedByTarget[id] || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
 
         rowInputs[id] = Array(18).fill(null);
 
         const frontRow = el("tr");
-        const nameCell = el("td", { class: "left bulk-player", rowspan: "2" }, `<b>${name}</b>`);
+        const nameCell = el(
+          "td",
+          { class: "left bulk-player team-accent", rowspan: "2", style: `--team-accent:${teamColor};` },
+          `<b>${name}</b>`
+        );
         frontRow.appendChild(nameCell);
         frontRow.appendChild(el("td", { class: "mono bulk-side" }, "Front 9"));
 
@@ -749,6 +1193,7 @@ async function main() {
           clearRoundDraft(r);
 
           await refreshTournamentJson();
+          renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
 
           renderHoleForm();
           renderBulkTable();
@@ -769,6 +1214,7 @@ async function main() {
     const refreshTimer = setInterval(async () => {
       try {
         await refreshTournamentJson();
+        renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
         renderHoleForm();
         renderBulkTable();
       } catch { }
@@ -779,6 +1225,8 @@ async function main() {
 
     forms.appendChild(roundCard);
   }
+
+  renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
 }
 
 main().catch((e) => {

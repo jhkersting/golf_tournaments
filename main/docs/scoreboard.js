@@ -187,7 +187,7 @@ function roundAt(viewRound) {
 function isHandicapRound(viewRound) {
   const round = roundAt(viewRound);
   if (!round) return false;
-  return !!round.useHandicap && round.format !== "scramble";
+  return !!round.useHandicap || String(round.format || "").toLowerCase() === "scramble";
 }
 
 function isScrambleRound(viewRound) {
