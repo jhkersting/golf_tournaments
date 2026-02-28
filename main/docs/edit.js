@@ -33,6 +33,11 @@ const playerRows = document.getElementById("player_rows");
 const csvImport = document.getElementById("csv_import");
 const csvFileInput = document.getElementById("csv_file");
 const loadCsvFileBtn = document.getElementById("load_csv_file_btn");
+const courseNameEl = document.getElementById("e_course_name");
+const parRow = document.getElementById("e_par_row");
+const siRow = document.getElementById("e_si_row");
+const par4Btn = document.getElementById("e_par4");
+const siResetBtn = document.getElementById("e_si_reset");
 
 const addRoundBtn = document.getElementById("add_round_btn");
 const addPlayerBtn = document.getElementById("add_player_btn");
@@ -128,6 +133,123 @@ function normalizeDelimitedText(text) {
   const v = String(text || "");
   if (v.includes("\t") && !v.includes(",")) return tsvToCsv(v);
   return v;
+}
+
+function makeCourseInputCell(hole, value, min, max) {
+  const td = document.createElement("td");
+  const inp = document.createElement("input");
+  inp.type = "number";
+  inp.step = "1";
+  inp.min = String(min);
+  inp.max = String(max);
+  inp.value = String(value);
+  inp.dataset.hole = String(hole);
+  inp.style.width = "56px";
+  inp.style.textAlign = "center";
+  td.appendChild(inp);
+  return td;
+}
+
+function rebuildCourseRows() {
+  if (!parRow || !siRow) return;
+  while (parRow.children.length > 1) parRow.removeChild(parRow.lastChild);
+  while (siRow.children.length > 1) siRow.removeChild(siRow.lastChild);
+
+  for (let h = 1; h <= 18; h++) {
+    parRow.appendChild(makeCourseInputCell(h, 4, 3, 6));
+    siRow.appendChild(makeCourseInputCell(h, h, 1, 18));
+  }
+
+  const parTotalCell = document.createElement("td");
+  parTotalCell.id = "e_par_total";
+  parTotalCell.textContent = "72";
+  parRow.appendChild(parTotalCell);
+
+  const siTotalCell = document.createElement("td");
+  siTotalCell.className = "small";
+  siTotalCell.textContent = "";
+  siRow.appendChild(siTotalCell);
+
+  parRow.addEventListener("input", updateParTotal);
+  updateParTotal();
+}
+
+function updateParTotal() {
+  const target = document.getElementById("e_par_total");
+  if (!target) return;
+  const total = getPars().reduce((acc, v) => acc + Number(v || 0), 0);
+  target.textContent = String(total);
+}
+
+function getPars() {
+  const pars = [];
+  for (let h = 1; h <= 18; h++) {
+    const v = Number(parRow?.querySelector(`input[data-hole='${h}']`)?.value);
+    pars.push(Number.isFinite(v) ? v : 4);
+  }
+  return pars;
+}
+
+function getStrokeIndex() {
+  const out = [];
+  for (let h = 1; h <= 18; h++) {
+    const v = Number(siRow?.querySelector(`input[data-hole='${h}']`)?.value);
+    out.push(Number.isFinite(v) ? v : h);
+  }
+  return out;
+}
+
+function validateStrokeIndex(si) {
+  const set = new Set(si);
+  if (set.size !== 18) return "Stroke Index must contain 18 unique values.";
+  for (const v of si) {
+    if (!Number.isInteger(v) || v < 1 || v > 18) {
+      return "Stroke Index values must be integers 1–18.";
+    }
+  }
+  return null;
+}
+
+function fillCourseRows(pars, strokeIndex) {
+  if (!Array.isArray(pars) || pars.length !== 18) return;
+  if (!Array.isArray(strokeIndex) || strokeIndex.length !== 18) return;
+  for (let h = 1; h <= 18; h++) {
+    const parInput = parRow?.querySelector(`input[data-hole='${h}']`);
+    const siInput = siRow?.querySelector(`input[data-hole='${h}']`);
+    if (parInput) parInput.value = String(Number(pars[h - 1]) || 4);
+    if (siInput) siInput.value = String(Number(strokeIndex[h - 1]) || h);
+  }
+  updateParTotal();
+}
+
+function normalizeCourseForUi(course) {
+  const defaultPars = Array(18).fill(4);
+  const defaultSi = Array.from({ length: 18 }, (_, i) => i + 1);
+  const pars = Array.isArray(course?.pars) && course.pars.length === 18
+    ? course.pars.map((v) => Number(v) || 4)
+    : defaultPars;
+  const strokeIndex = Array.isArray(course?.strokeIndex) && course.strokeIndex.length === 18
+    ? course.strokeIndex.map((v) => Number(v) || 0)
+    : defaultSi;
+  const siErr = validateStrokeIndex(strokeIndex);
+  return {
+    name: String(course?.name || "").trim(),
+    pars,
+    strokeIndex: siErr ? defaultSi : strokeIndex
+  };
+}
+
+function collectCourse() {
+  const strokeIndex = getStrokeIndex();
+  const siErr = validateStrokeIndex(strokeIndex);
+  if (siErr) throw new Error(siErr);
+  const out = {
+    pars: getPars(),
+    strokeIndex
+  };
+  const name = String(courseNameEl?.value || "").trim();
+  if (name) out.name = name;
+  return out;
 }
 
 function renderRounds(rounds) {
@@ -404,6 +526,9 @@ function renderPage(data) {
   setHeaderTournamentName(data?.tournament?.name);
   nameEl.value = data?.tournament?.name || "";
   datesEl.value = data?.tournament?.dates || "";
+  const course = normalizeCourseForUi(data?.course || null);
+  if (courseNameEl) courseNameEl.value = course.name;
+  fillCourseRows(course.pars, course.strokeIndex);
   const rounds = data?.rounds || [];
   renderRounds(rounds);
   renderPlayers(data?.players || [], rounds.length || 1);
@@ -464,6 +589,7 @@ async function saveTournament() {
         name: String(nameEl.value || "").trim(),
         dates: String(datesEl.value || "").trim()
       },
+      course: collectCourse(),
       rounds: collectRounds(),
       players: collectPlayers()
     };
@@ -576,6 +702,25 @@ function loadSelectedImportFile() {
       console.error(e);
       importStatus.textContent = "Failed to read file.";
     });
+}
+
+rebuildCourseRows();
+if (par4Btn) {
+  par4Btn.addEventListener("click", () => {
+    for (let h = 1; h <= 18; h++) {
+      const input = parRow?.querySelector(`input[data-hole='${h}']`);
+      if (input) input.value = "4";
+    }
+    updateParTotal();
+  });
+}
+if (siResetBtn) {
+  siResetBtn.addEventListener("click", () => {
+    for (let h = 1; h <= 18; h++) {
+      const input = siRow?.querySelector(`input[data-hole='${h}']`);
+      if (input) input.value = String(h);
+    }
+  });
 }
 
 loadBtn.addEventListener("click", () => loadTournament(tidInput.value, editCodeInput.value));

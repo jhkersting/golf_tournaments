@@ -27,7 +27,7 @@
 <div class="card">
   <h1 style="margin:0 0 6px 0;">Edit Tournament</h1>
   <div class="small">
-    Update rounds, handicaps, player codes, tee times, and two-man groups after tournament creation.
+    Update rounds, course setup, handicaps, player codes, tee times, and two-man groups after tournament creation.
   </div>
 </div>
 
@@ -75,6 +75,41 @@
         <label for="e_dates">Dates</label>
         <input id="e_dates" />
       </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="actions" style="justify-content:space-between; align-items:flex-end;">
+      <div>
+        <h2 style="margin:0;">Course Setup (18 holes)</h2>
+        <div class="small">Pars and Stroke Index are used for scorecards and to-par values.</div>
+      </div>
+      <div class="actions">
+        <button class="secondary" id="e_par4" type="button">Set all Pars=4</button>
+        <button class="secondary" id="e_si_reset" type="button">Reset Stroke Index 1–18</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div class="col">
+        <label for="e_course_name">Course name (optional)</label>
+        <input id="e_course_name" placeholder="Pine Valley" />
+      </div>
+    </div>
+    <div class="scoregrid" style="margin-top:12px;">
+      <table class="table" id="e_course_tbl">
+        <thead>
+          <tr>
+            <th class="left">Hole</th>
+            <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th>
+            <th>10</th><th>11</th><th>12</th><th>13</th><th>14</th><th>15</th><th>16</th><th>17</th><th>18</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr id="e_par_row"><th class="left">Par</th></tr>
+          <tr id="e_si_row"><th class="left">Stroke Index</th></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 

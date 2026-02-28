@@ -80,6 +80,13 @@ export async function handler(event){
     const tid = uid("t");
     const editCode = makeEditCode(8);
 
+    const courseName = String(course?.name || "").trim();
+    const normalizedCourse = {
+      pars: course.pars.map(Number),
+      strokeIndex: course.strokeIndex.map(Number)
+    };
+    if (courseName) normalizedCourse.name = courseName.slice(0, 120);
+
     const state = {
       tournament: {
         tournamentId: tid,
@@ -89,7 +96,7 @@ export async function handler(event){
         editCodeHash: hashEditCode(editCode)
       },
       rounds: normRounds,
-      course: { pars: course.pars.map(Number), strokeIndex: course.strokeIndex.map(Number) },
+      course: normalizedCourse,
       teams: {},
       players: {},
       codeIndex: {},
