@@ -1022,8 +1022,9 @@ async function main() {
 
   for (let r = 0; r < rounds.length; r++) {
     const round = rounds[r] || {};
-    const fmt = round.format || "singles";
+    const fmt = String(round.format || "singles").toLowerCase();
     const isScramble = fmt === "scramble";
+    const isTwoManBestBall = fmt === "two_man_best_ball";
     const canGroup = !isScramble;
 
     const roundCard = el("div", { class: "card" });
@@ -1060,7 +1061,9 @@ async function main() {
     const wrap = el("div", { class: "small", style: "margin-bottom:8px;" });
     wrap.textContent = isScramble
       ? "Scramble: enter one team score per hole."
-      : "Singles/Shamble: enter player scores. You can choose who you're playing with to enter for them too.";
+      : isTwoManBestBall
+        ? "Two-man best ball: enter player scores. Team totals use the best score from Group A + Group B each hole."
+        : "Singles/Shamble: enter player scores. You can choose who you're playing with to enter for them too.";
     roundBody.appendChild(wrap);
 
     // Group picker

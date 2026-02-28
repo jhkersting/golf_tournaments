@@ -237,6 +237,7 @@ function roundCard(){
         <label>Format</label>
         <select data-format>
           <option value="scramble">scramble</option>
+          <option value="two_man_best_ball">two man best ball</option>
           <option value="shamble">shamble</option>
           <option value="singles">singles</option>
         </select>
@@ -266,8 +267,10 @@ function roundCard(){
   const fmt = div.querySelector("[data-format]");
   const aggRow = div.querySelector("[data-aggrow]");
   function syncAggVisibility(){
-    // Scramble is inherently team score already, no need for aggregation inputs
-    aggRow.style.display = (fmt.value === "scramble") ? "none" : "";
+    // Scramble and two-man formats use fixed team scoring; aggregation inputs are not used.
+    const format = String(fmt.value || "").toLowerCase();
+    const hideAggregation = format === "scramble" || format === "two_man_best_ball";
+    aggRow.style.display = hideAggregation ? "none" : "";
   }
   fmt.addEventListener("change", syncAggVisibility);
   syncAggVisibility();

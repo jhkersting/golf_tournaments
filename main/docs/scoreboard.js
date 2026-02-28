@@ -997,26 +997,63 @@ function makeInlineScorecardHost(anchorRow, colCount) {
 
 async function getScorecardScores(data, row) {
   if (data.view?.round === "all") return null;
-  if (row?.scores) return row.scores;
+
+  function hasHoleArrays(scores) {
+    return Array.isArray(scores?.gross) || Array.isArray(scores?.net);
+  }
+
+  function normalizeScorecard(scores, par = getCoursePars()) {
+    const gross = Array.isArray(scores?.gross) ? scores.gross : Array(18).fill(null);
+    const net = Array.isArray(scores?.net) ? scores.net : gross.slice();
+    return {
+      gross,
+      net,
+      handicapShots: Array.isArray(scores?.handicapShots) ? scores.handicapShots : Array(18).fill(0),
+      par,
+      grossTotal: scores?.grossTotal,
+      netTotal: scores?.netTotal,
+      grossToParTotal: scores?.grossToParTotal,
+      netToParTotal: scores?.netToParTotal,
+      thru: scores?.thru
+    };
+  }
+
+  function fromRoundData(roundIdx) {
+    const roundData = TOURN?.score_data?.rounds?.[roundIdx];
+    if (!roundData) return null;
+    const source = mode === "team"
+      ? roundData?.team?.[row?.teamId]
+      : roundData?.player?.[row?.playerId];
+    if (!source) return null;
+    if (!hasHoleArrays(source)) return null;
+    return normalizeScorecard(source, getCoursePars());
+  }
+
+  if (hasHoleArrays(row?.scores)) return normalizeScorecard(row.scores, getCoursePars());
 
   const rIdx = Number(data.view.round);
+  const fromRound = fromRoundData(rIdx);
+  if (fromRound) return fromRound;
+
   const modeQ = mode === "team" ? "team" : "player";
   const idQ = mode === "team" ? row.teamId : row.playerId;
   const sc = await api(
     `/tournaments/${encodeURIComponent(tid)}/scorecard?round=${rIdx}&mode=${modeQ}&id=${encodeURIComponent(idQ)}`
   );
 
-  return {
-    gross: sc.grossHoles || Array(18).fill(null),
-    net: sc.netHoles || Array(18).fill(null),
-    handicapShots: sc.handicapShots || Array(18).fill(0),
-    par: sc.course?.pars || getCoursePars(),
-    grossTotal: sc.grossTotal,
-    netTotal: sc.netTotal,
-    grossToParTotal: sc.toParGrossTotal,
-    netToParTotal: sc.toParNetTotal,
-    thru: sc.thru
-  };
+  return normalizeScorecard(
+    {
+      gross: sc.grossHoles,
+      net: sc.netHoles,
+      handicapShots: sc.handicapShots,
+      grossTotal: sc.grossTotal,
+      netTotal: sc.netTotal,
+      grossToParTotal: sc.toParGrossTotal,
+      netToParTotal: sc.toParNetTotal,
+      thru: sc.thru
+    },
+    sc.course?.pars || getCoursePars()
+  );
 }
 
 function inlineScorecardHeading(host, title, subtitle) {
@@ -1468,7 +1505,6 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
   const teamNames = roundTeamNameLookup(tournamentJson, leaderboardRows);
   const seedTeamIds = (leaderboardRows || []).map((row) => row?.teamId);
   const fallbackRows = leaderboardRows || [];
-  if (fallbackRows.some((row) => rowHasAnyData(row))) return fallbackRows;
 
   if (format === "scramble") {
     const fromTeamEntries = buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNames, seedTeamIds);
@@ -1476,6 +1512,8 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
     if (fallbackRows.length) return fallbackRows;
     return fromTeamEntries;
   }
+
+  if (fallbackRows.some((row) => rowHasAnyData(row))) return fallbackRows;
 
   const aggregated = buildAggregatedTeamRowsFromPlayers(
     tournamentJson,

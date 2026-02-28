@@ -1,0 +1,222 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Golf Tournament API (static JSON reads via S3/CloudFront, event-safe
+  writes)
+Parameters:
+  AdminKey:
+    Type: String
+    Default: CHANGE_ME_ADMIN_KEY
+  EventsBucketName:
+    Type: String
+    Default: golf-events
+  StateBucketName:
+    Type: String
+    Default: golf-state
+  PublicBucketName:
+    Type: String
+    Default: golf-public
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 20
+    MemorySize: 1024
+    Environment:
+      Variables:
+        ADMIN_KEY:
+          Ref: AdminKey
+        EVENTS_BUCKET:
+          Ref: EventsBucketName
+        STATE_BUCKET:
+          Ref: StateBucketName
+        PUBLIC_BUCKET:
+          Ref: PublicBucketName
+  Api:
+    Cors:
+      AllowMethods: '''GET,POST,OPTIONS'''
+      AllowHeaders: '''Content-Type,x-admin-key'''
+      AllowOrigin: '''*'''
+    MinimumCompressionSize: 512
+Resources:
+  GolfApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+  EventsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: EventsBucketName
+  StateBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: StateBucketName
+  PublicBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: PublicBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+  PublicBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: PublicBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: PublicReadGetObject
+          Effect: Allow
+          Principal: '*'
+          Action: s3:GetObject
+          Resource:
+            Fn::Sub: ${PublicBucket.Arn}/*
+  CreateTournamentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: tournaments_create.handler
+      CodeUri: CreateTournamentFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: PublicBucketName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /tournaments
+            Method: post
+    Metadata:
+      SamResourceId: CreateTournamentFunction
+  ImportPlayersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: players_import.handler
+      CodeUri: ImportPlayersFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: PublicBucketName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /tournaments/{tid}/players/import
+            Method: post
+    Metadata:
+      SamResourceId: ImportPlayersFunction
+  PostScoresFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: scores_post.handler
+      CodeUri: PostScoresFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: EventsBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: PublicBucketName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /tournaments/{tid}/scores
+            Method: post
+    Metadata:
+      SamResourceId: PostScoresFunction
+  EnterGetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: enter_get.handler
+      CodeUri: EnterGetFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3ReadPolicy:
+          BucketName:
+            Ref: PublicBucketName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /enter/{code}
+            Method: get
+    Metadata:
+      SamResourceId: EnterGetFunction
+  CoursesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: courses.handler
+      CodeUri: CoursesFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: StateBucketName
+      Events:
+        GetCourses:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /courses
+            Method: get
+        GetCourseById:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /courses/{courseId}
+            Method: get
+        PostCourses:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /courses
+            Method: post
+    Metadata:
+      SamResourceId: CoursesFunction
+Outputs:
+  ApiBaseUrl:
+    Description: API base URL
+    Value:
+      Fn::Sub: https://${GolfApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+  PublicBaseHint:
+    Description: Public bucket base (use CloudFront in front for best performance)
+    Value:
+      Fn::Sub: https://${PublicBucketName}.s3.${AWS::Region}.amazonaws.com
