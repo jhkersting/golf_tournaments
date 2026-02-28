@@ -1,4 +1,4 @@
-import { api, downloadText, baseUrlForGithubPages, rememberTournamentId, sum } from "./app.js";
+import { api, downloadText, baseUrlForGithubPages, rememberTournamentId, rememberTournamentEditCode, sum } from "./app.js";
 $('body').show();
 const roundsEl = document.getElementById("rounds");
 const addRoundBtn = document.getElementById("add_round");
@@ -7,11 +7,16 @@ const createStatus = document.getElementById("create_status");
 
 const createdBox = document.getElementById("created_box");
 const tidEl = document.getElementById("tid");
+const editCodeEl = document.getElementById("edit_code");
 const scoreboardLinkEl = document.getElementById("scoreboard_link");
 
 const importBtn = document.getElementById("import_players");
 const importStatus = document.getElementById("import_status");
 const csvEl = document.getElementById("csv");
+const starterCsvEl = document.getElementById("starter_csv");
+const teeStartEl = document.getElementById("tee_start");
+const teeIntervalEl = document.getElementById("tee_interval");
+let latestEditCode = "";
 
 const parRow = document.getElementById("par_row");
 const siRow = document.getElementById("si_row");
@@ -237,7 +242,7 @@ function roundCard(){
         <label>Format</label>
         <select data-format>
           <option value="scramble">scramble</option>
-          <option value="two_man_best_ball">two man best ball</option>
+          <option value="two_man">two man</option>
           <option value="shamble">shamble</option>
           <option value="singles">singles</option>
         </select>
@@ -269,7 +274,7 @@ function roundCard(){
   function syncAggVisibility(){
     // Scramble and two-man formats use fixed team scoring; aggregation inputs are not used.
     const format = String(fmt.value || "").toLowerCase();
-    const hideAggregation = format === "scramble" || format === "two_man_best_ball";
+    const hideAggregation = format === "scramble" || format === "two_man";
     aggRow.style.display = hideAggregation ? "none" : "";
   }
   fmt.addEventListener("change", syncAggVisibility);
@@ -303,10 +308,12 @@ loadCourses();
 
 function getRounds(){
   const cards = [...roundsEl.querySelectorAll(".card")];
-  return cards.map(c => {
+  const rounds = cards.map(c => {
     const format = c.querySelector("[data-format]")?.value;
     const useHandicap = c.querySelector("[data-handicap]")?.value === "true";
-    const weight = Number(c.querySelector("[data-weight]")?.value || 0);
+    const rawWeight = String(c.querySelector("[data-weight]")?.value || "").trim();
+    const parsedWeight = rawWeight === "" ? null : Number(rawWeight);
+    const weight = Number.isFinite(parsedWeight) && parsedWeight > 0 ? parsedWeight : null;
     const topX = Number(c.querySelector("[data-topx]")?.value || 4);
 
     return {
@@ -319,7 +326,39 @@ function getRounds(){
         topX: Math.max(1, Math.min(4, Math.floor(topX || 4)))
       }
     };
-  }).filter(r => r.weight > 0);
+  });
+
+  const anyExplicitWeight = rounds.some((r) => Number.isFinite(r.weight) && r.weight > 0);
+  return rounds.map((r) => ({
+    ...r,
+    weight: anyExplicitWeight ? (Number.isFinite(r.weight) && r.weight > 0 ? r.weight : 1) : 1
+  }));
+}
+
+function importOptions(){
+  const teeStart = String(teeStartEl?.value || "").trim();
+  const teeIntervalRaw = Number(teeIntervalEl?.value || 10);
+  const teeIntervalMin = Number.isFinite(teeIntervalRaw)
+    ? Math.max(1, Math.min(60, Math.floor(teeIntervalRaw)))
+    : 10;
+  return { teeStart, teeIntervalMin };
+}
+
+async function importPlayersCsv(tid, rawText, editCode){
+  const csvText = normalizeDelimitedText(String(rawText || "").trim());
+  if (!csvText) throw new Error("CSV text is empty.");
+  const baseUrl = baseUrlForGithubPages();
+  const opts = importOptions();
+  return api(`/tournaments/${encodeURIComponent(tid)}/players/import`, {
+    method: "POST",
+    body: {
+      csvText,
+      baseUrl,
+      editCode,
+      teeStart: opts.teeStart,
+      teeIntervalMin: opts.teeIntervalMin
+    }
+  });
 }
 
 createBtn.onclick = async () => {
@@ -329,7 +368,7 @@ createBtn.onclick = async () => {
     const dates = document.getElementById("t_dates").value.trim();
     const rounds = getRounds();
     if (!name) throw new Error("Tournament name is required.");
-    if (!rounds.length) throw new Error("Add at least one round with positive weight.");
+    if (!rounds.length) throw new Error("Add at least one round.");
 
     const courseName = document.getElementById("course_name").value.trim();
     const pars = getPars();
@@ -352,13 +391,45 @@ createBtn.onclick = async () => {
       }
     });
     const tid = out.tournamentId;
+    const editCode = String(out.editCode || "").trim();
     rememberTournamentId(tid);
+    if (editCode) rememberTournamentEditCode(tid, editCode);
+    latestEditCode = editCode;
     tidEl.textContent = tid;
+    if (editCodeEl) editCodeEl.textContent = editCode || "—";
 
     const base = baseUrlForGithubPages();
     scoreboardLinkEl.textContent = `${base}/scoreboard.html?t=${encodeURIComponent(tid)}`;
     createdBox.style.display = "block";
-    createStatus.textContent = "Created.";
+    const starterRaw = String(starterCsvEl?.value || "").trim();
+
+    if (starterRaw) {
+      createStatus.textContent = "Created. Generating tee times/codes…";
+      importStatus.textContent = "Importing starter players…";
+      try {
+        const outImport = await importPlayersCsv(tid, starterRaw, editCode);
+        if (outImport?.downloadCsv) {
+          downloadText(`players_with_codes_${tid}.csv`, outImport.downloadCsv);
+          csvEl.value = outImport.downloadCsv;
+        }
+        importStatus.textContent = `Starter import complete (${outImport?.count || 0} players).`;
+        createStatus.textContent = "Created and starter CSV generated. Opening editor…";
+      } catch (e) {
+        console.error(e);
+        csvEl.value = starterRaw;
+        importStatus.textContent = e.message || String(e);
+        createStatus.textContent =
+          "Tournament created, but starter import failed. Opening editor so you can upload CSV there.";
+      }
+    } else {
+      createStatus.textContent = editCode
+        ? "Created. Add starter players or continue in editor."
+        : "Created (no edit code returned).";
+    }
+
+    setTimeout(() => {
+      location.href = `./edit.html?t=${encodeURIComponent(tid)}`;
+    }, 450);
   } catch(e){
     console.error(e);
     createStatus.textContent = e.message || String(e);
@@ -404,18 +475,8 @@ importBtn.onclick = async () => {
     let rawText = csvEl.value.trim();
     if (!rawText) throw new Error("Paste CSV or TSV into the box first.");
 
-    const csvText = normalizeDelimitedText(rawText);
-    const base = baseUrlForGithubPages();
-
     importStatus.textContent = "Importing…";
-
-    const out = await api(
-      `/tournaments/${encodeURIComponent(tid)}/players/import`,
-      {
-        method: "POST",
-        body: { csvText, baseUrl: base }
-      }
-    );
+    const out = await importPlayersCsv(tid, rawText, latestEditCode);
 
     downloadText(`players_with_codes_${tid}.csv`, out.downloadCsv);
     importStatus.textContent = `Done. Imported ${out.count || "?"} players.`;

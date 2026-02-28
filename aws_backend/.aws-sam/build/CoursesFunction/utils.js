@@ -52,6 +52,54 @@ export function code4(){
   return out;
 }
 
+export function normalizeEditCode(raw){
+  return String(raw || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "");
+}
+
+export function makeEditCode(length = 8){
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const n = Math.max(6, Math.min(12, Math.floor(Number(length) || 8)));
+  let out = "";
+  for (let i = 0; i < n; i++) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
+
+export function hashEditCode(code){
+  const normalized = normalizeEditCode(code);
+  return crypto.createHash("sha256").update(normalized, "utf8").digest("hex");
+}
+
+export function requireTournamentEditCode(state, providedCode){
+  const expected = String(state?.tournament?.editCodeHash || "").trim();
+  // Legacy tournaments without edit code stay editable with admin key only.
+  if (!expected) return;
+
+  const normalized = normalizeEditCode(providedCode);
+  if (!normalized){
+    const err = new Error("missing edit code");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const actual = hashEditCode(normalized);
+  if (actual.length !== expected.length){
+    const err = new Error("invalid edit code");
+    err.statusCode = 403;
+    throw err;
+  }
+  const ok = crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
+  if (!ok){
+    const err = new Error("invalid edit code");
+    err.statusCode = 403;
+    throw err;
+  }
+}
+
 export function normalizeHoles(arr){
   if (!Array.isArray(arr) || arr.length !== 18) {
     const err = new Error("holes must be an array of length 18");
@@ -177,22 +225,101 @@ function getPlayersByTeamMap(players){
   return byTeam;
 }
 
-function splitTwoManGroups(teamPlayers){
-  const groupA = [];
-  const groupB = [];
+function isTwoManFormat(format){
+  const fmt = String(format || "").toLowerCase();
+  return fmt === "two_man" || fmt === "two_man_best_ball";
+}
+
+function normalizeTwoManGroupLabel(value){
+  const raw = String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return raw.slice(0, 16);
+}
+
+function groupValueForRound(player, roundIndex){
+  const idx = Math.max(0, Math.floor(Number(roundIndex) || 0));
+  if (Array.isArray(player?.groups)){
+    const v = normalizeTwoManGroupLabel(player.groups[idx]);
+    if (v) return v;
+  }
+  if (idx === 0){
+    const fallback = normalizeTwoManGroupLabel(player?.group);
+    if (fallback) return fallback;
+  }
+  return "";
+}
+
+function twoManGroupId(teamId, label){
+  const team = String(teamId || "").trim();
+  const group = normalizeTwoManGroupLabel(label);
+  if (!team || !group) return "";
+  return `${team}::${group}`;
+}
+
+function twoManGroupLabelFromIndex(idx){
+  let n = Math.max(0, Math.floor(Number(idx) || 0));
+  let out = "";
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return out;
+}
+
+function splitTwoManGroups(teamPlayers, roundIndex = 0){
+  const sortedPlayers = (teamPlayers || []).slice().sort((a, b) =>
+    String(a?.name || "").localeCompare(String(b?.name || ""))
+  );
+  const grouped = new Map();
   const ungrouped = [];
 
-  for (const player of teamPlayers || []){
-    const g = String(player?.group || "").trim().toUpperCase();
-    if (g === "A") groupA.push(player);
-    else if (g === "B") groupB.push(player);
-    else ungrouped.push(player);
+  for (const player of sortedPlayers){
+    const label = groupValueForRound(player, roundIndex);
+    if (!label) {
+      ungrouped.push(player);
+      continue;
+    }
+    if (!grouped.has(label)) grouped.set(label, []);
+    grouped.get(label).push(player);
   }
 
-  while (groupA.length < 2 && ungrouped.length) groupA.push(ungrouped.shift());
-  while (groupB.length < 2 && ungrouped.length) groupB.push(ungrouped.shift());
+  const used = new Set(grouped.keys());
+  let nextLabelIdx = 0;
+  function nextAutoLabel(){
+    while (used.has(twoManGroupLabelFromIndex(nextLabelIdx))) nextLabelIdx++;
+    const label = twoManGroupLabelFromIndex(nextLabelIdx);
+    used.add(label);
+    nextLabelIdx++;
+    return label;
+  }
 
-  return { A: groupA, B: groupB };
+  const labels = Array.from(grouped.keys()).sort((a, b) => a.localeCompare(b));
+  for (const label of labels){
+    const arr = grouped.get(label);
+    while (arr.length < 2 && ungrouped.length) arr.push(ungrouped.shift());
+  }
+
+  while (ungrouped.length){
+    const label = nextAutoLabel();
+    const pair = [ungrouped.shift()];
+    if (ungrouped.length) pair.push(ungrouped.shift());
+    grouped.set(label, pair);
+  }
+
+  if (!grouped.size && sortedPlayers.length){
+    const rest = sortedPlayers.slice();
+    while (rest.length){
+      const label = nextAutoLabel();
+      const pair = [rest.shift()];
+      if (rest.length) pair.push(rest.shift());
+      grouped.set(label, pair);
+    }
+  }
+
+  const out = {};
+  for (const label of Array.from(grouped.keys()).sort((a, b) => a.localeCompare(b))){
+    out[label] = grouped.get(label);
+  }
+  return out;
 }
 
 export async function getJson(bucket, key){
@@ -281,6 +408,7 @@ export function materializePublicFromState(state){
   const teams = state.teams || {};
   const players = state.players || {};
   const scores = state.scores || { rounds: [] };
+  const publicRoundCount = rounds.length;
 
   const score_data = {
     rounds: [],
@@ -291,7 +419,7 @@ export function materializePublicFromState(state){
   for (let r=0;r<rounds.length;r++){
     const round = rounds[r] || {};
     const isScramble = round.format === "scramble";
-    const isTwoManBestBall = round.format === "two_man_best_ball";
+    const isTwoMan = isTwoManFormat(round.format);
     const useHandicap = !!round.useHandicap;
 
     const roundScores = scores.rounds?.[r] || {};
@@ -305,7 +433,7 @@ export function materializePublicFromState(state){
     };
 
     // Player entries
-    if (!isScramble){
+    if (!isScramble && !isTwoMan){
       for (const pid of Object.keys(players)){
         const gross = (roundScores.players?.[pid]?.holes || Array(18).fill(null)).map(v => (v === 0 ? null : v));
         const hcp = Number(players[pid]?.handicap || 0);
@@ -393,45 +521,68 @@ export function materializePublicFromState(state){
           thru: teamSc.thru
         };
       }
-    } else if (isTwoManBestBall){
+    } else if (isTwoMan){
       const playersByTeam = getPlayersByTeamMap(players);
 
       for (const teamId of Object.keys(teams)){
         const teamPlayers = playersByTeam.get(teamId) || [];
-        const groups = splitTwoManGroups(teamPlayers);
+        const groups = splitTwoManGroups(teamPlayers, r);
+        const groupKeys = Object.keys(groups);
+        const groupGross = Object.fromEntries(groupKeys.map(key => [key, Array(18).fill(null)]));
+        const groupNet = Object.fromEntries(groupKeys.map(key => [key, Array(18).fill(null)]));
+        const groupShots = Object.fromEntries(groupKeys.map(key => [key, Array(18).fill(0)]));
 
-        const groupGross = { A: Array(18).fill(null), B: Array(18).fill(null) };
-        const groupNet = { A: Array(18).fill(null), B: Array(18).fill(null) };
+        for (const key of groupKeys){
+          const groupId = twoManGroupId(teamId, key);
+          const grossRaw = (roundScores.groups?.[groupId]?.holes || Array(18).fill(null)).map(v => (v === 0 ? null : v));
+          const gPlayers = groups[key] || [];
+          const gHcp = useHandicap ? scrambleTeamHandicap(gPlayers) : 0;
+          const shots = useHandicap ? strokesPerHole(gHcp, course.strokeIndex) : Array(18).fill(0);
+          const netRaw = grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(shots[i] || 0)));
+          groupGross[key] = grossRaw;
+          groupNet[key] = netRaw;
+          groupShots[key] = shots;
 
-        for (let i=0;i<18;i++){
-          const groupAGrossVals = groups.A
-            .map(p => outRound.player[p.playerId]?.gross?.[i])
-            .filter(v => Number.isFinite(v));
-          const groupBGrossVals = groups.B
-            .map(p => outRound.player[p.playerId]?.gross?.[i])
-            .filter(v => Number.isFinite(v));
-          const groupANetVals = groups.A
-            .map(p => outRound.player[p.playerId]?.net?.[i])
-            .filter(v => Number.isFinite(v));
-          const groupBNetVals = groups.B
-            .map(p => outRound.player[p.playerId]?.net?.[i])
-            .filter(v => Number.isFinite(v));
+          const parPlayedGroup = grossRaw.reduce((acc, v, i) => acc + (v == null ? 0 : Number(course.pars[i] || 0)), 0);
+          const grossTotalGroup = sumPlayed(grossRaw);
+          const netTotalGroup = sumPlayed(netRaw);
+          const grossToParTotalGroup = grossTotalGroup - parPlayedGroup;
+          const netToParTotalGroup = netTotalGroup - parPlayedGroup;
+          const thruGroup = thruFromHoles(grossRaw);
 
-          groupGross.A[i] = groupAGrossVals.length ? Math.min(...groupAGrossVals) : null;
-          groupGross.B[i] = groupBGrossVals.length ? Math.min(...groupBGrossVals) : null;
-          groupNet.A[i] = groupANetVals.length ? Math.min(...groupANetVals) : null;
-          groupNet.B[i] = groupBNetVals.length ? Math.min(...groupBNetVals) : null;
+          for (const p of gPlayers){
+            outRound.player[p.playerId] = {
+              gross: grossRaw.slice(),
+              net: netRaw.slice(),
+              grossToPar: grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(course.pars[i] || 0))),
+              netToPar: netRaw.map((v, i) => (v == null ? null : Number(v) - Number(course.pars[i] || 0))),
+              handicapShots: shots.slice(),
+              grossTotal: grossTotalGroup,
+              netTotal: netTotalGroup,
+              grossToParTotal: grossToParTotalGroup,
+              netToParTotal: netToParTotalGroup,
+              thru: thruGroup
+            };
+          }
         }
 
         const gross = Array(18).fill(null);
         const net = Array(18).fill(null);
         for (let i=0;i<18;i++){
-          const aGross = groupGross.A[i];
-          const bGross = groupGross.B[i];
-          const aNet = groupNet.A[i];
-          const bNet = groupNet.B[i];
-          if (aGross != null && bGross != null) gross[i] = Number(aGross) + Number(bGross);
-          if (aNet != null && bNet != null) net[i] = Number(aNet) + Number(bNet);
+          let grossSum = 0;
+          let netSum = 0;
+          let allGross = groupKeys.length > 0;
+          let allNet = groupKeys.length > 0;
+          for (const key of groupKeys){
+            const gGross = Number.isFinite(groupGross[key]?.[i]) ? Number(groupGross[key][i]) : null;
+            const gNet = Number.isFinite(groupNet[key]?.[i]) ? Number(groupNet[key][i]) : null;
+            if (gGross == null) allGross = false;
+            else grossSum += gGross;
+            if (gNet == null) allNet = false;
+            else netSum += gNet;
+          }
+          if (allGross) gross[i] = grossSum;
+          if (allNet) net[i] = netSum;
         }
 
         const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(course.pars[i] || 0)));
@@ -449,10 +600,19 @@ export function materializePublicFromState(state){
           grossTotal, netTotal,
           grossToParTotal, netToParTotal,
           thru,
-          groups: {
-            A: { label: "Group A", playerIds: groups.A.map(p => p.playerId), gross: groupGross.A, net: groupNet.A },
-            B: { label: "Group B", playerIds: groups.B.map(p => p.playerId), gross: groupGross.B, net: groupNet.B }
-          }
+          groups: Object.fromEntries(
+            groupKeys.map((key) => [
+              key,
+              {
+                label: `Group ${key}`,
+                groupId: twoManGroupId(teamId, key),
+                playerIds: (groups[key] || []).map(p => p.playerId),
+                gross: groupGross[key],
+                net: groupNet[key],
+                handicapShots: groupShots[key]
+              }
+            ])
+          )
         };
       }
     } else {
@@ -588,7 +748,7 @@ export function materializePublicFromState(state){
     const round = rounds[r] || {};
     const weight = normalizedWeights[r] ?? 1;
     const isScramble = round.format === "scramble";
-    const isTwoManBestBall = round.format === "two_man_best_ball";
+    const isTwoMan = isTwoManFormat(round.format);
     const useHandicap = !!round.useHandicap;
 
     const derived = score_data.rounds[r];
@@ -631,7 +791,7 @@ export function materializePublicFromState(state){
       cur.par += Number(parPlayed || 0) * weight;
     }
 
-    if (isTwoManBestBall){
+    if (isTwoMan){
       for (const teamId of Object.keys(teams)){
         const sc = derived.team[teamId];
         if (!sc) continue;
@@ -676,18 +836,23 @@ export function materializePublicFromState(state){
   score_data.leaderboard_all.teams = teamLb;
   score_data.leaderboard_all.players = playerLb;
 
-  const hasTwoManBestBall = rounds.some(round => round?.format === "two_man_best_ball");
+  const hasTwoManBestBall = rounds.some(round => isTwoManFormat(round?.format));
   const playersByTeam = getPlayersByTeamMap(players);
   const publicTeams = Object.keys(teams).map(teamId => {
     const row = { teamId, teamName: teams[teamId].teamName };
     if (!hasTwoManBestBall) return row;
-    const groups = splitTwoManGroups(playersByTeam.get(teamId) || []);
+    const groupsByRound = {};
+    for (let r = 0; r < rounds.length; r++){
+      if (!isTwoManFormat(rounds[r]?.format)) continue;
+      const groups = splitTwoManGroups(playersByTeam.get(teamId) || [], r);
+      const groupKeys = Object.keys(groups);
+      groupsByRound[String(r)] = Object.fromEntries(
+        groupKeys.map((key) => [key, (groups[key] || []).map(p => p.playerId)])
+      );
+    }
     return {
       ...row,
-      groups: {
-        A: groups.A.map(p => p.playerId),
-        B: groups.B.map(p => p.playerId)
-      }
+      groupsByRound
     };
   });
 
@@ -696,11 +861,25 @@ export function materializePublicFromState(state){
     course,
     teams: publicTeams,
     players: Object.keys(players).map(id => ({
+      ...(function(){
+        const rawTeeTimes = Array.isArray(players[id]?.teeTimes) ? players[id].teeTimes : [];
+        const teeTimes = Array.from({ length: publicRoundCount }, (_, idx) => {
+          const v = rawTeeTimes[idx];
+          if (v == null || v === "") return null;
+          return String(v).trim();
+        });
+        if (!teeTimes.some((v) => !!v) && players[id]?.teeTime && teeTimes.length > 0) {
+          teeTimes[0] = String(players[id].teeTime).trim();
+        }
+        return { teeTimes };
+      })(),
       playerId:id,
       name: players[id].name,
       teamId: players[id].teamId,
       handicap: players[id].handicap,
-      group: players[id].group || null
+      groups: Array.from({ length: publicRoundCount }, (_, r) => groupValueForRound(players[id], r) || null),
+      group: players[id].group || null,
+      teeTime: (Array.isArray(players[id]?.teeTimes) ? players[id].teeTimes.find(v => !!v) : null) || players[id].teeTime || null
     })),
     updatedAt: state.updatedAt,
     version: state.version,
@@ -729,14 +908,33 @@ export async function writePublicObjectsFromState(state){
     const p = state.players[pid];
     if (!p?.code) continue;
     const team = teamsMap[p.teamId] || { teamId: p.teamId, teamName: "" };
+    const teeTimes = Array.from({ length: rounds.length }, (_, idx) => {
+      const v = Array.isArray(p?.teeTimes) ? p.teeTimes[idx] : null;
+      if (v == null || v === "") return null;
+      return String(v).trim();
+    });
+    if (!teeTimes.some((v) => !!v) && p?.teeTime && teeTimes.length > 0) {
+      teeTimes[0] = String(p.teeTime).trim();
+    }
 
     const saved = rounds.map((round, rIdx) => {
       const isScramble = round.format === "scramble";
-      const target = isScramble ? "team" : "player";
+      const isTwoMan = isTwoManFormat(round?.format);
+      const target = isScramble ? "team" : isTwoMan ? "group" : "player";
+      const groupLabel = groupValueForRound(p, rIdx) || null;
+      const groupId = isTwoMan ? twoManGroupId(p.teamId, groupLabel) : null;
       const gross = isScramble
         ? (scores.rounds?.[rIdx]?.teams?.[p.teamId]?.holes || Array(18).fill(null))
-        : (scores.rounds?.[rIdx]?.players?.[pid]?.holes || Array(18).fill(null));
-      return { roundIndex:rIdx, target, gross: gross.map(v => (v===0?null:v)) };
+        : isTwoMan
+          ? (scores.rounds?.[rIdx]?.groups?.[groupId]?.holes || Array(18).fill(null))
+          : (scores.rounds?.[rIdx]?.players?.[pid]?.holes || Array(18).fill(null));
+      return {
+        roundIndex:rIdx,
+        target,
+        group: groupLabel,
+        groupId,
+        gross: gross.map(v => (v===0?null:v))
+      };
     });
     const enterObj = {
       code: p.code,
@@ -744,7 +942,15 @@ export async function writePublicObjectsFromState(state){
       tournament: { name: state.tournament.name, dates: state.tournament.dates },
       rounds,
       course,
-      player: { playerId: pid, name: p.name, handicap: p.handicap, group: p.group || null },
+      player: {
+        playerId: pid,
+        name: p.name,
+        handicap: p.handicap,
+        groups: Array.from({ length: rounds.length }, (_, r) => groupValueForRound(p, r) || null),
+        group: p.group || null,
+        teeTimes,
+        teeTime: teeTimes.find((v) => !!v) || p.teeTime || null
+      },
       team: { teamId: team.teamId, teamName: team.teamName, group: p.group || null },
       saved
     };

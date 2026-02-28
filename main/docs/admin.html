@@ -16,6 +16,7 @@
     <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
     <div class="actions">
       <a href="./index.html">Home</a>
+      <a href="./edit.html" data-edit-link>Edit Tournament</a>
       <a href="./enter.html">Enter Scores</a>
       <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
       <button type="button" class="theme-toggle" data-theme-toggle></button>
@@ -42,6 +43,25 @@
     <div class="col">
       <label for="t_dates">Dates (free text)</label>
       <input id="t_dates" placeholder="Mar 14–15, 2026" />
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Starter players</h2>
+  <div class="small" style="margin-bottom:8px;">
+    Paste the original player list first. After tournament creation, codes + tee times are generated and a downloadable CSV is returned.
+  </div>
+  <label for="starter_csv">CSV/TSV columns: name,team,handicap (optional: groupR1,groupR2...,code,teeTimeR1,teeTimeR2...)</label>
+  <textarea id="starter_csv" placeholder="name,team,handicap&#10;Player One,Team 1,8&#10;Player Two,Team 1,11&#10;Player Three,Team 2,6"></textarea>
+  <div class="row" style="margin-top:10px;">
+    <div class="col">
+      <label for="tee_start">Generated tee start (if missing in CSV)</label>
+      <input id="tee_start" value="8:00 AM" />
+    </div>
+    <div class="col">
+      <label for="tee_interval">Tee interval minutes</label>
+      <input id="tee_interval" type="number" min="1" max="60" step="1" value="10" />
     </div>
   </div>
 </div>
@@ -120,11 +140,13 @@
     <div class="row">
       <div class="col">
         <div class="pill">Tournament ID: <span id="tid"></span></div>
+        <div class="pill" style="margin-top:8px;">Edit code: <span id="edit_code"></span></div>
+        <div class="small" style="margin-top:8px;">Keep this code private. It is required to open the editor for this tournament.</div>
         <div class="small" style="margin-top:10px;">Public scoreboard link:</div>
         <pre id="scoreboard_link" style="white-space:pre-wrap;"></pre>
       </div>
       <div class="col">
-        <h3 style="margin-top:0;">Import players CSV</h3>
+        <h3 style="margin-top:0;">Import additional players CSV</h3>
         <label for="csv">CSV text (Name,Team,Handicap)</label>
         <textarea id="csv" placeholder="Paste CSV here..."></textarea>
         <div class="actions" style="margin-top:10px;">

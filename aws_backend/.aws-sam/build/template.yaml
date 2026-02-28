@@ -125,6 +125,41 @@ Resources:
             Method: post
     Metadata:
       SamResourceId: ImportPlayersFunction
+  TournamentAdminFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: tournaments_admin.handler
+      CodeUri: TournamentAdminFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: PublicBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: EventsBucketName
+      Events:
+        GetTournamentAdmin:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /tournaments/{tid}/admin
+            Method: get
+        PostTournamentAdmin:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /tournaments/{tid}/admin
+            Method: post
+    Metadata:
+      SamResourceId: TournamentAdminFunction
   PostScoresFunction:
     Type: AWS::Serverless::Function
     Properties:

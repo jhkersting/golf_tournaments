@@ -1,4 +1,4 @@
-import { json, parseBody, requireAdmin, uid, updateStateWithRetry, writePublicObjectsFromState } from "./utils.js";
+import { json, parseBody, requireAdmin, uid, makeEditCode, hashEditCode, updateStateWithRetry, writePublicObjectsFromState } from "./utils.js";
 
 function validateCourse(course){
   const pars = course?.pars;
@@ -27,8 +27,10 @@ function normalizeAgg(agg){
 function normalizeRoundFormat(format){
   const raw = String(format || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (raw === "scramble") return "scramble";
+  if (raw === "shamble") return "shamble";
   if (
     raw === "two_man_best_ball" ||
+    raw === "two_man_scramble" ||
     raw === "two_man" ||
     raw === "2_man" ||
     raw === "2man" ||
@@ -36,9 +38,17 @@ function normalizeRoundFormat(format){
     raw === "2man_best_ball" ||
     raw === "2_man_best_ball"
   ){
-    return "two_man_best_ball";
+    return "two_man";
   }
   return "singles";
+}
+
+function normalizeRoundWeight(weight){
+  if (weight === null || weight === undefined) return null;
+  if (typeof weight === "string" && weight.trim() === "") return null;
+  const n = Number(weight);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
 }
 
 export async function handler(event){
@@ -53,19 +63,31 @@ export async function handler(event){
     const courseErr = validateCourse(course);
     if (courseErr) return json(400, { error: courseErr });
 
-    // Normalize rounds
-    const normRounds = rounds.map(r => ({
+    // Normalize rounds. If no weights are provided, default all rounds to equal weight.
+    const baseRounds = rounds.map(r => ({
       name: String(r?.name || "Round").trim(),
       format: normalizeRoundFormat(r?.format),
-      weight: Number(r?.weight ?? 1),
+      weight: normalizeRoundWeight(r?.weight),
       useHandicap: !!r?.useHandicap,
       teamAggregation: normalizeAgg(r?.teamAggregation)
     }));
+    const allMissingWeight = baseRounds.length > 0 && baseRounds.every(r => r.weight == null);
+    const normRounds = baseRounds.map(r => ({
+      ...r,
+      weight: allMissingWeight ? 1 : (r.weight == null ? 1 : r.weight)
+    }));
 
     const tid = uid("t");
+    const editCode = makeEditCode(8);
 
     const state = {
-      tournament: { tournamentId: tid, name, dates, createdAt: Date.now() },
+      tournament: {
+        tournamentId: tid,
+        name,
+        dates,
+        createdAt: Date.now(),
+        editCodeHash: hashEditCode(editCode)
+      },
       rounds: normRounds,
       course: { pars: course.pars.map(Number), strokeIndex: course.strokeIndex.map(Number) },
       teams: {},
@@ -80,7 +102,7 @@ export async function handler(event){
     await updateStateWithRetry(tid, () => state, { maxTries: 2 });
     await writePublicObjectsFromState(state);
 
-    return json(200, { tournamentId: tid });
+    return json(200, { tournamentId: tid, editCode });
   } catch(e){
     return json(e.statusCode || 500, { error: e.message || "Server error" });
   }

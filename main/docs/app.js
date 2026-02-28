@@ -6,6 +6,7 @@ export const ADMIN_KEY = "ADMIN_RTR"; // optional if backend checks x-admin-key
 export const STORAGE_KEYS = {
   tournamentId: "golf:lastTournamentId",
   playerCode: "golf:lastPlayerCode",
+  tournamentEditCodePrefix: "golf:tournamentEditCode:",
 };
 
 export async function api(path, { method="GET", body=null, headers={} } = {}) {
@@ -111,6 +112,25 @@ export function getRememberedPlayerCode(){
   return String(safeGetStorage(STORAGE_KEYS.playerCode) || "").trim();
 }
 
+function tournamentEditCodeKey(tournamentId){
+  const tid = String(tournamentId || "").trim();
+  if (!tid) return "";
+  return `${STORAGE_KEYS.tournamentEditCodePrefix}${tid}`;
+}
+
+export function rememberTournamentEditCode(tournamentId, editCode){
+  const key = tournamentEditCodeKey(tournamentId);
+  const code = String(editCode || "").trim();
+  if (!key || !code) return;
+  safeSetStorage(key, code);
+}
+
+export function getRememberedTournamentEditCode(tournamentId){
+  const key = tournamentEditCodeKey(tournamentId);
+  if (!key) return "";
+  return String(safeGetStorage(key) || "").trim();
+}
+
 export function downloadText(filename, text){
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -129,6 +149,13 @@ export function baseUrlForGithubPages(){
   url.search = "";
   url.pathname = url.pathname.replace(/[^/]+$/, "");
   return url.toString().replace(/\/$/, "");
+}
+
+export function setHeaderTournamentName(name){
+  const titleEl = document.querySelector(".brand [data-brand-title]");
+  if (!titleEl) return;
+  const normalizedName = String(name || "").trim();
+  titleEl.textContent = normalizedName || "Golf Tournament";
 }
 
 // Handicap strokes allocation by stroke index (1 hardest..18 easiest)

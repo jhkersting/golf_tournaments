@@ -12,6 +12,10 @@ function scoreboardHref(tournamentId) {
   return tournamentId ? `./scoreboard.html?t=${encodeURIComponent(tournamentId)}` : "./scoreboard.html";
 }
 
+function editHref(tournamentId) {
+  return tournamentId ? `./edit.html?t=${encodeURIComponent(tournamentId)}` : "./edit.html";
+}
+
 function applyScoreboardLinks() {
   const params = new URLSearchParams(location.search);
   const urlTid = String(params.get("t") || "").trim();
@@ -23,9 +27,13 @@ function applyScoreboardLinks() {
 
   const tid = urlTid || getTournamentId();
   const href = scoreboardHref(tid);
+  const edit = editHref(tid);
 
   document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {
     link.setAttribute("href", href);
+  });
+  document.querySelectorAll("a[data-edit-link]").forEach((link) => {
+    link.setAttribute("href", edit);
   });
 }
 

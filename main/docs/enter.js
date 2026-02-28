@@ -3,16 +3,23 @@ import {
   staticJson,
   qs,
   createTeamColorRegistry,
+  setHeaderTournamentName,
   STORAGE_KEYS,
   getRememberedPlayerCode,
   rememberPlayerCode,
   rememberTournamentId
 } from "./app.js";
 
+function normalizePlayerCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
 const codeFromQuery = qs("code");
-const normalizedCodeFromQuery = String(codeFromQuery || qs("c") || "").trim();
+const normalizedCodeFromQuery = normalizePlayerCode(codeFromQuery || qs("c"));
 if (normalizedCodeFromQuery) rememberPlayerCode(normalizedCodeFromQuery);
-let code = normalizedCodeFromQuery || getRememberedPlayerCode() || "";
+let code = normalizedCodeFromQuery || normalizePlayerCode(getRememberedPlayerCode()) || "";
 const who = document.getElementById("who");
 const forms = document.getElementById("round_forms");
 const ticker = document.getElementById("enter_ticker");
@@ -79,6 +86,62 @@ function seedTeamColors(tjson, playersById) {
 function colorForTeam(teamId) {
   const id = normalizeTeamId(teamId);
   return teamColors.get(id);
+}
+
+function normalizeGroup(groupValue) {
+  return String(groupValue || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 16);
+}
+
+function groupLabelForPlayer(player) {
+  const g = normalizeGroup(player?.group);
+  return g ? `Group ${g}` : "";
+}
+
+function groupForPlayerRound(player, roundIndex) {
+  if (Array.isArray(player?.groups)) {
+    const v = normalizeGroup(player.groups[roundIndex]);
+    if (v) return v;
+  }
+  if (roundIndex === 0) return normalizeGroup(player?.group);
+  return "";
+}
+
+function twoManGroupId(teamId, label) {
+  const team = String(teamId || "").trim();
+  const g = normalizeGroup(label);
+  if (!team || !g) return "";
+  return `${team}::${g}`;
+}
+
+function parseTwoManGroupId(groupId) {
+  const s = String(groupId || "").trim();
+  const idx = s.indexOf("::");
+  if (idx < 0) return { teamId: "", group: "" };
+  return { teamId: s.slice(0, idx), group: s.slice(idx + 2) };
+}
+
+function normalizeTeeValue(v) {
+  return String(v || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function teeTimeForPlayerRound(player, roundIndex) {
+  if (!player || roundIndex < 0) return "";
+  if (Array.isArray(player.teeTimes)) {
+    const v = normalizeTeeValue(player.teeTimes[roundIndex]);
+    if (v) return v;
+  }
+  if (roundIndex === 0) {
+    const fallback = normalizeTeeValue(player.teeTime);
+    if (fallback) return fallback;
+  }
+  return "";
 }
 
 /**
@@ -856,8 +919,11 @@ async function main() {
     `;
     const input = document.getElementById("player_code_input");
     const go = document.getElementById("player_code_go");
+    input?.addEventListener("input", () => {
+      input.value = normalizePlayerCode(input.value);
+    });
     const onContinue = () => {
-      const nextCode = (input?.value || "").trim();
+      const nextCode = normalizePlayerCode(input?.value);
       if (!nextCode) return;
       rememberPlayerCode(nextCode);
       location.search = `?code=${encodeURIComponent(nextCode)}`;
@@ -893,6 +959,31 @@ async function main() {
 
   // Tournament public JSON (single file)
   const tjson = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, { cacheKey: `t:${tid}` });
+  setHeaderTournamentName(tjson?.tournament?.name);
+  const hasTwoManBestBallTournament = (tjson?.tournament?.rounds || []).some(
+    (round) => {
+      const fmt = String(round?.format || "").toLowerCase();
+      return fmt === "two_man" || fmt === "two_man_best_ball";
+    }
+  );
+  const teeRoundCount = (tjson?.tournament?.rounds || []).length;
+  const myGroupSummary = Array.from({ length: teeRoundCount }, (_, idx) => {
+    const g = groupForPlayerRound(enter?.player, idx);
+    return g ? `R${idx + 1}: Group ${g}` : "";
+  })
+    .filter(Boolean)
+    .join(" • ");
+  const myTeeTimes = Array.from({ length: teeRoundCount }, (_, idx) => {
+    const v = Array.isArray(enter?.player?.teeTimes) ? enter.player.teeTimes[idx] : null;
+    return String(v || "").trim();
+  });
+  if (!myTeeTimes.some((v) => !!v) && enter?.player?.teeTime && myTeeTimes.length > 0) {
+    myTeeTimes[0] = String(enter.player.teeTime).trim();
+  }
+  const myTeeSummary = myTeeTimes
+    .map((v, idx) => (v ? `R${idx + 1}: ${v}` : ""))
+    .filter(Boolean)
+    .join(" • ");
 
   // Code path: reveal only after required data has loaded.
   $('body').show();
@@ -907,6 +998,8 @@ async function main() {
       <div>
         <div class="small">You are</div>
         <div><b>${enter.player?.name || ""}</b> <span class="small">(code ${code})</span></div>
+        ${myGroupSummary ? `<div class="small">${myGroupSummary}</div>` : ""}
+        ${myTeeSummary ? `<div class="small">Tee times: ${myTeeSummary}</div>` : ""}
       </div>
       <div>
         <div class="small">Team</div>
@@ -937,10 +1030,22 @@ async function main() {
   // Default group: self + same team players
   const myId = enter.player?.playerId;
   const myTeamId = (playersById[myId] || {}).teamId || enter.team?.teamId;
-  const defaultGroupIds = playersArr
-    .filter((p) => p.teamId === myTeamId)
-    .map((p) => p.playerId)
-    .filter(Boolean);
+  function allowedPlayerIdsForRound(roundIndex) {
+    const actor = playersById[myId] || enter.player || {};
+    const actorTee = teeTimeForPlayerRound(actor, roundIndex);
+    const ids = [];
+    for (const p of playersArr) {
+      const pid = p?.playerId;
+      if (!pid) continue;
+      if (!actorTee) {
+        if (pid === myId) ids.push(pid);
+        continue;
+      }
+      if (teeTimeForPlayerRound(p, roundIndex) === actorTee) ids.push(pid);
+    }
+    if (myId && !ids.includes(myId)) ids.unshift(myId);
+    return Array.from(new Set(ids));
+  }
 
   forms.innerHTML = "";
 
@@ -1023,13 +1128,47 @@ async function main() {
   for (let r = 0; r < rounds.length; r++) {
     const round = rounds[r] || {};
     const fmt = String(round.format || "singles").toLowerCase();
+    const fmtLabel = (fmt === "two_man" || fmt === "two_man_best_ball") ? "two man" : fmt;
     const isScramble = fmt === "scramble";
-    const isTwoManBestBall = fmt === "two_man_best_ball";
+    const isTwoManBestBall = fmt === "two_man" || fmt === "two_man_best_ball";
     const canGroup = !isScramble;
+    const allowedRoundPlayerIds = canGroup ? allowedPlayerIdsForRound(r) : [];
+    const allowedRoundPlayerSet = new Set(allowedRoundPlayerIds);
+    const allowedRoundGroups = [];
+    const allowedRoundGroupById = {};
+    if (isTwoManBestBall) {
+      const seen = new Set();
+      for (const pid of allowedRoundPlayerIds) {
+        const p = playersById[pid];
+        const g = groupForPlayerRound(p, r);
+        const gid = twoManGroupId(p?.teamId, g);
+        if (!gid || seen.has(gid)) continue;
+        seen.add(gid);
+        const groupPlayerIds = playersArr
+          .filter((x) => x?.teamId === p?.teamId && groupForPlayerRound(x, r) === g)
+          .map((x) => x.playerId)
+          .filter(Boolean);
+        const groupPlayers = groupPlayerIds.map((id) => playersById[id]).filter(Boolean);
+        const teamName = teamsById[p?.teamId]?.teamName || p?.teamId || "Team";
+        const displayName = `${teamName} • Group ${g}`;
+        const meta = {
+          groupId: gid,
+          group: g,
+          teamId: p?.teamId || "",
+          teamName,
+          playerIds: groupPlayerIds,
+          names: groupPlayers.map((gp) => gp.name).filter(Boolean),
+          displayName
+        };
+        allowedRoundGroups.push(meta);
+        allowedRoundGroupById[gid] = meta;
+      }
+      allowedRoundGroups.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    }
 
     const roundCard = el("div", { class: "card" });
     const roundHead = el("div", { class: "actions", style: "justify-content:space-between; margin-bottom:6px;" });
-    roundHead.appendChild(el("h2", { style: "margin:0;" }, `${round.name || `Round ${r + 1}`} — ${fmt}`));
+    roundHead.appendChild(el("h2", { style: "margin:0;" }, `${round.name || `Round ${r + 1}`} — ${fmtLabel}`));
     const toggleRoundBtn = el("button", { class: "secondary", type: "button" }, "");
     roundHead.appendChild(toggleRoundBtn);
     roundCard.appendChild(roundHead);
@@ -1062,14 +1201,64 @@ async function main() {
     wrap.textContent = isScramble
       ? "Scramble: enter one team score per hole."
       : isTwoManBestBall
-        ? "Two-man best ball: enter player scores. Team totals use the best score from Group A + Group B each hole."
-        : "Singles/Shamble: enter player scores. You can choose who you're playing with to enter for them too.";
+        ? "Two man: enter one score per group per hole. You can only edit groups on your tee time."
+        : "Singles/Shamble: enter player scores for players on your tee time in this round.";
     roundBody.appendChild(wrap);
+    const myRoundTee = String(myTeeTimes[r] || "").trim();
+    if (myRoundTee) {
+      roundBody.appendChild(
+        el("div", { class: "small", style: "margin-bottom:8px;" }, `<b>Your tee time:</b> ${myRoundTee}`)
+      );
+    }
+
+    if (isTwoManBestBall) {
+      const myTeamPlayers = playersArr.filter((p) => p.teamId === myTeamId);
+      const groups = {};
+      myTeamPlayers.forEach((p) => {
+        const key = groupForPlayerRound(p, r);
+        if (!key) return;
+        groups[key] = groups[key] || [];
+        groups[key].push(p.name);
+      });
+      const groupInfo = el("div", { class: "small", style: "margin-bottom:8px;" });
+      const labels = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+      const text = labels.length
+        ? labels.map((label) => `${label}: ${groups[label].join(", ")}`).join(" • ")
+        : "—";
+      groupInfo.innerHTML = `<b>Your team groups</b> • ${text}`;
+      roundBody.appendChild(groupInfo);
+    }
 
     // Group picker
     let groupIds = canGroup
-      ? loadGroup(tid, r, playersById, defaultGroupIds.length ? defaultGroupIds : [myId].filter(Boolean))
+      ? loadGroup(
+        tid,
+        r,
+        isTwoManBestBall ? allowedRoundGroupById : playersById,
+        isTwoManBestBall
+          ? allowedRoundGroups.map((g) => g.groupId)
+          : allowedRoundPlayerIds.length
+            ? allowedRoundPlayerIds
+            : [myId].filter(Boolean)
+      )
       : [];
+    if (canGroup) {
+      if (isTwoManBestBall) {
+        const allowedGroupSet = new Set(allowedRoundGroups.map((g) => g.groupId));
+        groupIds = groupIds.filter((id) => allowedGroupSet.has(id));
+        if (!groupIds.length) {
+          const myGroup = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], r));
+          groupIds = myGroup && allowedGroupSet.has(myGroup)
+            ? [myGroup]
+            : allowedRoundGroups.map((g) => g.groupId).slice(0, 1);
+        }
+      } else {
+        groupIds = groupIds.filter((id) => allowedRoundPlayerSet.has(id));
+        if (!groupIds.length) {
+          groupIds = allowedRoundPlayerIds.length ? allowedRoundPlayerIds.slice() : [myId].filter(Boolean);
+        }
+      }
+    }
     const groupPicker = el("div", { class: "small", style: canGroup ? "margin:10px 0;" : "display:none;" });
 
     // panes/tabs created early so render functions can close over them
@@ -1097,31 +1286,49 @@ async function main() {
     if (canGroup) {
       const pickerTop = el("div", { style: "display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:6px;" });
       pickerTop.appendChild(el("b", {}, "Playing with:"));
+      if ((isTwoManBestBall ? allowedRoundGroups.length : allowedRoundPlayerIds.length) <= 1) {
+        pickerTop.appendChild(
+          el(
+            "span",
+            { class: "small" },
+            isTwoManBestBall ? "Only your group is on this tee time." : "Only your code can enter this tee time."
+          )
+        );
+      }
       const list = el("div", {
         style:
           "display:flex; flex-wrap:wrap; gap:10px; max-height:220px; overflow:auto; padding:8px; border:1px solid var(--border); border-radius:10px; background:var(--surface-strong);",
       });
 
       function syncGroupChecks() {
-        const boxes = list.querySelectorAll("input[type='checkbox'][data-player-id]");
+        const boxes = list.querySelectorAll("input[type='checkbox'][data-target-id]");
         boxes.forEach((cb) => {
-          const pid = cb.getAttribute("data-player-id");
-          cb.checked = !!pid && groupIds.includes(pid);
+          const targetId = cb.getAttribute("data-target-id");
+          cb.checked = !!targetId && groupIds.includes(targetId);
         });
       }
 
       const btnMeTeam = el("button", { class: "secondary", type: "button" }, "My team");
       btnMeTeam.onclick = () => {
-        groupIds = defaultGroupIds.length ? defaultGroupIds : [myId].filter(Boolean);
+        if (isTwoManBestBall) {
+          const myGroup = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], r));
+          groupIds = myGroup ? [myGroup] : [];
+        } else {
+          groupIds = allowedRoundPlayerIds.length ? allowedRoundPlayerIds.slice() : [myId].filter(Boolean);
+        }
         saveGroup(tid, r, groupIds);
         syncGroupChecks();
         renderHoleForm();
         renderBulkTable();
       };
 
-      const btnAll = el("button", { class: "secondary", type: "button" }, "All players");
+      btnMeTeam.textContent = isTwoManBestBall ? "My group" : "My tee time";
+
+      const btnAll = el("button", { class: "secondary", type: "button" }, "All on tee time");
       btnAll.onclick = () => {
-        groupIds = playersArr.map((p) => p.playerId);
+        groupIds = isTwoManBestBall
+          ? allowedRoundGroups.map((g) => g.groupId)
+          : allowedRoundPlayerIds.slice();
         saveGroup(tid, r, groupIds);
         syncGroupChecks();
         renderHoleForm();
@@ -1132,12 +1339,24 @@ async function main() {
       pickerTop.appendChild(btnAll);
       groupPicker.appendChild(pickerTop);
 
-      for (const p of playersArr) {
-        const id = p.playerId;
+      const listItems = isTwoManBestBall
+        ? allowedRoundGroups.map((g) => ({ id: g.groupId, text: `${g.displayName} (${g.names.join(", ") || "—"})` }))
+        : allowedRoundPlayerIds
+          .map((id) => {
+            const p = playersById[id];
+            if (!p) return null;
+            const groupLabel = hasTwoManBestBallTournament ? groupLabelForPlayer({ ...p, group: groupForPlayerRound(p, r) }) : "";
+            const groupText = groupLabel ? ` ${groupLabel}` : "";
+            return { id, text: `${p.name}${groupText}${p.teamId ? ` (${p.teamId})` : ""}` };
+          })
+          .filter(Boolean);
+
+      for (const item of listItems) {
+        const id = item.id;
         const checked = groupIds.includes(id);
         const lbl = el("label", { style: "display:flex; align-items:center; gap:6px; cursor:pointer;" });
         const cb = el("input", { type: "checkbox" });
-        cb.setAttribute("data-player-id", id);
+        cb.setAttribute("data-target-id", id);
         cb.checked = checked;
         cb.onchange = () => {
           if (cb.checked) {
@@ -1145,14 +1364,16 @@ async function main() {
           } else {
             groupIds = groupIds.filter((x) => x !== id);
           }
-          if (!groupIds.includes(myId) && myId) groupIds.unshift(myId);
+          if (!isTwoManBestBall && !groupIds.includes(myId) && myId && allowedRoundPlayerSet.has(myId)) {
+            groupIds.unshift(myId);
+          }
           saveGroup(tid, r, groupIds);
           syncGroupChecks();
           renderHoleForm();
           renderBulkTable();
         };
         lbl.appendChild(cb);
-        lbl.appendChild(el("span", {}, `${p.name}${p.teamId ? ` <span class="small">(${p.teamId})</span>` : ""}`));
+        lbl.appendChild(el("span", {}, item.text));
         list.appendChild(lbl);
       }
 
@@ -1168,13 +1389,32 @@ async function main() {
         const teamEntry = sd.team?.[teamId];
         const gross = (teamEntry?.gross || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
         return { type: "team", savedByTarget: { [teamId]: gross }, targetIds: [teamId] };
+      } else if (isTwoManBestBall) {
+        const savedByTarget = {};
+        for (const [teamId, teamEntry] of Object.entries(sd.team || {})) {
+          const groups = teamEntry?.groups || {};
+          for (const [label, groupEntry] of Object.entries(groups)) {
+            const gid = String(groupEntry?.groupId || twoManGroupId(teamId, label)).trim();
+            if (!gid) continue;
+            const gross = (groupEntry?.gross || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
+            savedByTarget[gid] = gross;
+          }
+        }
+        const allowedSet = new Set(allowedRoundGroups.map((g) => g.groupId));
+        const fallbackGroup = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], r));
+        const ids = (groupIds.length ? groupIds : [fallbackGroup].filter(Boolean)).filter((id) =>
+          allowedSet.has(id)
+        );
+        return { type: "group", savedByTarget, targetIds: ids };
       } else {
         const savedByTarget = {};
         for (const pid of Object.keys(sd.player || {})) {
           const gross = (sd.player[pid]?.gross || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
           savedByTarget[pid] = gross;
         }
-        const ids = groupIds.length ? groupIds : [myId].filter(Boolean);
+        const ids = (groupIds.length ? groupIds : [myId].filter(Boolean)).filter((id) =>
+          allowedRoundPlayerSet.has(id)
+        );
         return { type: "player", savedByTarget, targetIds: ids };
       }
     }
@@ -1306,8 +1546,44 @@ async function main() {
 
         row.appendChild(inp);
         grid.appendChild(row);
+      } else if (type === "group") {
+        const ids = targetIds.length
+          ? targetIds
+          : (() => {
+            const g = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], r));
+            return g ? [g] : [];
+          })();
+        for (const gid of ids) {
+          const meta = allowedRoundGroupById[gid] || { displayName: gid, names: [], teamId: parseTwoManGroupId(gid).teamId };
+          const teamColor = colorForTeam(meta.teamId);
+          const existingRaw = (savedByTarget[gid] || Array(18).fill(null))[currentHole];
+          const existing = isEmptyScore(existingRaw) ? null : existingRaw;
+          const draft = getHoleDraft(r, currentHole, gid);
+          const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
+
+          const row = el("div", { class: "hole-row team-accent", style: `--team-accent:${teamColor};` });
+          row.appendChild(
+            el(
+              "div",
+              { style: "min-width:0;" },
+              `<b>${meta.displayName || gid}</b> <span class="small">(${(meta.names || []).join(", ") || "pair"})</span><br/><span class="small">Existing: ${existing == null ? "—" : existing}</span>`
+            )
+          );
+
+          const inp = makeScoreInput(initial);
+          inp.setAttribute("data-enter-scope", "hole");
+          inp.setAttribute("data-target-id", gid);
+          inp.setAttribute("data-hole-index", String(currentHole));
+          inp.addEventListener("input", () => setHoleDraft(r, currentHole, gid, inp.value));
+          inputs.push({ targetId: gid, input: inp });
+
+          row.appendChild(inp);
+          grid.appendChild(row);
+        }
       } else {
-        const ids = targetIds.length ? targetIds : [myId].filter(Boolean);
+        const ids = targetIds.length
+          ? targetIds
+          : [myId].filter((id) => Boolean(id) && allowedRoundPlayerSet.has(id));
         for (const pid of ids) {
           const p = playersById[pid];
           if (!p) continue;
@@ -1324,7 +1600,7 @@ async function main() {
             el(
               "div",
               { style: "min-width:0;" },
-              `<b>${p.name}</b> <span class="small">${p.handicap != null ? `(hcp ${p.handicap})` : ""}</span><br/><span class="small">Existing: ${existing == null ? "—" : existing
+              `<b>${p.name}</b> <span class="small">${hasTwoManBestBallTournament && groupForPlayerRound(p, r) ? `(Group ${groupForPlayerRound(p, r)}) ` : ""}${p.handicap != null ? `(hcp ${p.handicap})` : ""}</span><br/><span class="small">Existing: ${existing == null ? "—" : existing
               }</span>`
             )
           );
@@ -1427,6 +1703,9 @@ async function main() {
         pendingHoleConflict = { holeIndex: currentHole, data: j };
         const conflicts = j.conflicts || [];
         const names = conflicts.map((c) => {
+          if (type === "group") {
+            return allowedRoundGroupById[c.targetId]?.displayName || c.targetId;
+          }
           const p = playersById[c.targetId];
           return p ? p.name : c.targetId;
         });
@@ -1454,7 +1733,12 @@ async function main() {
       bulkPane.innerHTML = "";
 
       const { type, savedByTarget, targetIds } = getSavedForRound();
-      const ids = type === "team" ? targetIds : targetIds.length ? targetIds : [myId].filter(Boolean);
+      const ids =
+        type === "team"
+          ? targetIds
+          : targetIds.length
+            ? targetIds
+            : [myId].filter((id) => Boolean(id) && allowedRoundPlayerSet.has(id));
 
       const info = el(
         "div",
@@ -1468,7 +1752,7 @@ async function main() {
       const thead = el("thead");
       const trH = el("tr");
       trH.innerHTML =
-        `<th class="left">${type === "team" ? "Team" : "Player"}</th>` +
+        `<th class="left">${type === "team" ? "Team" : type === "group" ? "Group" : "Player"}</th>` +
         `<th>Side</th>` +
         Array.from({ length: 9 }, (_, i) => `<th>${i + 1}</th>`).join("");
       thead.appendChild(trH);
@@ -1478,8 +1762,20 @@ async function main() {
       const rowInputs = {};
 
       for (const id of ids) {
-        const name = type === "team" ? enter.team?.teamName || id : playersById[id]?.name || id;
-        const teamId = type === "team" ? id : playersById[id]?.teamId;
+        const meta = type === "group" ? allowedRoundGroupById[id] : null;
+        const name = type === "team"
+          ? enter.team?.teamName || id
+          : type === "group"
+            ? meta?.displayName || id
+            : playersById[id]?.name || id;
+        const groupLabel = type === "team"
+          ? ""
+          : type === "group"
+            ? ((meta?.names || []).join(", "))
+              : hasTwoManBestBallTournament
+              ? (groupForPlayerRound(playersById[id], r) ? `Group ${groupForPlayerRound(playersById[id], r)}` : "")
+              : "";
+        const teamId = type === "team" ? id : type === "group" ? meta?.teamId : playersById[id]?.teamId;
         const teamColor = colorForTeam(teamId);
         const holes = (savedByTarget[id] || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
 
@@ -1489,7 +1785,7 @@ async function main() {
         const nameCell = el(
           "td",
           { class: "left bulk-player team-accent", rowspan: "2", style: `--team-accent:${teamColor};` },
-          `<b>${name}</b>`
+          `<b>${name}</b>${groupLabel ? ` <span class="small">(${groupLabel})</span>` : ""}`
         );
         frontRow.appendChild(nameCell);
         frontRow.appendChild(el("td", { class: "mono bulk-side" }, "Front 9"));

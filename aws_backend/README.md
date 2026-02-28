@@ -16,8 +16,10 @@ Parameters:
 - EventsBucketName / StateBucketName / PublicBucketName
 
 ## API Routes
-- POST `/tournaments` (admin)
-- POST `/tournaments/{tid}/players/import` (admin)
+- POST `/tournaments` (admin, returns `editCode` for tournament creator access)
+- POST `/tournaments/{tid}/players/import` (admin + tournament `editCode`)
+- GET  `/tournaments/{tid}/admin` (admin + tournament `editCode`; editable payload: rounds/players/codes/groups/per-round tee times)
+- POST `/tournaments/{tid}/admin` (admin + tournament `editCode`; update tournament settings + players)
 - POST `/tournaments/{tid}/scores` (players)
 - GET  `/enter/{code}` (compat, reads from PUBLIC_BUCKET)
 - GET  `/courses` (list saved courses)

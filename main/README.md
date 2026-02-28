@@ -2,6 +2,7 @@
 
 This is a static site with:
 - Tournament creator (admin)
+- Tournament editor (admin) for rounds, handicaps, per-round tee times, groups, and player codes (requires tournament edit code from create step)
 - Player code entry + per-hole score input
 - Scoreboard + scorecard viewer
 

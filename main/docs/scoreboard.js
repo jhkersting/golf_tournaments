@@ -4,6 +4,7 @@ import {
   qs,
   dotsForStrokes,
   createTeamColorRegistry,
+  setHeaderTournamentName,
   getRememberedTournamentId,
   rememberTournamentId
 } from "./app.js";
@@ -200,6 +201,13 @@ function isScrambleRound(viewRound) {
   const round = roundAt(viewRound);
   if (!round) return false;
   return String(round.format || "").toLowerCase() === "scramble";
+}
+
+function isTwoManBestBallRound(viewRound) {
+  const round = roundAt(viewRound);
+  if (!round) return false;
+  const fmt = String(round.format || "").toLowerCase();
+  return fmt === "two_man" || fmt === "two_man_best_ball";
 }
 
 function tournamentHasAnyScrambleRound() {
@@ -958,6 +966,273 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
   return wrap;
 }
 
+function normalizeTwoManGroupKey(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 16);
+}
+
+function playerGroupForRound(player, roundIndex) {
+  const idx = Math.max(0, Math.floor(Number(roundIndex) || 0));
+  if (Array.isArray(player?.groups)) {
+    const g = normalizeTwoManGroupKey(player.groups[idx]);
+    if (g) return g;
+  }
+  if (idx === 0) return normalizeTwoManGroupKey(player?.group);
+  return "";
+}
+
+function bestBallHolesForPlayers(roundData, playerIds, metric) {
+  const out = Array(18).fill(null);
+  for (let i = 0; i < 18; i++) {
+    const vals = (playerIds || [])
+      .map((playerId) => asPlayedNumber(roundData?.player?.[playerId]?.[metric]?.[i]))
+      .filter((v) => v != null);
+    out[i] = vals.length ? Math.min(...vals) : null;
+  }
+  return out;
+}
+
+function combineGroupHoleSets(groups) {
+  const out = Array(18).fill(null);
+  for (let i = 0; i < 18; i++) {
+    let sum = 0;
+    let allPresent = (groups || []).length > 0;
+    for (const arr of groups || []) {
+      const v = asPlayedNumber(arr?.[i]);
+      if (v == null) {
+        allPresent = false;
+        break;
+      }
+      sum += v;
+    }
+    out[i] = allPresent ? sum : null;
+  }
+  return out;
+}
+
+function playerNameMap() {
+  const out = new Map();
+  (TOURN?.players || []).forEach((p) => {
+    const id = String(p?.playerId || "").trim();
+    if (!id) return;
+    out.set(id, p?.name || id);
+  });
+  return out;
+}
+
+function twoManGroupKeysForTeam(teamId, roundIndex, teamEntry = {}) {
+  const out = new Set();
+  const normTeamId = String(teamId || "").trim();
+
+  const addKey = (key) => {
+    const norm = normalizeTwoManGroupKey(key);
+    if (norm) out.add(norm);
+  };
+
+  Object.keys(teamEntry?.groups || {}).forEach(addKey);
+
+  const teamDef = (TOURN?.teams || []).find((t) => String(t?.teamId ?? t?.id ?? "").trim() === normTeamId);
+  const fromDef = teamDef?.groupsByRound?.[String(roundIndex)] || teamDef?.groups || {};
+  Object.keys(fromDef).forEach(addKey);
+
+  (TOURN?.players || []).forEach((p) => {
+    if (String(p?.teamId || "").trim() !== normTeamId) return;
+    addKey(playerGroupForRound(p, roundIndex));
+  });
+
+  return Array.from(out).sort((a, b) => a.localeCompare(b));
+}
+
+function twoManGroupEntry(teamEntry, groupKey) {
+  const target = normalizeTwoManGroupKey(groupKey);
+  if (!target) return {};
+  const groups = teamEntry?.groups || {};
+  for (const [rawKey, value] of Object.entries(groups)) {
+    if (normalizeTwoManGroupKey(rawKey) === target) return value || {};
+  }
+  return {};
+}
+
+function playerIdsForTwoManGroup(teamId, roundIndex, groupKey, fallback = []) {
+  const key = normalizeTwoManGroupKey(groupKey);
+  if (!key) return [];
+  const seeded = Array.isArray(fallback)
+    ? fallback.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  if (seeded.length) return Array.from(new Set(seeded));
+
+  const teamDef = (TOURN?.teams || []).find((t) => String(t?.teamId ?? t?.id ?? "").trim() === teamId);
+  const fromTeamDef = teamDef?.groupsByRound?.[String(roundIndex)]?.[key] || teamDef?.groups?.[key];
+  if (Array.isArray(fromTeamDef) && fromTeamDef.length) {
+    return Array.from(
+      new Set(fromTeamDef.map((id) => String(id || "").trim()).filter(Boolean))
+    );
+  }
+
+  return Array.from(
+    new Set(
+      (TOURN?.players || [])
+        .filter(
+          (p) =>
+            String(p?.teamId || "").trim() === teamId &&
+            playerGroupForRound(p, roundIndex) === key
+        )
+        .map((p) => String(p?.playerId || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function buildTwoManGroupBreakdownTable(par, groups, useHandicap) {
+  const parTotal18 = segmentTotal(par, 0, 17);
+  const wrap = document.createElement("div");
+  wrap.className = "scorecard-one-wrap";
+
+  const summary = document.createElement("div");
+  summary.className = "small scorecard-summary";
+  const labels = (groups || []).map((g) => {
+    const names = Array.isArray(g?.names) && g.names.length ? g.names.join(", ") : "—";
+    return `${g?.key || "?"}: ${names}`;
+  });
+  summary.textContent = labels.length
+    ? `Two-man groups • ${labels.join(" • ")}`
+    : "Two-man groups • no groups assigned";
+  wrap.appendChild(summary);
+
+  if (!Array.isArray(groups) || !groups.length) return wrap;
+
+  const tbl = document.createElement("table");
+  tbl.className = "table scorecard-one-table scorecard-team-table";
+  const tbody = document.createElement("tbody");
+
+  function addHeaderRow(label, start, end) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<th class="left">${label}</th>` +
+      Array.from({ length: end - start + 1 }, (_, k) => `<th>${start + k + 1}</th>`).join("") +
+      `<th>Total</th><th>±</th>`;
+    tbody.appendChild(tr);
+  }
+
+  function addDataRow(label, arr, start, end) {
+    const played = sectionPlayedCount(arr, start, end);
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="left"><b>${label}</b></td>` +
+      Array.from({ length: end - start + 1 }, (_, k) => {
+        const i = start + k;
+        return holeScoreCell(arr[i], par[i]);
+      }).join("") +
+      `<td class="mono"><b>${played ? segmentTotal(arr, start, end) : ""}</b></td>` +
+      `<td class="mono"><b>${played ? toParStrFromDiff(segmentToPar(arr, par, start, end)) : ""}</b></td>`;
+    tbody.appendChild(tr);
+  }
+
+  function addParRow(start, end) {
+    const sectionPar = segmentTotal(par, start, end);
+    const parTotalCell = start === 9 ? `${sectionPar} (${parTotal18})` : String(sectionPar);
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="left"><b>Par</b></td>` +
+      Array.from({ length: end - start + 1 }, (_, k) => {
+        const i = start + k;
+        return `<td class="mono">${String(par[i] || 0)}</td>`;
+      }).join("") +
+      `<td class="mono"><b>${parTotalCell}</b></td>` +
+      `<td class="mono"><b>E</b></td>`;
+    tbody.appendChild(tr);
+  }
+
+  function addSectionSpacer() {
+    const tr = document.createElement("tr");
+    tr.className = "scorecard-spacer-row";
+    tr.innerHTML = `<td colspan="12"></td>`;
+    tbody.appendChild(tr);
+  }
+
+  function addSection(start, end, label) {
+    addHeaderRow(label, start, end);
+    for (const group of groups) {
+      addDataRow(`${group.key} Gross`, group.gross, start, end);
+    }
+    if (useHandicap) {
+      for (const group of groups) {
+        addDataRow(`${group.key} Net`, group.net, start, end);
+      }
+    }
+    addParRow(start, end);
+  }
+
+  addSection(0, 8, "Front 9");
+  addSectionSpacer();
+  addSection(9, 17, "Back 9");
+
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  return wrap;
+}
+
+function buildTwoManBestBallTeamScorecard(roundIndex, teamRow, useHandicap) {
+  const teamId = String(teamRow?.teamId || "").trim();
+  if (!teamId) return null;
+
+  const roundData = TOURN?.score_data?.rounds?.[roundIndex] || {};
+  const teamEntry = roundData?.team?.[teamId] || {};
+  const groupKeys = twoManGroupKeysForTeam(teamId, roundIndex, teamEntry);
+  const nameById = playerNameMap();
+  const groups = groupKeys.map((key) => {
+    const entry = twoManGroupEntry(teamEntry, key);
+    const ids = playerIdsForTwoManGroup(teamId, roundIndex, key, entry?.playerIds);
+    return {
+      key,
+      names: ids.map((id) => nameById.get(id) || id),
+      gross: Array.isArray(entry?.gross)
+        ? entry.gross
+        : bestBallHolesForPlayers(roundData, ids, "gross"),
+      net: Array.isArray(entry?.net)
+        ? entry.net
+        : bestBallHolesForPlayers(roundData, ids, "net")
+    };
+  });
+
+  const teamGross = Array.isArray(teamEntry?.gross)
+    ? teamEntry.gross
+    : combineGroupHoleSets(groups.map((g) => g.gross));
+  const teamNet = Array.isArray(teamEntry?.net)
+    ? teamEntry.net
+    : combineGroupHoleSets(groups.map((g) => g.net));
+
+  const anyData =
+    hasAnyScore(teamGross) ||
+    hasAnyScore(teamNet) ||
+    groups.some((g) => hasAnyScore(g.gross) || hasAnyScore(g.net));
+  if (!anyData) return null;
+
+  const par = getCoursePars();
+  const teamScores = {
+    gross: teamGross,
+    net: teamNet,
+    handicapShots: Array.isArray(teamEntry?.handicapShots) ? teamEntry.handicapShots : Array(18).fill(0),
+    par,
+    grossTotal: teamEntry?.grossTotal,
+    netTotal: teamEntry?.netTotal,
+    grossToParTotal: teamEntry?.grossToParTotal,
+    netToParTotal: teamEntry?.netToParTotal,
+    thru: teamEntry?.thru
+  };
+
+  const split = document.createElement("div");
+  split.className = "scorecard-split";
+  split.appendChild(buildScorecardTable(teamScores, useHandicap));
+  split.appendChild(
+    buildTwoManGroupBreakdownTable(par, groups, useHandicap)
+  );
+  return split;
+}
+
 function clearInlineScorecardRow() {
   if (openInlineRow && openInlineRow.parentNode) {
     openInlineRow.parentNode.removeChild(openInlineRow);
@@ -1250,7 +1525,9 @@ function renderLeaderboard(data) {
       const token = ++inlineReqToken;
       try {
         if (mode === "team" && !isScrambleRound(data.view?.round)) {
-          const teamTable = buildTeamMembersScorecard(rIdx, r, showGrossNet);
+          const teamTable = isTwoManBestBallRound(data.view?.round)
+            ? buildTwoManBestBallTeamScorecard(rIdx, r, showGrossNet)
+            : buildTeamMembersScorecard(rIdx, r, showGrossNet);
           if (token !== inlineReqToken || openInlineKey !== key) return;
           if (teamTable) {
             loading.remove();
@@ -1506,7 +1783,7 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
   const seedTeamIds = (leaderboardRows || []).map((row) => row?.teamId);
   const fallbackRows = leaderboardRows || [];
 
-  if (format === "scramble") {
+  if (format === "scramble" || format === "two_man" || format === "two_man_best_ball") {
     const fromTeamEntries = buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNames, seedTeamIds);
     if (fromTeamEntries.some((row) => rowHasAnyData(row))) return fromTeamEntries;
     if (fallbackRows.length) return fallbackRows;
@@ -1773,6 +2050,7 @@ function startAutoRefresh() {
 
 function render() {
   if (!TOURN) return;
+  setHeaderTournamentName(TOURN?.tournament?.name);
   applyModeConstraints(currentRound);
   const data = buildScoreboardResponse(TOURN, currentRound);
 
@@ -1783,11 +2061,14 @@ function render() {
   const scrambleInfo = isScrambleRound(data.view.round)
     ? " • scramble rounds are team-only"
     : "";
+  const twoManInfo = isTwoManBestBallRound(data.view.round)
+    ? " • two-man scorecard includes group breakdown"
+    : "";
   const allRoundsInfo =
     data.view.round === "all" && tournamentHasAnyScrambleRound()
       ? " • all rounds view is team-only (scramble in tournament)"
       : "";
-  toggleNote.textContent = `${rLabel}${handicapInfo}${scrambleInfo}${allRoundsInfo}`;
+  toggleNote.textContent = `${rLabel}${handicapInfo}${scrambleInfo}${twoManInfo}${allRoundsInfo}`;
 
   renderLeaderboard(data);
   renderStats(data);

@@ -16,6 +16,7 @@
     <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
     <div class="actions">
       <a href="./index.html">Home</a>
+      <a href="./edit.html" data-edit-link>Edit Tournament</a>
       <a href="./enter.html">Enter Scores</a>
       <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
       <button type="button" class="theme-toggle" data-theme-toggle></button>
@@ -34,16 +35,21 @@
 <div class="row">
   <div class="col card">
     <h2 style="margin-top:0;">1) Create tournament</h2>
-    <div class="small">Add rounds, weights, course Par + Stroke Index, and set team aggregation (average, top X).</div>
+    <div class="small">Add rounds, weights, course Par + Stroke Index, and set team aggregation (average, top X). After create, the editor opens automatically.</div>
     <div class="actions" style="margin-top:10px;"><a href="./admin.html"><button>Create Tournament</button></a></div>
   </div>
   <div class="col card">
-    <h2 style="margin-top:0;">2) Enter scores</h2>
+    <h2 style="margin-top:0;">2) Edit tournament</h2>
+    <div class="small">Adjust handicaps, round weights, tee times, player codes, and two-man groups after setup.</div>
+    <div class="actions" style="margin-top:10px;"><a href="./edit.html" data-edit-link><button class="secondary">Open Editor</button></a></div>
+  </div>
+  <div class="col card">
+    <h2 style="margin-top:0;">3) Enter scores</h2>
     <div class="small">Players use their unique URL: <code>enter.html?code=XXXX</code>. Hole-by-hole inputs default to 4.</div>
     <div class="actions" style="margin-top:10px;"><a href="./enter.html"><button class="secondary">Open Enter Page</button></a></div>
   </div>
   <div class="col card">
-    <h2 style="margin-top:0;">3) Scoreboard</h2>
+    <h2 style="margin-top:0;">4) Scoreboard</h2>
     <div class="small">Public URL: <code>scoreboard.html?t=TOURNAMENT_ID</code>. Filter by round and toggle Team/Individual (if applicable).</div>
     <div class="actions" style="margin-top:10px;"><a href="./scoreboard.html" data-scoreboard-link><button class="secondary">Open Scoreboard</button></a></div>
   </div>

@@ -5,6 +5,53 @@ function asInt(v){
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
+function normalizeTeeValue(v){
+  return String(v || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function teeValueForRound(player, roundIndex){
+  if (!player || roundIndex < 0) return "";
+  if (Array.isArray(player.teeTimes)){
+    const v = normalizeTeeValue(player.teeTimes[roundIndex]);
+    if (v) return v;
+  }
+  if (roundIndex === 0){
+    const fallback = normalizeTeeValue(player.teeTime);
+    if (fallback) return fallback;
+  }
+  return "";
+}
+
+function normalizeGroupLabel(v){
+  return String(v || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 16);
+}
+
+function playerGroupForRound(player, roundIndex){
+  if (Array.isArray(player?.groups)){
+    const v = normalizeGroupLabel(player.groups[roundIndex]);
+    if (v) return v;
+  }
+  if (roundIndex === 0){
+    const fallback = normalizeGroupLabel(player?.group);
+    if (fallback) return fallback;
+  }
+  return "";
+}
+
+function groupId(teamId, groupLabel){
+  const team = String(teamId || "").trim();
+  const label = normalizeGroupLabel(groupLabel);
+  if (!team || !label) return "";
+  return `${team}::${label}`;
+}
+
 export async function handler(event){
   try{
     const tid = event.pathParameters?.tid;
@@ -66,12 +113,48 @@ export async function handler(event){
         }
 
         const round = rounds[roundIndex] || {};
-        const isScramble = round.format === "scramble";
-        const targetType = isScramble ? "team" : "player";
+        const format = String(round.format || "").toLowerCase();
+        const isScramble = format === "scramble";
+        const isTwoMan = format === "two_man" || format === "two_man_best_ball";
+        const targetType = isScramble ? "team" : isTwoMan ? "group" : "player";
+        const players = current.players || {};
+        const actorTee = teeValueForRound(actorPlayer, roundIndex);
+        const allowedPlayerIds = new Set([actorPlayerId]);
+        if (!isScramble && actorTee){
+          for (const pid of Object.keys(players)){
+            const p = players[pid];
+            if (teeValueForRound(p, roundIndex) === actorTee) allowedPlayerIds.add(pid);
+          }
+        }
+        const allowedGroupIds = new Set();
+        if (isTwoMan){
+          for (const pid of allowedPlayerIds){
+            const p = players[pid];
+            const gid = groupId(p?.teamId, playerGroupForRound(p, roundIndex));
+            if (gid) allowedGroupIds.add(gid);
+          }
+        }
 
-        current.scores = current.scores || { rounds: rounds.map(()=>({teams:{},players:{}})) };
-        current.scores.rounds = current.scores.rounds || rounds.map(()=>({teams:{},players:{}}));
-        current.scores.rounds[roundIndex] = current.scores.rounds[roundIndex] || { teams:{}, players:{} };
+        function assertPlayerTargetAllowed(pid){
+          if (isScramble) return;
+          if (isTwoMan) return;
+          if (allowedPlayerIds.has(pid)) return;
+          const err = new Error("You can only enter scores for players on your tee time in this round");
+          err.statusCode = 403;
+          throw err;
+        }
+
+        function assertGroupTargetAllowed(gid){
+          if (!isTwoMan) return;
+          if (allowedGroupIds.has(gid)) return;
+          const err = new Error("You can only enter scores for groups on your tee time in this round");
+          err.statusCode = 403;
+          throw err;
+        }
+
+        current.scores = current.scores || { rounds: rounds.map(()=>({teams:{},players:{},groups:{}})) };
+        current.scores.rounds = current.scores.rounds || rounds.map(()=>({teams:{},players:{},groups:{}}));
+        current.scores.rounds[roundIndex] = current.scores.rounds[roundIndex] || { teams:{}, players:{}, groups:{} };
         const bucket = current.scores.rounds[roundIndex];
 
         function getEntryObj(tType, id){
@@ -81,9 +164,15 @@ export async function handler(event){
             const holes = (e.holes || Array(18).fill(null)).map(v => (v===0?null:v));
             const meta = Array.isArray(e.meta) ? e.meta.slice() : Array(18).fill(null);
             return { holes, meta };
-          } else {
+          } else if (tType === "player") {
             bucket.players = bucket.players || {};
             const e = bucket.players[id] || {};
+            const holes = (e.holes || Array(18).fill(null)).map(v => (v===0?null:v));
+            const meta = Array.isArray(e.meta) ? e.meta.slice() : Array(18).fill(null);
+            return { holes, meta };
+          } else {
+            bucket.groups = bucket.groups || {};
+            const e = bucket.groups[id] || {};
             const holes = (e.holes || Array(18).fill(null)).map(v => (v===0?null:v));
             const meta = Array.isArray(e.meta) ? e.meta.slice() : Array(18).fill(null);
             return { holes, meta };
@@ -93,8 +182,10 @@ export async function handler(event){
         function setEntryObj(tType, id, obj){
           if (tType === "team"){
             bucket.teams[id] = { holes: obj.holes, meta: obj.meta };
-          } else {
+          } else if (tType === "player") {
             bucket.players[id] = { holes: obj.holes, meta: obj.meta };
+          } else {
+            bucket.groups[id] = { holes: obj.holes, meta: obj.meta };
           }
         }
 
@@ -154,15 +245,30 @@ export async function handler(event){
         }
 
         if (mode === "hole"){
-          // Build entries; for scramble, force team target based on actor (unless explicitly provided)
+          // Build entries; for scramble and two-man, force target by actor unless explicit target is provided.
           if (targetType === "team"){
             const teamId = actorPlayer.teamId;
             const strokes = asInt(body.entries?.[0]?.strokes);
             applyHole("team", teamId, holeIndex, strokes);
+          } else if (targetType === "group"){
+            for (const ent of body.entries){
+              const requested = String(ent?.targetId || "").trim();
+              const actorGroupId = groupId(actorPlayer.teamId, playerGroupForRound(actorPlayer, roundIndex));
+              const gid = requested || actorGroupId;
+              if (!gid){
+                const err = new Error("No group assigned for this round");
+                err.statusCode = 400;
+                throw err;
+              }
+              assertGroupTargetAllowed(gid);
+              const strokes = ent?.strokes === "" ? undefined : (ent?.strokes === null ? null : asInt(ent?.strokes));
+              applyHole("group", gid, holeIndex, strokes);
+            }
           } else {
             for (const ent of body.entries){
               const pid = String(ent.targetId || "").trim();
               if (!pid) continue;
+              assertPlayerTargetAllowed(pid);
               const strokes = ent.strokes === "" ? undefined : (ent.strokes === null ? null : asInt(ent.strokes));
               applyHole("player", pid, holeIndex, strokes);
             }
@@ -172,6 +278,8 @@ export async function handler(event){
           for (const ent of body.entries){
             const id = String(ent.targetId || "").trim();
             if (!id) continue;
+            if (targetType === "player") assertPlayerTargetAllowed(id);
+            if (targetType === "group") assertGroupTargetAllowed(id);
             const holesIn = normalizeHoles(ent.holes);
             const clearHoles = Array.isArray(ent.clearHoles) ? ent.clearHoles.map(Number).filter(n=>Number.isInteger(n)&&n>=0&&n<18) : [];
             for (let i=0;i<18;i++){

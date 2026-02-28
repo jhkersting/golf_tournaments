@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="theme.js" defer></script>
+  <script src="nav.js" defer></script>
+  <link rel="stylesheet" href="styles.css" />
+  <title>Edit Tournament</title>
+</head>
+<body style="display:none;">
+<header>
+  <div class="nav">
+    <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
+    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
+    <div class="actions">
+      <a href="./index.html">Home</a>
+      <a href="./edit.html" data-edit-link>Edit Tournament</a>
+      <a href="./enter.html">Enter Scores</a>
+      <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
+      <button type="button" class="theme-toggle" data-theme-toggle></button>
+    </div>
+  </div>
+</header>
+<div class="container">
+
+<div class="card">
+  <h1 style="margin:0 0 6px 0;">Edit Tournament</h1>
+  <div class="small">
+    Update rounds, handicaps, player codes, tee times, and two-man groups after tournament creation.
+  </div>
+</div>
+
+<div class="card" id="load_card">
+  <h2 style="margin-top:0;">Open tournament</h2>
+  <div class="row" style="align-items:flex-end;">
+    <div class="col">
+      <label for="tid_input">Tournament ID</label>
+      <input id="tid_input" placeholder="t_xxxxxxxx" />
+    </div>
+    <div class="col">
+      <label for="edit_code_input">Edit code</label>
+      <input id="edit_code_input" placeholder="ABCD1234" />
+    </div>
+    <div class="col">
+      <button id="load_tid_btn">Load</button>
+      <span id="load_status" class="small" style="margin-left:8px;"></span>
+    </div>
+  </div>
+</div>
+
+<div id="editor_wrap" style="display:none;">
+  <div class="card">
+    <div class="row">
+      <div class="col">
+        <div class="pill">Tournament ID: <span id="tid_value"></span></div>
+        <div class="small" style="margin-top:8px;">Scoreboard link</div>
+        <pre id="scoreboard_link" style="white-space:pre-wrap;"></pre>
+      </div>
+      <div class="col">
+        <div class="small">Updated</div>
+        <div id="updated_meta">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;">Tournament details</h2>
+    <div class="row">
+      <div class="col">
+        <label for="e_name">Tournament name</label>
+        <input id="e_name" />
+      </div>
+      <div class="col">
+        <label for="e_dates">Dates</label>
+        <input id="e_dates" />
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;">
+      <h2 style="margin:0;">Rounds</h2>
+      <button class="secondary" id="add_round_btn">+ Add round</button>
+    </div>
+    <div class="scoregrid" style="margin-top:10px;">
+      <table class="table" id="round_tbl">
+        <thead>
+          <tr>
+            <th class="left">Name</th>
+            <th>Format</th>
+            <th>Handicap</th>
+            <th>Weight</th>
+            <th>Top X</th>
+            <th>Remove</th>
+          </tr>
+        </thead>
+        <tbody id="round_rows"></tbody>
+      </table>
+    </div>
+    <div class="small" style="margin-top:8px;">Top X applies to player-based formats (singles/shamble).</div>
+  </div>
+
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;">
+      <h2 style="margin:0;">Players</h2>
+      <div class="actions">
+        <button class="secondary" id="add_player_btn">+ Add player</button>
+        <button class="secondary" id="auto_groups_btn">Auto groups (pairs)</button>
+        <button class="secondary" id="regen_codes_btn">Regenerate codes</button>
+      </div>
+    </div>
+    <div class="scoregrid" style="margin-top:10px;">
+      <table class="table" id="players_tbl">
+        <thead>
+          <tr id="players_head"></tr>
+        </thead>
+        <tbody id="player_rows"></tbody>
+      </table>
+    </div>
+    <div class="actions" style="margin-top:10px;">
+      <button class="secondary" id="download_codes_btn">Download codes CSV</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">Import players CSV/TSV</h3>
+    <label for="csv_import">Columns: name,team,handicap,teeTimeR1,teeTimeR2,...,groupR1,groupR2,...,code</label>
+    <textarea id="csv_import" placeholder="Paste CSV or TSV here..."></textarea>
+    <div class="actions" style="margin-top:8px;">
+      <input id="csv_file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" />
+      <button class="secondary" id="load_csv_file_btn" type="button">Load file</button>
+    </div>
+    <div class="actions" style="margin-top:10px;">
+      <button class="secondary" id="import_btn">Import players</button>
+      <span id="import_status" class="small"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="actions">
+      <button id="save_btn">Save changes</button>
+      <span id="save_status" class="small"></span>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="edit.js"></script>
+</div>
+</body>
+</html>
