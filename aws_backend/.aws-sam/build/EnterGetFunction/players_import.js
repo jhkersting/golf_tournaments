@@ -15,6 +15,10 @@ function parseDelimited(text){
   })).filter(r => r.name && r.team);
 }
 
+function isTwoManBestBallTournament(rounds){
+  return Array.isArray(rounds) && rounds.some(r => r?.format === "two_man_best_ball");
+}
+
 export async function handler(event){
   try{
     requireAdmin(event);
@@ -28,7 +32,7 @@ export async function handler(event){
     const rows = parseDelimited(csvText);
     if (!rows.length) return json(400, { error: "No rows found. Expect columns: name, team, handicap" });
 
-    const outLines = ["name,team,handicap,code,enterUrl"];
+    const outLines = ["name,team,handicap,group,code,enterUrl"];
 
     const updated = await updateStateWithRetry(tid, (current) => {
       if (!current) {
@@ -41,8 +45,10 @@ export async function handler(event){
       current.players = current.players || {};
       current.codeIndex = current.codeIndex || {};
       current.scores = current.scores || { rounds: (current.rounds||[]).map(()=>({teams:{},players:{}})) };
+      const needsTwoManGroups = isTwoManBestBallTournament(current.rounds);
 
       const existingCodes = new Set(Object.keys(current.codeIndex || {}));
+      const createdRows = [];
 
       for (const r of rows){
         const teamName = String(r.team).trim();
@@ -67,7 +73,35 @@ export async function handler(event){
         current.codeIndex[code] = playerId;
 
         const enterUrl = baseUrl ? `${baseUrl}/enter.html?code=${encodeURIComponent(code)}` : "";
-        outLines.push(`${playerName},${teamName},${handicap},${code},${enterUrl}`);
+        createdRows.push({ playerId, playerName, teamName, handicap, code, enterUrl });
+      }
+
+      if (needsTwoManGroups){
+        const playersByTeam = new Map(Object.keys(current.teams).map(teamId => [teamId, []]));
+        for (const pid of Object.keys(current.players)){
+          const p = current.players[pid];
+          if (!p?.teamId) continue;
+          if (!playersByTeam.has(p.teamId)) playersByTeam.set(p.teamId, []);
+          playersByTeam.get(p.teamId).push(pid);
+        }
+
+        for (const [teamId, pids] of playersByTeam.entries()){
+          const teamName = current.teams[teamId]?.teamName || teamId;
+          if (pids.length !== 4){
+            const err = new Error(`Team "${teamName}" must have exactly 4 players for two-man best ball`);
+            err.statusCode = 400;
+            throw err;
+          }
+          for (let i=0;i<pids.length;i++){
+            const pid = pids[i];
+            current.players[pid].group = i < 2 ? "A" : "B";
+          }
+        }
+      }
+
+      for (const row of createdRows){
+        const group = String(current.players[row.playerId]?.group || "");
+        outLines.push(`${row.playerName},${row.teamName},${row.handicap},${group},${row.code},${row.enterUrl}`);
       }
 
       current.updatedAt = Date.now();

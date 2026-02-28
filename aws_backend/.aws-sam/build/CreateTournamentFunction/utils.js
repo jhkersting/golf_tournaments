@@ -78,14 +78,20 @@ export function normalizeHoles(arr){
 }
 
 export function sumPlayed(arr){
-  return arr.reduce((a,v)=>a+(v==null?0:Number(v)),0);
+  return arr.reduce((a,v)=>{
+    if (v == null) return a;
+    const n = Number(v);
+    return Number.isFinite(n) ? a + n : a;
+  },0);
 }
 
 export function thruFromHoles(arr){
   let last = -1;
   for (let i=0;i<arr.length;i++){
     const v = arr[i];
-    if (v != null && Number(v) > 0) last = i;
+    if (v == null) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) last = i;
   }
   return last + 1;
 }
@@ -158,6 +164,35 @@ function scrambleTeamHandicap(teamPlayers){
   if (!vals.length) return 0;
   const avg = vals.reduce((a,b)=>a+b,0) / vals.length;
   return Math.round(avg);
+}
+
+function getPlayersByTeamMap(players){
+  const byTeam = new Map();
+  for (const pid of Object.keys(players || {})){
+    const p = players[pid];
+    if (!p?.teamId) continue;
+    if (!byTeam.has(p.teamId)) byTeam.set(p.teamId, []);
+    byTeam.get(p.teamId).push({ ...p, playerId: pid });
+  }
+  return byTeam;
+}
+
+function splitTwoManGroups(teamPlayers){
+  const groupA = [];
+  const groupB = [];
+  const ungrouped = [];
+
+  for (const player of teamPlayers || []){
+    const g = String(player?.group || "").trim().toUpperCase();
+    if (g === "A") groupA.push(player);
+    else if (g === "B") groupB.push(player);
+    else ungrouped.push(player);
+  }
+
+  while (groupA.length < 2 && ungrouped.length) groupA.push(ungrouped.shift());
+  while (groupB.length < 2 && ungrouped.length) groupB.push(ungrouped.shift());
+
+  return { A: groupA, B: groupB };
 }
 
 export async function getJson(bucket, key){
@@ -256,6 +291,7 @@ export function materializePublicFromState(state){
   for (let r=0;r<rounds.length;r++){
     const round = rounds[r] || {};
     const isScramble = round.format === "scramble";
+    const isTwoManBestBall = round.format === "two_man_best_ball";
     const useHandicap = !!round.useHandicap;
 
     const roundScores = scores.rounds?.[r] || {};
@@ -357,6 +393,68 @@ export function materializePublicFromState(state){
           thru: teamSc.thru
         };
       }
+    } else if (isTwoManBestBall){
+      const playersByTeam = getPlayersByTeamMap(players);
+
+      for (const teamId of Object.keys(teams)){
+        const teamPlayers = playersByTeam.get(teamId) || [];
+        const groups = splitTwoManGroups(teamPlayers);
+
+        const groupGross = { A: Array(18).fill(null), B: Array(18).fill(null) };
+        const groupNet = { A: Array(18).fill(null), B: Array(18).fill(null) };
+
+        for (let i=0;i<18;i++){
+          const groupAGrossVals = groups.A
+            .map(p => outRound.player[p.playerId]?.gross?.[i])
+            .filter(v => Number.isFinite(v));
+          const groupBGrossVals = groups.B
+            .map(p => outRound.player[p.playerId]?.gross?.[i])
+            .filter(v => Number.isFinite(v));
+          const groupANetVals = groups.A
+            .map(p => outRound.player[p.playerId]?.net?.[i])
+            .filter(v => Number.isFinite(v));
+          const groupBNetVals = groups.B
+            .map(p => outRound.player[p.playerId]?.net?.[i])
+            .filter(v => Number.isFinite(v));
+
+          groupGross.A[i] = groupAGrossVals.length ? Math.min(...groupAGrossVals) : null;
+          groupGross.B[i] = groupBGrossVals.length ? Math.min(...groupBGrossVals) : null;
+          groupNet.A[i] = groupANetVals.length ? Math.min(...groupANetVals) : null;
+          groupNet.B[i] = groupBNetVals.length ? Math.min(...groupBNetVals) : null;
+        }
+
+        const gross = Array(18).fill(null);
+        const net = Array(18).fill(null);
+        for (let i=0;i<18;i++){
+          const aGross = groupGross.A[i];
+          const bGross = groupGross.B[i];
+          const aNet = groupNet.A[i];
+          const bNet = groupNet.B[i];
+          if (aGross != null && bGross != null) gross[i] = Number(aGross) + Number(bGross);
+          if (aNet != null && bNet != null) net[i] = Number(aNet) + Number(bNet);
+        }
+
+        const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(course.pars[i] || 0)));
+        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(course.pars[i] || 0)));
+        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(course.pars[i] || 0)),0);
+        const grossTotal = sumPlayed(gross);
+        const netTotal = sumPlayed(net);
+        const thru = thruFromHoles(gross);
+        const grossToParTotal = grossTotal - parPlayed;
+        const netToParTotal = netTotal - parPlayed;
+
+        outRound.team[teamId] = {
+          gross, net, grossToPar, netToPar,
+          handicapShots: Array(18).fill(0),
+          grossTotal, netTotal,
+          grossToParTotal, netToParTotal,
+          thru,
+          groups: {
+            A: { label: "Group A", playerIds: groups.A.map(p => p.playerId), gross: groupGross.A, net: groupNet.A },
+            B: { label: "Group B", playerIds: groups.B.map(p => p.playerId), gross: groupGross.B, net: groupNet.B }
+          }
+        };
+      }
     } else {
       // team totals derived from players for that round (aggregation)
       const agg = round.teamAggregation || { mode:"avg", topX:4 };
@@ -434,6 +532,11 @@ export function materializePublicFromState(state){
         netToPar,
         thru,
         scores: {
+          gross: Array.isArray(sc.gross) ? sc.gross.slice() : Array(18).fill(null),
+          net: Array.isArray(sc.net) ? sc.net.slice() : Array(18).fill(null),
+          handicapShots: Array.isArray(sc.handicapShots) ? sc.handicapShots.slice() : Array(18).fill(0),
+          grossTotal: Number.isFinite(sc.grossTotal) ? Number(sc.grossTotal.toFixed(2)) : 0,
+          netTotal: Number.isFinite(sc.netTotal) ? Number(sc.netTotal.toFixed(2)) : 0,
           grossToParTotal: Number.isFinite(sc.grossToParTotal) ? Number(sc.grossToParTotal.toFixed(2)) : 0,
           netToParTotal: Number.isFinite(sc.netToParTotal) ? Number(sc.netToParTotal.toFixed(2)) : 0,
           thru
@@ -485,6 +588,7 @@ export function materializePublicFromState(state){
     const round = rounds[r] || {};
     const weight = normalizedWeights[r] ?? 1;
     const isScramble = round.format === "scramble";
+    const isTwoManBestBall = round.format === "two_man_best_ball";
     const useHandicap = !!round.useHandicap;
 
     const derived = score_data.rounds[r];
@@ -527,6 +631,19 @@ export function materializePublicFromState(state){
       cur.par += Number(parPlayed || 0) * weight;
     }
 
+    if (isTwoManBestBall){
+      for (const teamId of Object.keys(teams)){
+        const sc = derived.team[teamId];
+        if (!sc) continue;
+        const parPlayed = sc.grossTotal - sc.grossToParTotal;
+        const strokes = useHandicap ? sc.netTotal : sc.grossTotal;
+        const cur = teamTotals.get(teamId);
+        cur.strokes += Number(strokes || 0) * weight;
+        cur.par += Number(parPlayed || 0) * weight;
+      }
+      continue;
+    }
+
     const agg = round.teamAggregation || { mode:"avg", topX:4 };
     for (const teamId of Object.keys(teams)){
       const pids = Object.keys(players).filter(pid => players[pid].teamId === teamId);
@@ -559,11 +676,32 @@ export function materializePublicFromState(state){
   score_data.leaderboard_all.teams = teamLb;
   score_data.leaderboard_all.players = playerLb;
 
+  const hasTwoManBestBall = rounds.some(round => round?.format === "two_man_best_ball");
+  const playersByTeam = getPlayersByTeamMap(players);
+  const publicTeams = Object.keys(teams).map(teamId => {
+    const row = { teamId, teamName: teams[teamId].teamName };
+    if (!hasTwoManBestBall) return row;
+    const groups = splitTwoManGroups(playersByTeam.get(teamId) || []);
+    return {
+      ...row,
+      groups: {
+        A: groups.A.map(p => p.playerId),
+        B: groups.B.map(p => p.playerId)
+      }
+    };
+  });
+
   return {
     tournament: { tournamentId: t.tournamentId, name: t.name, dates: t.dates, rounds },
     course,
-    teams: Object.keys(teams).map(id => ({ teamId: id, teamName: teams[id].teamName })),
-    players: Object.keys(players).map(id => ({ playerId:id, name: players[id].name, teamId: players[id].teamId, handicap: players[id].handicap })),
+    teams: publicTeams,
+    players: Object.keys(players).map(id => ({
+      playerId:id,
+      name: players[id].name,
+      teamId: players[id].teamId,
+      handicap: players[id].handicap,
+      group: players[id].group || null
+    })),
     updatedAt: state.updatedAt,
     version: state.version,
     score_data
@@ -606,8 +744,8 @@ export async function writePublicObjectsFromState(state){
       tournament: { name: state.tournament.name, dates: state.tournament.dates },
       rounds,
       course,
-      player: { playerId: pid, name: p.name, handicap: p.handicap },
-      team: { teamId: team.teamId, teamName: team.teamName },
+      player: { playerId: pid, name: p.name, handicap: p.handicap, group: p.group || null },
+      team: { teamId: team.teamId, teamName: team.teamName, group: p.group || null },
       saved
     };
 

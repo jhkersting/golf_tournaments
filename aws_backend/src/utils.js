@@ -78,14 +78,20 @@ export function normalizeHoles(arr){
 }
 
 export function sumPlayed(arr){
-  return arr.reduce((a,v)=>a+(v==null?0:Number(v)),0);
+  return arr.reduce((a,v)=>{
+    if (v == null) return a;
+    const n = Number(v);
+    return Number.isFinite(n) ? a + n : a;
+  },0);
 }
 
 export function thruFromHoles(arr){
   let last = -1;
   for (let i=0;i<arr.length;i++){
     const v = arr[i];
-    if (v != null && Number(v) > 0) last = i;
+    if (v == null) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) last = i;
   }
   return last + 1;
 }

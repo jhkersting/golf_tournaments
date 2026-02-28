@@ -24,6 +24,23 @@ function normalizeAgg(agg){
   return { mode: "avg", topX };
 }
 
+function normalizeRoundFormat(format){
+  const raw = String(format || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (raw === "scramble") return "scramble";
+  if (
+    raw === "two_man_best_ball" ||
+    raw === "two_man" ||
+    raw === "2_man" ||
+    raw === "2man" ||
+    raw === "best_ball" ||
+    raw === "2man_best_ball" ||
+    raw === "2_man_best_ball"
+  ){
+    return "two_man_best_ball";
+  }
+  return "singles";
+}
+
 export async function handler(event){
   try{
     requireAdmin(event);
@@ -39,7 +56,7 @@ export async function handler(event){
     // Normalize rounds
     const normRounds = rounds.map(r => ({
       name: String(r?.name || "Round").trim(),
-      format: (r?.format === "scramble") ? "scramble" : "singles",
+      format: normalizeRoundFormat(r?.format),
       weight: Number(r?.weight ?? 1),
       useHandicap: !!r?.useHandicap,
       teamAggregation: normalizeAgg(r?.teamAggregation)
