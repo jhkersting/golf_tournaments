@@ -18,6 +18,7 @@ function normalizeRoundFormat(format) {
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
   if (raw === "scramble") return "scramble";
+  if (raw === "team_best_ball" || raw === "team_bestball") return "team_best_ball";
   if (raw === "shamble") return "shamble";
   if (raw === "singles") return "singles";
   if (

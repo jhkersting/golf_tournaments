@@ -28,8 +28,10 @@ Parameters:
 
 ### Round formats
 - `singles`
+- `shamble`
 - `scramble`
-- `two_man_best_ball` (teams must have exactly 4 players; Group A/B are used for scoring)
+- `team_best_ball` (players enter their own scores; team score is best X per hole)
+- `two_man` / `two_man_best_ball` (teams should have exactly 4 players; Group A/B are used for scoring)
 
 ## Static JSON Paths (PUBLIC_BUCKET)
 - `/tournaments/{tid}.json`  (contains `score_data`, leaderboards, hole arrays, to-par arrays)

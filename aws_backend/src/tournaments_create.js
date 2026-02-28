@@ -27,6 +27,7 @@ function normalizeAgg(agg){
 function normalizeRoundFormat(format){
   const raw = String(format || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (raw === "scramble") return "scramble";
+  if (raw === "team_best_ball" || raw === "team_bestball") return "team_best_ball";
   if (raw === "shamble") return "shamble";
   if (
     raw === "two_man_best_ball" ||

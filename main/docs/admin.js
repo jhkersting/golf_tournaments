@@ -242,6 +242,7 @@ function roundCard(){
         <label>Format</label>
         <select data-format>
           <option value="scramble">scramble</option>
+          <option value="team_best_ball">team best ball</option>
           <option value="two_man">two man</option>
           <option value="shamble">shamble</option>
           <option value="singles">singles</option>
@@ -264,7 +265,7 @@ function roundCard(){
       <div class="col">
         <label>Top X scores taken</label>
         <input data-topx type="number" min="1" max="4" step="1" value="4" />
-        <div class="small">Team score uses the average of the best X players (lowest net or gross).</div>
+        <div class="small">Team score uses the average of the best X players (Team Best Ball applies this per hole).</div>
       </div>
     </div>
   `;

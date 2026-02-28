@@ -144,6 +144,43 @@ function teeTimeForPlayerRound(player, roundIndex) {
   return "";
 }
 
+function teeTimeDisplayValue(v) {
+  return String(v || "").trim();
+}
+
+function teeTimeDisplayForPlayerRound(player, roundIndex) {
+  if (!player || roundIndex < 0) return "";
+  if (Array.isArray(player?.teeTimes)) {
+    const v = teeTimeDisplayValue(player.teeTimes[roundIndex]);
+    if (v) return v;
+  }
+  if (roundIndex === 0) {
+    const fallback = teeTimeDisplayValue(player?.teeTime);
+    if (fallback) return fallback;
+  }
+  return "";
+}
+
+function teeTimeDisplayForPlayerIds(playerIds, playersById, roundIndex) {
+  for (const pid of playerIds || []) {
+    const p = playersById?.[pid];
+    const v = teeTimeDisplayForPlayerRound(p, roundIndex);
+    if (v) return v;
+  }
+  return "";
+}
+
+function teeTimeDisplayForTeamRound(teamId, playersById, roundIndex) {
+  const tid = normalizeTeamId(teamId);
+  if (!tid) return "";
+  for (const p of Object.values(playersById || {})) {
+    if (normalizeTeamId(p?.teamId) !== tid) continue;
+    const v = teeTimeDisplayForPlayerRound(p, roundIndex);
+    if (v) return v;
+  }
+  return "";
+}
+
 /**
  * Draft (unsent) edits so auto-refresh + rerenders never clobber typing.
  * Structure:
@@ -355,6 +392,12 @@ function holeDisplayFromThru(row) {
   const thru = Number(row?.thru || 0);
   if (!Number.isFinite(thru) || thru <= 0) return "(-)";
   return `(${Math.floor(thru)})`;
+}
+
+function holeOrTeeDisplay(row, teeTimeText) {
+  const tee = teeTimeDisplayValue(teeTimeText);
+  if (!rowHasAnyData(row) && tee) return `(${tee})`;
+  return holeDisplayFromThru(row);
 }
 
 function toParNumber(v) {
@@ -643,7 +686,9 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   const roundData = tjson?.score_data?.rounds?.[safeRound] || {};
   const roundCfg = rounds[safeRound] || {};
   const isSingleRoundTournament = rounds.length === 1;
-  const isScrambleRound = String(roundCfg.format || "").toLowerCase() === "scramble";
+  const roundFormat = String(roundCfg.format || "").toLowerCase();
+  const isScrambleRound = roundFormat === "scramble";
+  const isTwoManRound = roundFormat === "two_man" || roundFormat === "two_man_best_ball";
   const showIndividualGross = !isScrambleRound;
   const showIndividualNet =
     !!roundCfg.useHandicap && !isScrambleRound;
@@ -698,46 +743,117 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   Object.keys(playersById || {}).forEach(addPlayerId);
   playerLeaderboardRows.forEach((row) => addPlayerId(row?.playerId));
 
-  const playerGrossEntries = allPlayerIds.map((playerId) => {
-    const row = playerRowById[playerId] || null;
-    const p = playersById[playerId] || {};
-    const name = row?.name || p?.name || playerId || "Player";
-    const teamId = row?.teamId || p?.teamId;
-    const color = colorForTeam(teamId);
+  const allPlayers = Object.values(playersById || {});
+  const individualTickerRows = [];
+  if (isTwoManRound) {
+    function findTwoManGroupEntry(teamId, groupLabel) {
+      const groups = roundData?.team?.[teamId]?.groups || {};
+      const wanted = normalizeGroup(groupLabel);
+      for (const [rawLabel, entry] of Object.entries(groups)) {
+        if (normalizeGroup(rawLabel) === wanted) return entry || null;
+      }
+      return null;
+    }
+
+    function fallbackRowFromGroupEntry(groupEntry) {
+      const gross = (Array.isArray(groupEntry?.gross) ? groupEntry.gross : Array(18).fill(null))
+        .map((v) => (v == null || Number(v) <= 0 ? null : Number(v)));
+      const net = (Array.isArray(groupEntry?.net) ? groupEntry.net : gross)
+        .map((v) => (v == null || Number(v) <= 0 ? null : Number(v)));
+      const thru = gross.reduce((acc, v) => acc + (v != null ? 1 : 0), 0);
+      return {
+        thru,
+        scores: {
+          gross,
+          net,
+          grossTotal: sumHoles(gross),
+          netTotal: sumHoles(net),
+          thru
+        }
+      };
+    }
+
+    const seenGroups = new Set();
+    function addGroup(teamIdRaw, groupLabelRaw) {
+      const teamId = normalizeTeamId(teamIdRaw);
+      const group = normalizeGroup(groupLabelRaw);
+      const gid = twoManGroupId(teamId, group);
+      if (!gid || seenGroups.has(gid)) return;
+      seenGroups.add(gid);
+
+      const groupPlayerIds = allPlayers
+        .filter((p) => normalizeTeamId(p?.teamId) === teamId && groupForPlayerRound(p, safeRound) === group)
+        .map((p) => p?.playerId)
+        .filter(Boolean);
+
+      let row = groupPlayerIds.map((pid) => playerRowById[pid]).find(Boolean) || null;
+      if (!row) {
+        const groupEntry = findTwoManGroupEntry(teamId, group);
+        if (groupEntry) row = fallbackRowFromGroupEntry(groupEntry);
+      }
+
+      const teamName = teamsById[teamId]?.teamName || teamId || "Team";
+      individualTickerRows.push({
+        name: `Group ${group} | ${teamName}`,
+        teamId,
+        teeTime:
+          teeTimeDisplayForPlayerIds(groupPlayerIds, playersById, safeRound) ||
+          teeTimeDisplayForTeamRound(teamId, playersById, safeRound),
+        row
+      });
+    }
+
+    allPlayers.forEach((p) => addGroup(p?.teamId, groupForPlayerRound(p, safeRound)));
+    Object.entries(roundData?.team || {}).forEach(([teamId, teamEntry]) => {
+      Object.keys(teamEntry?.groups || {}).forEach((groupLabel) => addGroup(teamId, groupLabel));
+    });
+  } else {
+    allPlayerIds.forEach((playerId) => {
+      const row = playerRowById[playerId] || null;
+      const p = playersById[playerId] || {};
+      individualTickerRows.push({
+        name: row?.name || p?.name || playerId || "Player",
+        teamId: row?.teamId || p?.teamId,
+        teeTime: teeTimeDisplayForPlayerRound(p, safeRound),
+        row
+      });
+    });
+  }
+
+  const playerGrossEntries = individualTickerRows.map((entry) => {
+    const row = entry?.row || null;
+    const color = colorForTeam(entry?.teamId);
     const hasData = rowHasAnyData(row);
-    const holeText = holeDisplayFromThru(row);
+    const holeText = holeOrTeeDisplay(row, entry?.teeTime);
     const parText = grossToParText(row, pars);
     return {
-      name,
+      name: entry?.name || "Player",
       hasData,
       parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
       node: el(
         "span",
         { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
-        `${name} ${parText} ${holeText}`
+        `${entry?.name || "Player"} ${parText} ${holeText}`
       )
     };
   });
   sortTickerEntries(playerGrossEntries);
   const playerGrossItems = playerGrossEntries.map((x) => x.node);
 
-  const playerNetEntries = allPlayerIds.map((playerId) => {
-    const row = playerRowById[playerId] || null;
-    const p = playersById[playerId] || {};
-    const name = row?.name || p?.name || playerId || "Player";
-    const teamId = row?.teamId || p?.teamId;
-    const color = colorForTeam(teamId);
+  const playerNetEntries = individualTickerRows.map((entry) => {
+    const row = entry?.row || null;
+    const color = colorForTeam(entry?.teamId);
     const hasData = rowHasAnyData(row);
-    const holeText = holeDisplayFromThru(row);
+    const holeText = holeOrTeeDisplay(row, entry?.teeTime);
     const parText = netToParText(row, pars);
     return {
-      name,
+      name: entry?.name || "Player",
       hasData,
       parNum: hasData ? toParNumber(parText) : Number.POSITIVE_INFINITY,
       node: el(
         "span",
         { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
-        `${name} ${parText} ${holeText}`
+        `${entry?.name || "Player"} ${parText} ${holeText}`
       )
     };
   });
@@ -769,7 +885,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
     const row = teamRoundById[teamId] || null;
     const color = colorForTeam(teamId);
     const hasData = rowHasAnyData(row);
-    const holeText = holeDisplayFromThru(row);
+    const holeText = holeOrTeeDisplay(row, teeTimeDisplayForTeamRound(teamId, playersById, safeRound));
     const teamName = row?.teamName || teamsById[teamId]?.teamName || teamId || "Team";
     const parText = netToParText(row, pars);
     return {
@@ -791,7 +907,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
     const row = teamRoundById[teamId] || null;
     const color = colorForTeam(teamId);
     const hasData = rowHasAnyData(row);
-    const holeText = holeDisplayFromThru(row);
+    const holeText = holeOrTeeDisplay(row, teeTimeDisplayForTeamRound(teamId, playersById, safeRound));
     const teamName = row?.teamName || teamsById[teamId]?.teamName || teamId || "Team";
     const parText = grossToParText(row, pars);
     return {
@@ -814,21 +930,23 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   const leadingTournamentTeam = teamTournamentEntries.find((x) => x.hasData);
   setBrandDotColor((leadingRoundTeam || leadingTournamentTeam || null)?.color || null);
 
+  const individualGrossLabel = isTwoManRound ? "Groups Gross" : "Gross";
+  const individualNetLabel = isTwoManRound ? "Groups Net" : "Net";
   const sections = [];
   if (isSingleRoundTournament) {
     if (isScrambleRound) {
       sections.push({ label: `${roundLabel} (Net)`, items: teamRoundItems });
       sections.push({ label: `${roundLabel} (Gross)`, items: teamRoundGrossItems });
     } else {
-      sections.push({ label: `${roundLabel} (Gross)`, items: playerGrossItems });
-      sections.push({ label: `${roundLabel} (Net)`, items: playerNetItems });
+      sections.push({ label: `${roundLabel} (${individualGrossLabel})`, items: playerGrossItems });
+      sections.push({ label: `${roundLabel} (${individualNetLabel})`, items: playerNetItems });
     }
   } else {
     if (showIndividualGross) {
-      sections.push({ label: `${roundLabel} (Gross)`, items: playerGrossItems });
+      sections.push({ label: `${roundLabel} (${individualGrossLabel})`, items: playerGrossItems });
     }
     if (showIndividualNet) {
-      sections.push({ label: `${roundLabel} (Net)`, items: playerNetItems });
+      sections.push({ label: `${roundLabel} (${individualNetLabel})`, items: playerNetItems });
     }
     if (isScrambleRound) {
       sections.push({ label: `${roundLabel} (Net)`, items: teamRoundItems });
@@ -1087,11 +1205,16 @@ async function main() {
     const useNet = !!roundCfg.useHandicap || isScrambleRound;
     const roundLabel = `R${tickerRoundIndex + 1}`;
     const pars = tjson?.course?.pars || course.pars || Array(18).fill(4);
+    const teamTeeFallback = isScrambleRound
+      ? teeTimeDisplayForTeamRound(teamId, playersById, tickerRoundIndex)
+      : "";
 
     const teamRows = tjson?.score_data?.rounds?.[tickerRoundIndex]?.leaderboard?.teams || [];
     const teamRow = teamRows.find((row) => String(row?.teamId || "").trim() === teamId);
     if (!teamRow || !rowHasAnyData(teamRow)) {
-      target.textContent = `Current score (${roundLabel}): —`;
+      target.textContent = teamTeeFallback
+        ? `Current score (${roundLabel}): — (${teamTeeFallback})`
+        : `Current score (${roundLabel}): —`;
       return;
     }
 

@@ -204,6 +204,21 @@ function bestXAggregateWithParSum(pairs, agg){
   return { strokes: s, par, n: take.length };
 }
 
+function normalizeTeamAggregation(agg){
+  let topX = Number(agg?.topX ?? 4);
+  if (!Number.isFinite(topX) || topX <= 0) topX = 4;
+  topX = Math.round(topX);
+  const mode = String(agg?.mode || "avg").toLowerCase() === "sum" ? "sum" : "avg";
+  return { mode, topX };
+}
+
+function aggregateValuesByMode(values, mode = "avg"){
+  const clean = (values || []).filter((v) => typeof v === "number" && Number.isFinite(v));
+  if (!clean.length) return null;
+  const total = clean.reduce((a, b) => a + b, 0);
+  return mode === "sum" ? total : total / clean.length;
+}
+
 function scrambleTeamHandicap(teamPlayers){
   const vals = (teamPlayers || [])
     .map(p => Number(p?.handicap ?? 0))
@@ -228,6 +243,11 @@ function getPlayersByTeamMap(players){
 function isTwoManFormat(format){
   const fmt = String(format || "").toLowerCase();
   return fmt === "two_man" || fmt === "two_man_best_ball";
+}
+
+function isTeamBestBallFormat(format){
+  const fmt = String(format || "").toLowerCase();
+  return fmt === "team_best_ball" || fmt === "team_bestball";
 }
 
 function normalizeTwoManGroupLabel(value){
@@ -420,6 +440,7 @@ export function materializePublicFromState(state){
     const round = rounds[r] || {};
     const isScramble = round.format === "scramble";
     const isTwoMan = isTwoManFormat(round.format);
+    const isTeamBestBall = isTeamBestBallFormat(round.format);
     const useHandicap = !!round.useHandicap;
 
     const roundScores = scores.rounds?.[r] || {};
@@ -615,6 +636,60 @@ export function materializePublicFromState(state){
           )
         };
       }
+    } else if (isTeamBestBall){
+      const { mode: aggMode, topX } = normalizeTeamAggregation(round.teamAggregation);
+      const playersByTeam = getPlayersByTeamMap(players);
+
+      for (const teamId of Object.keys(teams)){
+        const teamPlayers = playersByTeam.get(teamId) || [];
+        const gross = Array(18).fill(null);
+        const net = Array(18).fill(null);
+        const grossToPar = Array(18).fill(null);
+        const netToPar = Array(18).fill(null);
+
+        for (let i = 0; i < 18; i++){
+          const candidates = [];
+          for (const player of teamPlayers){
+            const playerSc = outRound.player[player.playerId];
+            if (!playerSc) continue;
+            const grossRaw = playerSc?.gross?.[i];
+            const netRaw = playerSc?.net?.[i];
+            const grossVal = grossRaw == null ? null : (Number.isFinite(Number(grossRaw)) ? Number(grossRaw) : null);
+            const netVal = netRaw == null ? grossVal : (Number.isFinite(Number(netRaw)) ? Number(netRaw) : grossVal);
+            const metricVal = useHandicap ? netVal : grossVal;
+            if (metricVal == null) continue;
+            candidates.push({ gross: grossVal, net: netVal, metric: metricVal });
+          }
+          if (!candidates.length) continue;
+
+          candidates.sort((a, b) => a.metric - b.metric);
+          const take = candidates.slice(0, Math.min(topX, candidates.length));
+          const grossVals = take.map((x) => x.gross);
+          const netVals = take.map((x) => x.net);
+          const grossAgg = aggregateValuesByMode(grossVals, aggMode);
+          const netAgg = aggregateValuesByMode(netVals, aggMode);
+          if (grossAgg != null) gross[i] = grossAgg;
+          if (netAgg != null) net[i] = netAgg;
+
+          const parBase = Number(course.pars[i] || 0) * (aggMode === "avg" ? 1 : take.length);
+          if (grossAgg != null) grossToPar[i] = grossAgg - parBase;
+          if (netAgg != null) netToPar[i] = netAgg - parBase;
+        }
+
+        const grossTotal = sumPlayed(gross);
+        const netTotal = sumPlayed(net);
+        const thru = thruFromHoles(gross);
+        const grossToParTotal = sumPlayed(grossToPar);
+        const netToParTotal = sumPlayed(netToPar);
+
+        outRound.team[teamId] = {
+          gross, net, grossToPar, netToPar,
+          handicapShots: Array(18).fill(0),
+          grossTotal, netTotal,
+          grossToParTotal, netToParTotal,
+          thru
+        };
+      }
     } else {
       // team totals derived from players for that round (aggregation)
       const agg = round.teamAggregation || { mode:"avg", topX:4 };
@@ -749,6 +824,7 @@ export function materializePublicFromState(state){
     const weight = normalizedWeights[r] ?? 1;
     const isScramble = round.format === "scramble";
     const isTwoMan = isTwoManFormat(round.format);
+    const isTeamBestBall = isTeamBestBallFormat(round.format);
     const useHandicap = !!round.useHandicap;
 
     const derived = score_data.rounds[r];
@@ -791,7 +867,7 @@ export function materializePublicFromState(state){
       cur.par += Number(parPlayed || 0) * weight;
     }
 
-    if (isTwoMan){
+    if (isTwoMan || isTeamBestBall){
       for (const teamId of Object.keys(teams)){
         const sc = derived.team[teamId];
         if (!sc) continue;

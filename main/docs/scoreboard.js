@@ -254,6 +254,11 @@ function displayThru(v) {
   return String(v);
 }
 
+function normalizeTeeTimeLabel(value) {
+  if (value == null) return "";
+  return String(value).trim();
+}
+
 function toParNumber(v) {
   if (v == null) return null;
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -984,6 +989,55 @@ function playerGroupForRound(player, roundIndex) {
   return "";
 }
 
+function teeTimeForPlayerRound(player, roundIndex) {
+  const idx = Math.max(0, Math.floor(Number(roundIndex) || 0));
+  if (!player || idx < 0) return "";
+  if (Array.isArray(player?.teeTimes)) {
+    const raw = normalizeTeeTimeLabel(player.teeTimes[idx]);
+    if (raw) return raw;
+  }
+  if (idx === 0) {
+    const fallback = normalizeTeeTimeLabel(player?.teeTime);
+    if (fallback) return fallback;
+  }
+  return "";
+}
+
+function playerMetaByIdMap() {
+  const out = new Map();
+  (TOURN?.players || []).forEach((p) => {
+    const id = String(p?.playerId || "").trim();
+    if (!id) return;
+    out.set(id, p || {});
+  });
+  return out;
+}
+
+function teeTimeForPlayerIds(playerIds, roundIndex) {
+  const wanted = new Set((playerIds || []).map((id) => String(id || "").trim()).filter(Boolean));
+  if (!wanted.size) return "";
+  const players = TOURN?.players || [];
+  for (const p of players) {
+    const id = String(p?.playerId || "").trim();
+    if (!wanted.has(id)) continue;
+    const tee = teeTimeForPlayerRound(p, roundIndex);
+    if (tee) return tee;
+  }
+  return "";
+}
+
+function teeTimeForTeamRound(teamId, roundIndex) {
+  const id = normalizeTeamId(teamId);
+  if (!id) return "";
+  const players = TOURN?.players || [];
+  for (const p of players) {
+    if (normalizeTeamId(p?.teamId) !== id) continue;
+    const tee = teeTimeForPlayerRound(p, roundIndex);
+    if (tee) return tee;
+  }
+  return "";
+}
+
 function bestBallHolesForPlayers(roundData, playerIds, metric) {
   const out = Array(18).fill(null);
   for (let i = 0; i < 18; i++) {
@@ -1351,9 +1405,10 @@ function inlineScorecardHeading(host, title, subtitle) {
 function renderLeaderboard(data) {
   const isTeam = mode === "team";
   const isAllRounds = data.view?.round === "all";
+  const isTwoManGroupView = !isTeam && !isAllRounds && isTwoManBestBallRound(data.view?.round);
   const allowInlineScorecard = data.view?.round !== "all";
   const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
-  lbTitle.textContent = isTeam ? "Teams" : "Individuals";
+  lbTitle.textContent = isTeam ? "Teams" : isTwoManGroupView ? "Groups" : "Individuals";
   rebuildTeamColors();
 
   const head = document.getElementById("lb_head");
@@ -1370,18 +1425,19 @@ function renderLeaderboard(data) {
   function headBtn(label, key, left = false) {
     return `<button type="button" class="sort-head-btn ${left ? "left" : ""}" data-sort-key="${key}">${label}</button>`;
   }
+  const nameHeading = isTeam ? "Team" : isTwoManGroupView ? "Group" : "Player";
 
   if (showGrossNet && isAllRounds) {
     head.innerHTML = `
       <th class="rank-col"></th>
-      <th class="left name-col">${headBtn(isTeam ? "Team" : "Player", "name", true)}</th>
+      <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
       <th class="metric-col">${headBtn("Net", "net")}</th>
       <th class="metric-col">${headBtn("Net<br/>Strokes", "netStrokes")}</th>
     `;
   } else if (showGrossNet) {
     head.innerHTML = `
       <th class="rank-col"></th>
-      <th class="left name-col">${headBtn(isTeam ? "Team" : "Player", "name", true)}</th>
+      <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
       <th class="metric-col">${headBtn("Gross ±", "gross")}</th>
       <th class="metric-col">${headBtn("Net ±", "net")}</th>
       <th class="thru-col">${headBtn("Thru", "thru")}</th>
@@ -1389,7 +1445,7 @@ function renderLeaderboard(data) {
   } else {
     head.innerHTML = `
       <th class="rank-col"></th>
-      <th class="left name-col">${headBtn(isTeam ? "Team" : "Player", "name", true)}</th>
+      <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
       <th class="metric-col">${headBtn("±", "toPar")}</th>
       <th class="metric-col">${headBtn("Strokes", "strokes")}</th>
       <th class="thru-col">${headBtn("Thru", "thru")}</th>
@@ -1420,10 +1476,9 @@ function renderLeaderboard(data) {
     .sort((a, b) => {
       if (a.hasData !== b.hasData) return a.hasData ? -1 : 1;
       return compareRows(a.row, b.row, sortState.key, sortState.dir, showGrossNet, data, isTeam);
-    })
-    .map((x) => x.row);
+    });
 
-  const leader = sortedRows.find((row) => hasPostedScores(row)) || null;
+  const leader = sortedRows.find((entry) => entry.hasData)?.row || null;
   if (leader) {
     const leaderColor = colorForTeam(leader?.teamId, leader?.teamName);
     setBrandDotColor(leaderColor);
@@ -1447,7 +1502,7 @@ function renderLeaderboard(data) {
   });
 
   const displayedRanks = new Set();
-  sortedRows.forEach((r) => {
+  sortedRows.forEach(({ row: r, hasData }) => {
     const tr = document.createElement("tr");
     tr.className = allowInlineScorecard ? "clickable" : "";
     tr.dataset.id = isTeam ? r.teamId : r.playerId;
@@ -1466,6 +1521,8 @@ function renderLeaderboard(data) {
         ${!isTeam && r.teamName ? `<div class="small muted team-accent team-accent-sub" style="--team-accent:${teamColor};">${r.teamName}</div>` : ""}
       </td>
     `;
+    const shouldShowTeeTime = !hasData && r?.teeTime && (!isTeam || isScrambleRound(data.view?.round));
+    const thruCell = shouldShowTeeTime ? r.teeTime : displayThru(r.thru);
 
     if (showGrossNet && isAllRounds) {
       tr.innerHTML = `
@@ -1480,7 +1537,7 @@ function renderLeaderboard(data) {
         ${nameCell}
         <td class="mono metric-col"><b>${grossToParForRow(r, data)}</b></td>
         <td class="mono metric-col"><b>${netToParForRow(r, data)}</b></td>
-        <td class="mono thru-col">${displayThru(r.thru)}</td>
+        <td class="mono thru-col">${thruCell}</td>
       `;
     } else {
       tr.innerHTML = `
@@ -1488,7 +1545,7 @@ function renderLeaderboard(data) {
         ${nameCell}
         <td class="mono metric-col"><b>${r.toPar ?? "E"}</b></td>
         <td class="mono metric-col">${r.strokes == null ? "—" : String(r.strokes)}</td>
-        <td class="mono thru-col">${displayThru(r.thru)}</td>
+        <td class="mono thru-col">${thruCell}</td>
       `;
     }
 
@@ -1804,6 +1861,97 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
   return aggregated;
 }
 
+function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars) {
+  const roundCfg = (tournamentJson?.tournament?.rounds || [])[roundIndex] || {};
+  const format = String(roundCfg.format || "").toLowerCase();
+  const isTwoManRound = format === "two_man" || format === "two_man_best_ball";
+  const useHandicap = !!roundCfg.useHandicap;
+  const teamNames = roundTeamNameLookup(tournamentJson, roundData?.leaderboard?.teams || []);
+  const playersById = playerMetaByIdMap();
+
+  const attachPlayerMeta = (row) => {
+    const playerId = String(row?.playerId || "").trim();
+    const meta = playersById.get(playerId) || {};
+    const teamId = normalizeTeamId(row?.teamId || meta?.teamId);
+    return {
+      ...row,
+      playerId,
+      teamId,
+      teamName: row?.teamName || teamNames.get(teamId) || meta?.teamName || teamId || "",
+      teeTime: row?.teeTime || teeTimeForPlayerRound(meta, roundIndex)
+    };
+  };
+
+  if (!isTwoManRound) {
+    return (roundData?.leaderboard?.players || []).map(attachPlayerMeta);
+  }
+
+  const seedTeamIds = new Set();
+  (tournamentJson?.teams || []).forEach((t) => seedTeamIds.add(normalizeTeamId(t?.teamId ?? t?.id)));
+  (tournamentJson?.players || []).forEach((p) => seedTeamIds.add(normalizeTeamId(p?.teamId)));
+  Object.keys(roundData?.team || {}).forEach((id) => seedTeamIds.add(normalizeTeamId(id)));
+
+  const rows = [];
+  for (const teamId of Array.from(seedTeamIds).filter(Boolean).sort((a, b) => a.localeCompare(b))) {
+    const teamEntry = roundData?.team?.[teamId] || {};
+    const groupKeys = twoManGroupKeysForTeam(teamId, roundIndex, teamEntry);
+    for (const key of groupKeys) {
+      const entry = twoManGroupEntry(teamEntry, key);
+      const playerIds = playerIdsForTwoManGroup(teamId, roundIndex, key, entry?.playerIds);
+      const gross = Array.isArray(entry?.gross)
+        ? entry.gross
+        : bestBallHolesForPlayers(roundData, playerIds, "gross");
+      const net = Array.isArray(entry?.net)
+        ? entry.net
+        : bestBallHolesForPlayers(roundData, playerIds, "net");
+
+      let thru = 0;
+      let grossToParTotal = 0;
+      let netToParTotal = 0;
+      for (let i = 0; i < 18; i++) {
+        const grossV = asPlayedNumber(gross[i]);
+        const netV = asPlayedNumber(net[i]);
+        const par = Number(coursePars?.[i] || 0);
+        if (grossV != null || netV != null) thru += 1;
+        if (grossV != null) grossToParTotal += grossV - par;
+        if (netV != null) netToParTotal += netV - par;
+      }
+
+      const grossTotal = sumHoles(gross);
+      const netTotal = sumHoles(net);
+      rows.push({
+        playerId: `group:${teamId}:${key}`,
+        groupId: `${teamId}::${key}`,
+        groupKey: key,
+        name: `Group ${key}`,
+        teamId,
+        teamName: teamNames.get(teamId) || teamId || "Team",
+        thru,
+        gross: grossTotal,
+        net: netTotal,
+        strokes: useHandicap ? netTotal : grossTotal,
+        toPar: useHandicap ? netToParTotal : grossToParTotal,
+        toParGross: grossToParTotal,
+        toParNet: netToParTotal,
+        teeTime: teeTimeForPlayerIds(playerIds, roundIndex) || teeTimeForTeamRound(teamId, roundIndex),
+        scores: {
+          gross,
+          net,
+          handicapShots: Array.isArray(entry?.handicapShots) ? entry.handicapShots : Array(18).fill(0),
+          grossTotal,
+          netTotal,
+          grossToParTotal,
+          netToParTotal,
+          thru
+        }
+      });
+    }
+  }
+
+  if (rows.length) return rows;
+  return (roundData?.leaderboard?.players || []).map(attachPlayerMeta);
+}
+
 function statRowsFromRound(roundData, isTeamMode, roundIndex) {
   if (!roundData) return [];
   let source;
@@ -1965,6 +2113,7 @@ function buildScoreboardResponse(tournamentJson, viewRound) {
     course.pars,
     derived?.leaderboard?.teams || []
   );
+  const derivedPlayers = buildRoundPlayerRows(tournamentJson, rIdx, derived || {}, course.pars);
   return {
     tournament: tournamentJson.tournament,
     view: { round: rIdx },
@@ -1973,8 +2122,11 @@ function buildScoreboardResponse(tournamentJson, viewRound) {
       pars: course.pars,
       strokeIndex: course.strokeIndex
     },
-    teams: derivedTeams,
-    players: derived?.leaderboard?.players || []
+    teams: derivedTeams.map((row) => ({
+      ...row,
+      teeTime: row?.teeTime || teeTimeForTeamRound(row?.teamId, rIdx)
+    })),
+    players: derivedPlayers
   };
 }
 

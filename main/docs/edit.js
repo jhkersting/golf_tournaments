@@ -53,6 +53,7 @@ let currentData = null;
 
 const ROUND_FORMATS = [
   { value: "scramble", label: "scramble" },
+  { value: "team_best_ball", label: "team best ball" },
   { value: "two_man", label: "two man" },
   { value: "shamble", label: "shamble" },
   { value: "singles", label: "singles" }
