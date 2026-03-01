@@ -27,6 +27,7 @@ function normalizeAgg(agg){
 function normalizeRoundFormat(format){
   const raw = String(format || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (raw === "scramble") return "scramble";
+  if (raw === "team_best_ball" || raw === "team_bestball") return "team_best_ball";
   if (raw === "shamble") return "shamble";
   if (
     raw === "two_man_best_ball" ||
@@ -80,6 +81,13 @@ export async function handler(event){
     const tid = uid("t");
     const editCode = makeEditCode(8);
 
+    const courseName = String(course?.name || "").trim();
+    const normalizedCourse = {
+      pars: course.pars.map(Number),
+      strokeIndex: course.strokeIndex.map(Number)
+    };
+    if (courseName) normalizedCourse.name = courseName.slice(0, 120);
+
     const state = {
       tournament: {
         tournamentId: tid,
@@ -89,7 +97,7 @@ export async function handler(event){
         editCodeHash: hashEditCode(editCode)
       },
       rounds: normRounds,
-      course: { pars: course.pars.map(Number), strokeIndex: course.strokeIndex.map(Number) },
+      course: normalizedCourse,
       teams: {},
       players: {},
       codeIndex: {},

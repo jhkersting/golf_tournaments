@@ -265,7 +265,7 @@ function roundCard(){
       <div class="col">
         <label>Top X scores taken</label>
         <input data-topx type="number" min="1" max="4" step="1" value="4" />
-        <div class="small">Team score uses the average of the best X players (Team Best Ball applies this per hole).</div>
+        <div class="small">Round team score uses the sum of best X players (Team Best Ball applies this per hole; all-round weighted team totals use average).</div>
       </div>
     </div>
   `;

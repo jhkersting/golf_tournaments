@@ -30,8 +30,12 @@ Parameters:
 - `singles`
 - `shamble`
 - `scramble`
-- `team_best_ball` (players enter their own scores; team score is best X per hole)
+- `team_best_ball` (players enter their own scores; round team score is sum of best X per hole)
 - `two_man` / `two_man_best_ball` (teams should have exactly 4 players; Group A/B are used for scoring)
+
+Top-X behavior for player-based formats (`team_best_ball`, `singles`, `shamble`):
+- Round team leaderboard: sum of Top X
+- Weighted all-round team leaderboard: average of Top X
 
 ## Static JSON Paths (PUBLIC_BUCKET)
 - `/tournaments/{tid}.json`  (contains `score_data`, leaderboards, hole arrays, to-par arrays)

@@ -18,6 +18,7 @@ function normalizeRoundFormat(format) {
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
   if (raw === "scramble") return "scramble";
+  if (raw === "team_best_ball" || raw === "team_bestball") return "team_best_ball";
   if (raw === "shamble") return "shamble";
   if (raw === "singles") return "singles";
   if (
@@ -48,6 +49,46 @@ function normalizeAgg(agg) {
   if (!Number.isFinite(topX) || topX <= 0) topX = 4;
   topX = Math.round(topX);
   return { mode: "avg", topX };
+}
+
+function validateCourse(course) {
+  const pars = course?.pars;
+  const strokeIndex = course?.strokeIndex;
+  if (!Array.isArray(pars) || pars.length !== 18) {
+    return "course.pars must be an array of length 18";
+  }
+  if (!Array.isArray(strokeIndex) || strokeIndex.length !== 18) {
+    return "course.strokeIndex must be an array of length 18";
+  }
+  for (const p of pars) {
+    if (!Number.isFinite(Number(p))) return "All pars must be numbers";
+  }
+  const si = strokeIndex.map(Number);
+  const set = new Set(si);
+  if (set.size !== 18) return "Stroke Index must contain 18 unique values";
+  for (const v of si) {
+    if (!Number.isInteger(v) || v < 1 || v > 18) {
+      return "Stroke Index values must be integers 1..18";
+    }
+  }
+  return null;
+}
+
+function normalizeCourseForState(course) {
+  const out = {
+    pars: course.pars.map(Number),
+    strokeIndex: course.strokeIndex.map(Number)
+  };
+  const name = String(course?.name || "").trim();
+  if (name) out.name = name.slice(0, 120);
+  return out;
+}
+
+function defaultCourse() {
+  return {
+    pars: Array(18).fill(4),
+    strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1)
+  };
 }
 
 function normalizeGroup(group) {
@@ -423,6 +464,19 @@ export async function handler(event) {
       current.teams = current.teams || {};
       current.players = current.players || {};
       requireTournamentEditCode(current, providedEditCode);
+
+      const currentCourseErr = validateCourse(current.course);
+      current.course = currentCourseErr ? defaultCourse() : normalizeCourseForState(current.course);
+      if (body?.course !== undefined) {
+        const nextCourseErr = validateCourse(body.course);
+        if (nextCourseErr) {
+          const err = new Error(nextCourseErr);
+          err.statusCode = 400;
+          throw err;
+        }
+        current.course = normalizeCourseForState(body.course);
+      }
+
       const previousCodes = new Set(
         Object.keys(current.codeIndex || {}).concat(
           Object.values(current.players || {}).map((p) => String(p?.code || "").trim()).filter(Boolean)

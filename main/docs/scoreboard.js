@@ -239,7 +239,12 @@ function getCoursePars() {
 }
 
 function leaderboardColCount(data) {
-  return 5;
+  const isAllRounds = data.view?.round === "all";
+  const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
+  const showStrokesColumn = mode === "team" && isAllRounds;
+  if (showGrossNet && isAllRounds) return showStrokesColumn ? 4 : 3;
+  if (showGrossNet) return 5;
+  return 4;
 }
 
 function scoreValue(v) {
@@ -1408,6 +1413,7 @@ function renderLeaderboard(data) {
   const isTwoManGroupView = !isTeam && !isAllRounds && isTwoManBestBallRound(data.view?.round);
   const allowInlineScorecard = data.view?.round !== "all";
   const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
+  const showStrokesColumn = isTeam && isAllRounds;
   lbTitle.textContent = isTeam ? "Teams" : isTwoManGroupView ? "Groups" : "Individuals";
   rebuildTeamColors();
 
@@ -1415,10 +1421,10 @@ function renderLeaderboard(data) {
   const prevSortKey = sortState?.key || "score";
   const defaultSortKey = showGrossNet ? "net" : "toPar";
   const allowedSortKeys = isAllRounds
-    ? new Set(["name", "net", "netStrokes", "score"])
+    ? new Set(showStrokesColumn ? ["name", "net", "netStrokes", "score"] : ["name", "net", "score"])
     : showGrossNet
       ? new Set(["name", "thru", "gross", "net", "score"])
-      : new Set(["name", "toPar", "thru", "strokes", "score"]);
+      : new Set(["name", "toPar", "thru", "score"]);
   if (!allowedSortKeys.has(prevSortKey)) sortState = { key: defaultSortKey, dir: "asc" };
   if (sortState.key === "score") sortState = { key: defaultSortKey, dir: "asc" };
 
@@ -1432,7 +1438,7 @@ function renderLeaderboard(data) {
       <th class="rank-col"></th>
       <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
       <th class="metric-col">${headBtn("Net", "net")}</th>
-      <th class="metric-col">${headBtn("Net<br/>Strokes", "netStrokes")}</th>
+      ${showStrokesColumn ? `<th class="metric-col">${headBtn("Net<br/>Strokes", "netStrokes")}</th>` : ""}
     `;
   } else if (showGrossNet) {
     head.innerHTML = `
@@ -1447,7 +1453,6 @@ function renderLeaderboard(data) {
       <th class="rank-col"></th>
       <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
       <th class="metric-col">${headBtn("±", "toPar")}</th>
-      <th class="metric-col">${headBtn("Strokes", "strokes")}</th>
       <th class="thru-col">${headBtn("Thru", "thru")}</th>
     `;
   }
@@ -1529,7 +1534,7 @@ function renderLeaderboard(data) {
         <td class="mono rank-col">${rankCellValue}</td>
         ${nameCell}
         <td class="mono metric-col"><b>${netToParForRow(r, data)}</b></td>
-        <td class="mono metric-col">${scoreValue(netStrokesForRow(r))}</td>
+        ${showStrokesColumn ? `<td class="mono metric-col">${scoreValue(netStrokesForRow(r))}</td>` : ""}
       `;
     } else if (showGrossNet) {
       tr.innerHTML = `
@@ -1544,7 +1549,6 @@ function renderLeaderboard(data) {
         <td class="mono rank-col">${rankCellValue}</td>
         ${nameCell}
         <td class="mono metric-col"><b>${r.toPar ?? "E"}</b></td>
-        <td class="mono metric-col">${r.strokes == null ? "—" : String(r.strokes)}</td>
         <td class="mono thru-col">${thruCell}</td>
       `;
     }
@@ -1640,10 +1644,9 @@ function normalizeTeamId(teamId) {
 
 function roundAggregationConfig(roundCfg) {
   const agg = roundCfg?.teamAggregation || {};
-  const mode = String(agg.mode || "sum").toLowerCase() === "avg" ? "avg" : "sum";
   const rawTopX = Number(agg.topX);
   const topX = Math.max(1, Math.min(4, Number.isFinite(rawTopX) ? Math.floor(rawTopX) : 4));
-  return { mode, topX };
+  return { topX };
 }
 
 function asPlayedNumber(v) {
@@ -1652,10 +1655,9 @@ function asPlayedNumber(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function aggregateNumbers(values, mode) {
+function aggregateNumbers(values) {
   if (!values.length) return null;
   const total = values.reduce((a, v) => a + Number(v || 0), 0);
-  if (mode === "avg") return total / values.length;
   return total;
 }
 
@@ -1730,7 +1732,7 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
 function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundData, coursePars, leaderboardRows = []) {
   const roundCfg = (tournamentJson?.tournament?.rounds || [])[roundIndex] || {};
   const useHandicap = !!roundCfg.useHandicap;
-  const { mode, topX } = roundAggregationConfig(roundCfg);
+  const { topX } = roundAggregationConfig(roundCfg);
   const playerById = roundData?.player || {};
   const playerMetaById = new Map();
   (tournamentJson?.players || []).forEach((p) => {
@@ -1785,8 +1787,8 @@ function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundDat
 
       const grossValues = picked.map((x) => x.gross).filter((v) => v != null);
       const netValues = picked.map((x) => x.net).filter((v) => v != null);
-      const grossAgg = aggregateNumbers(grossValues, mode);
-      const netAgg = aggregateNumbers(netValues, mode);
+      const grossAgg = aggregateNumbers(grossValues);
+      const netAgg = aggregateNumbers(netValues);
       if (grossAgg != null) grossHoles[i] = grossAgg;
       if (netAgg != null) netHoles[i] = netAgg;
     }
@@ -1800,7 +1802,7 @@ function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundDat
     for (let i = 0; i < 18; i++) {
       const count = selectedCountByHole[i];
       if (!count) continue;
-      const parBase = Number(coursePars?.[i] || 0) * (mode === "avg" ? 1 : count);
+      const parBase = Number(coursePars?.[i] || 0) * count;
       const grossV = grossHoles[i];
       const netV = netHoles[i];
       if (grossV != null) grossToParTotal += Number(grossV) - parBase;

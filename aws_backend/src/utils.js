@@ -637,7 +637,8 @@ export function materializePublicFromState(state){
         };
       }
     } else if (isTeamBestBall){
-      const { mode: aggMode, topX } = normalizeTeamAggregation(round.teamAggregation);
+      // Round leaderboard: Team Best Ball is sum of best X scores per hole.
+      const { topX } = normalizeTeamAggregation(round.teamAggregation);
       const playersByTeam = getPlayersByTeamMap(players);
 
       for (const teamId of Object.keys(teams)){
@@ -666,12 +667,12 @@ export function materializePublicFromState(state){
           const take = candidates.slice(0, Math.min(topX, candidates.length));
           const grossVals = take.map((x) => x.gross);
           const netVals = take.map((x) => x.net);
-          const grossAgg = aggregateValuesByMode(grossVals, aggMode);
-          const netAgg = aggregateValuesByMode(netVals, aggMode);
+          const grossAgg = aggregateValuesByMode(grossVals, "sum");
+          const netAgg = aggregateValuesByMode(netVals, "sum");
           if (grossAgg != null) gross[i] = grossAgg;
           if (netAgg != null) net[i] = netAgg;
 
-          const parBase = Number(course.pars[i] || 0) * (aggMode === "avg" ? 1 : take.length);
+          const parBase = Number(course.pars[i] || 0) * take.length;
           if (grossAgg != null) grossToPar[i] = grossAgg - parBase;
           if (netAgg != null) netToPar[i] = netAgg - parBase;
         }
@@ -824,7 +825,6 @@ export function materializePublicFromState(state){
     const weight = normalizedWeights[r] ?? 1;
     const isScramble = round.format === "scramble";
     const isTwoMan = isTwoManFormat(round.format);
-    const isTeamBestBall = isTeamBestBallFormat(round.format);
     const useHandicap = !!round.useHandicap;
 
     const derived = score_data.rounds[r];
@@ -867,7 +867,7 @@ export function materializePublicFromState(state){
       cur.par += Number(parPlayed || 0) * weight;
     }
 
-    if (isTwoMan || isTeamBestBall){
+    if (isTwoMan){
       for (const teamId of Object.keys(teams)){
         const sc = derived.team[teamId];
         if (!sc) continue;
