@@ -1862,11 +1862,18 @@ async function main() {
           : targetIds.length
             ? targetIds
             : [myId].filter((id) => Boolean(id) && allowedRoundPlayerSet.has(id));
+      const targetLabelSingular = type === "team" ? "team" : type === "group" ? "group" : "player";
+      const targetLabelPlural = type === "team" ? "teams" : type === "group" ? "groups" : "players";
+      const typeInfoText = type === "team"
+        ? "Scramble round: enter one team score per hole."
+        : type === "group"
+          ? "Two man round: enter one group score per hole."
+          : "Player-based round: enter one score per player per hole.";
 
       const info = el(
         "div",
         { class: "small", style: "margin-bottom:10px;" },
-        "Bulk input: paste/update multiple holes then submit. Existing scores will not be overwritten unless you use Override."
+        `${typeInfoText} Bulk input: paste/update multiple holes then submit. Existing scores will not be overwritten unless you use Override.`
       );
       bulkPane.appendChild(info);
 
@@ -1964,6 +1971,103 @@ async function main() {
       tbl.appendChild(tbody);
       tableWrap.appendChild(tbl);
       bulkPane.appendChild(tableWrap);
+
+      const massWrap = el(
+        "div",
+        {
+          style:
+            "margin-top:10px; padding:10px; border:1px solid var(--border); border-radius:12px; background:var(--surface-strong);",
+        }
+      );
+      massWrap.appendChild(
+        el(
+          "div",
+          { class: "small", style: "margin-bottom:8px;" },
+          `Mass score input by hole: set one or more holes, then apply to all selected ${targetLabelPlural}.`
+        )
+      );
+
+      const massInputGrid = el(
+        "div",
+        { style: "display:flex; flex-wrap:wrap; gap:6px; align-items:flex-start; margin-bottom:8px;" }
+      );
+      const massInputs = Array(18).fill(null);
+      for (let i = 0; i < 18; i++) {
+        const cell = el(
+          "label",
+          {
+            class: "small",
+            style: "display:flex; flex-direction:column; gap:4px; align-items:center; min-width:46px;",
+          },
+          `H${i + 1}`
+        );
+        const inp = el("input", {
+          type: "number",
+          min: "1",
+          max: "20",
+          step: "1",
+          class: "hole-input bulk-hole-input",
+          style: "width:46px;",
+        });
+        massInputs[i] = inp;
+        cell.appendChild(inp);
+        massInputGrid.appendChild(cell);
+      }
+      massWrap.appendChild(massInputGrid);
+
+      const massActions = el("div", { class: "actions" });
+      const btnApplyMass = el("button", { class: "secondary", type: "button" }, `Apply to ${targetLabelPlural}`);
+      const btnClearMass = el("button", { class: "secondary", type: "button" }, "Clear mass inputs");
+      const massStatus = el("div", { class: "small", style: "margin-top:8px;" }, "");
+      massActions.appendChild(btnApplyMass);
+      massActions.appendChild(btnClearMass);
+      massWrap.appendChild(massActions);
+      massWrap.appendChild(massStatus);
+      bulkPane.appendChild(massWrap);
+
+      btnApplyMass.onclick = () => {
+        const updates = [];
+        const invalidHoles = [];
+        for (let i = 0; i < 18; i++) {
+          const raw = (massInputs[i]?.value ?? "").trim();
+          if (!raw) continue;
+          const n = Number(raw);
+          if (!Number.isInteger(n) || n < 1 || n > 20) {
+            invalidHoles.push(i + 1);
+            continue;
+          }
+          updates.push({ holeIndex: i, value: String(n) });
+        }
+
+        if (invalidHoles.length) {
+          massStatus.textContent = `Invalid score(s) for hole ${invalidHoles.join(", ")}. Use integers 1-20.`;
+          return;
+        }
+        if (!updates.length) {
+          massStatus.textContent = "Enter at least one hole score in the mass inputs.";
+          return;
+        }
+
+        for (const { holeIndex, value } of updates) {
+          for (const id of ids) {
+            const inp = rowInputs[id]?.[holeIndex];
+            if (!inp) continue;
+            inp.value = value;
+            setBulkDraft(r, id, holeIndex, value);
+          }
+        }
+
+        massStatus.textContent =
+          `Applied ${updates.length} hole ${updates.length === 1 ? "score" : "scores"} ` +
+          `to ${ids.length} ${ids.length === 1 ? targetLabelSingular : targetLabelPlural}.`;
+      };
+
+      btnClearMass.onclick = () => {
+        massInputs.forEach((inp) => {
+          if (inp) inp.value = "";
+        });
+        massStatus.textContent = "Mass inputs cleared.";
+      };
 
       const bulkStatus = el("div", { class: "small", style: "margin-top:10px;" }, "");
       const btnRow = el("div", { style: "display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;" });
