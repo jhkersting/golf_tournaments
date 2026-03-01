@@ -173,6 +173,19 @@
   </div>
 
   <div class="card">
+    <h2 style="margin-top:0;">Scores (All Rounds)</h2>
+    <div class="small">Edit hole scores for every round in one place, or download/upload a scores CSV.</div>
+    <div class="actions" style="margin-top:10px;">
+      <button class="secondary" id="download_scores_csv_btn" type="button">Download scores CSV</button>
+      <input id="scores_csv_file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" />
+      <button class="secondary" id="load_scores_csv_file_btn" type="button">Load CSV file</button>
+      <button class="secondary" id="upload_scores_csv_btn" type="button">Upload scores CSV to table</button>
+      <span id="scores_status" class="small"></span>
+    </div>
+    <div id="scores_editor_wrap" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
     <div class="actions">
       <button id="save_btn">Save changes</button>
       <span id="save_status" class="small"></span>

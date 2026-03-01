@@ -24,6 +24,7 @@ const scoreboardLink = document.getElementById("scoreboard_link");
 const updatedMeta = document.getElementById("updated_meta");
 const saveStatus = document.getElementById("save_status");
 const importStatus = document.getElementById("import_status");
+const scoresStatus = document.getElementById("scores_status");
 
 const nameEl = document.getElementById("e_name");
 const datesEl = document.getElementById("e_dates");
@@ -33,6 +34,11 @@ const playerRows = document.getElementById("player_rows");
 const csvImport = document.getElementById("csv_import");
 const csvFileInput = document.getElementById("csv_file");
 const loadCsvFileBtn = document.getElementById("load_csv_file_btn");
+const scoresCsvFileInput = document.getElementById("scores_csv_file");
+const loadScoresCsvFileBtn = document.getElementById("load_scores_csv_file_btn");
+const uploadScoresCsvBtn = document.getElementById("upload_scores_csv_btn");
+const downloadScoresCsvBtn = document.getElementById("download_scores_csv_btn");
+const scoresEditorWrap = document.getElementById("scores_editor_wrap");
 const courseNameEl = document.getElementById("e_course_name");
 const parRow = document.getElementById("e_par_row");
 const siRow = document.getElementById("e_si_row");
@@ -50,6 +56,9 @@ const importBtn = document.getElementById("import_btn");
 let currentTid = "";
 let currentEditCode = "";
 let currentData = null;
+let loadedScoresCsvText = "";
+let scoreInputIndex = new Map();
+let scoreRowMetaByKey = new Map();
 
 const ROUND_FORMATS = [
   { value: "scramble", label: "scramble" },
@@ -134,6 +143,454 @@ function normalizeDelimitedText(text) {
   const v = String(text || "");
   if (v.includes("\t") && !v.includes(",")) return tsvToCsv(v);
   return v;
+}
+
+function scoreRoundFormat(round) {
+  const raw = String(round?.format || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  if (raw === "two_man_best_ball") return "two_man";
+  if (raw === "team_bestball") return "team_best_ball";
+  if (raw === "scramble" || raw === "team_best_ball" || raw === "two_man" || raw === "shamble" || raw === "singles") {
+    return raw;
+  }
+  return "singles";
+}
+
+function scoreTargetTypeForRound(round) {
+  const fmt = scoreRoundFormat(round);
+  if (fmt === "scramble") return "team";
+  if (fmt === "two_man") return "group";
+  return "player";
+}
+
+function scoreBucketKey(targetType) {
+  if (targetType === "team") return "teams";
+  if (targetType === "group") return "groups";
+  return "players";
+}
+
+function scoreKey(roundIndex, targetType, targetId) {
+  return `${roundIndex}|${targetType}|${targetId}`;
+}
+
+function normalizeScoreTargetType(value) {
+  const v = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  if (v === "team" || v === "teams") return "team";
+  if (v === "group" || v === "groups") return "group";
+  if (v === "player" || v === "players") return "player";
+  return "";
+}
+
+function safeHoleArray(raw) {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = Array(18).fill(null);
+  for (let i = 0; i < 18; i++) {
+    const v = arr[i];
+    if (v == null || (typeof v === "string" && v.trim() === "")) {
+      out[i] = null;
+      continue;
+    }
+    const n = Number(v);
+    if (!Number.isFinite(n)) {
+      out[i] = null;
+      continue;
+    }
+    const iv = Math.round(n);
+    out[i] = iv >= 1 && iv <= 20 ? iv : null;
+  }
+  return out;
+}
+
+function normalizeScoresForUi(scores, roundCount) {
+  const sourceRounds = Array.isArray(scores?.rounds) ? scores.rounds : [];
+  return {
+    rounds: Array.from({ length: roundCount }, (_, r) => {
+      const src = sourceRounds[r] || {};
+      const outRound = { teams: {}, players: {}, groups: {} };
+      for (const [teamId, entry] of Object.entries(src?.teams || {})) {
+        outRound.teams[teamId] = { holes: safeHoleArray(entry?.holes || entry) };
+      }
+      for (const [playerId, entry] of Object.entries(src?.players || {})) {
+        outRound.players[playerId] = { holes: safeHoleArray(entry?.holes || entry) };
+      }
+      for (const [groupId, entry] of Object.entries(src?.groups || {})) {
+        outRound.groups[groupId] = { holes: safeHoleArray(entry?.holes || entry) };
+      }
+      return outRound;
+    })
+  };
+}
+
+function scoreCellToNumber(raw, label) {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1 || n > 20) {
+    throw new Error(`${label} must be an integer 1-20.`);
+  }
+  return n;
+}
+
+function csvEscape(value) {
+  const s = String(value ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function parseCsv(text) {
+  const input = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (input[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (ch === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += ch;
+    }
+  }
+  row.push(cell);
+  rows.push(row);
+
+  if (inQuotes) throw new Error("Invalid CSV format (unclosed quote).");
+  return rows.filter((r) => r.some((c) => String(c || "").trim() !== ""));
+}
+
+function parseTwoManGroupId(groupId) {
+  const raw = String(groupId || "").trim();
+  const idx = raw.indexOf("::");
+  if (idx < 0) return { teamId: "", group: "" };
+  return { teamId: raw.slice(0, idx), group: raw.slice(idx + 2) };
+}
+
+function twoManGroupId(teamId, groupLabel) {
+  const team = String(teamId || "").trim();
+  const label = normalizeGroupLabel(groupLabel);
+  if (!team || !label) return "";
+  return `${team}::${label}`;
+}
+
+function groupForPlayerRound(player, roundIndex) {
+  const idx = Math.max(0, Math.floor(Number(roundIndex) || 0));
+  if (Array.isArray(player?.groups)) {
+    const v = normalizeGroupLabel(player.groups[idx]);
+    if (v) return v;
+  }
+  if (idx === 0) return normalizeGroupLabel(player?.group);
+  return "";
+}
+
+function buildScoreTargetsForRound(roundIndex, round, scoresRound, players, teams) {
+  const targetType = scoreTargetTypeForRound(round);
+  const teamNameById = {};
+  (teams || []).forEach((t) => {
+    if (!t?.teamId) return;
+    teamNameById[t.teamId] = t.teamName || t.teamId;
+  });
+
+  if (targetType === "team") {
+    const targets = (teams || [])
+      .map((t) => ({
+        targetType,
+        id: String(t.teamId || "").trim(),
+        label: t.teamName || t.teamId || "",
+        detail: "",
+        teamId: String(t.teamId || "").trim(),
+        holes: safeHoleArray(scoresRound?.teams?.[t.teamId]?.holes)
+      }))
+      .filter((t) => !!t.id)
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return { targetType, targets };
+  }
+
+  if (targetType === "group") {
+    const byGroupId = new Map();
+    (players || []).forEach((p) => {
+      const teamId = String(p?.teamId || "").trim();
+      const group = groupForPlayerRound(p, roundIndex);
+      const gid = twoManGroupId(teamId, group);
+      if (!gid) return;
+      if (!byGroupId.has(gid)) {
+        byGroupId.set(gid, {
+          targetType,
+          id: gid,
+          label: `${teamNameById[teamId] || teamId || "Team"} • Group ${group}`,
+          detail: "",
+          teamId,
+          names: [],
+          holes: safeHoleArray(scoresRound?.groups?.[gid]?.holes)
+        });
+      }
+      const entry = byGroupId.get(gid);
+      if (p?.name) entry.names.push(String(p.name));
+    });
+
+    for (const gid of Object.keys(scoresRound?.groups || {})) {
+      if (byGroupId.has(gid)) continue;
+      const parsed = parseTwoManGroupId(gid);
+      byGroupId.set(gid, {
+        targetType,
+        id: gid,
+        label: `${teamNameById[parsed.teamId] || parsed.teamId || "Team"} • Group ${parsed.group || "?"}`,
+        detail: "",
+        teamId: parsed.teamId,
+        names: [],
+        holes: safeHoleArray(scoresRound?.groups?.[gid]?.holes)
+      });
+    }
+
+    const targets = [...byGroupId.values()]
+      .map((t) => ({ ...t, detail: t.names.length ? t.names.join(", ") : "" }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return { targetType, targets };
+  }
+
+  const targets = (players || [])
+    .map((p) => {
+      const teamId = String(p?.teamId || "").trim();
+      const teamName = teamNameById[teamId] || "";
+      const playerId = String(p?.playerId || "").trim();
+      return {
+        targetType,
+        id: playerId,
+        label: p?.name || playerId,
+        detail: teamName,
+        teamId,
+        holes: safeHoleArray(scoresRound?.players?.[playerId]?.holes)
+      };
+    })
+    .filter((t) => !!t.id)
+    .sort((a, b) => {
+      const tc = String(a.detail || "").localeCompare(String(b.detail || ""));
+      if (tc !== 0) return tc;
+      return String(a.label || "").localeCompare(String(b.label || ""));
+    });
+  return { targetType, targets };
+}
+
+function renderScoresEditor() {
+  if (!scoresEditorWrap) return;
+  scoresEditorWrap.innerHTML = "";
+  scoreInputIndex = new Map();
+  scoreRowMetaByKey = new Map();
+
+  const roundDraft = collectRoundsSafe();
+  const rounds = roundDraft.length ? roundDraft : (Array.isArray(currentData?.rounds) ? currentData.rounds : []);
+  const playerDraft = collectPlayersSafe();
+  const players = playerDraft.length ? playerDraft : (Array.isArray(currentData?.players) ? currentData.players : []);
+  const teams = Array.isArray(currentData?.teams) ? currentData.teams : [];
+  const scores = normalizeScoresForUi(currentData?.scores, rounds.length);
+
+  if (!rounds.length) {
+    scoresEditorWrap.innerHTML = `<div class="small">No rounds available.</div>`;
+    return;
+  }
+
+  rounds.forEach((round, roundIndex) => {
+    const scoreRound = scores.rounds[roundIndex] || { teams: {}, players: {}, groups: {} };
+    const { targetType, targets } = buildScoreTargetsForRound(roundIndex, round, scoreRound, players, teams);
+
+    const section = document.createElement("div");
+    section.className = "card";
+    section.style.margin = "0 0 10px 0";
+    section.style.boxShadow = "none";
+    section.innerHTML = `
+      <div style="margin-bottom:8px;">
+        <b>Round ${roundIndex + 1}: ${escapeHtml(round?.name || `Round ${roundIndex + 1}`)}</b>
+        <span class="small">(${escapeHtml(scoreRoundFormat(round))} • ${escapeHtml(targetType)})</span>
+      </div>
+    `;
+
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "bulk-table-wrap";
+    const table = document.createElement("table");
+    table.className = "table bulk-table";
+
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    headerRow.innerHTML =
+      `<th class="left">${targetType === "team" ? "Team" : targetType === "group" ? "Group" : "Player"}</th>` +
+      Array.from({ length: 18 }, (_, i) => `<th>${i + 1}</th>`).join("");
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    targets.forEach((target) => {
+      const tr = document.createElement("tr");
+      const nameCell = document.createElement("td");
+      nameCell.className = "left";
+      nameCell.innerHTML = `<b>${escapeHtml(target.label || target.id)}</b>${target.detail ? `<div class="small">${escapeHtml(target.detail)}</div>` : ""}`;
+      tr.appendChild(nameCell);
+
+      const key = scoreKey(roundIndex, targetType, target.id);
+      const rowInputs = Array(18).fill(null);
+      for (let h = 0; h < 18; h++) {
+        const td = document.createElement("td");
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.min = "1";
+        inp.max = "20";
+        inp.step = "1";
+        inp.className = "hole-input bulk-hole-input";
+        inp.style.width = "44px";
+        const v = target.holes?.[h];
+        inp.value = v == null ? "" : String(v);
+        inp.dataset.scoreRound = String(roundIndex);
+        inp.dataset.scoreType = targetType;
+        inp.dataset.scoreTarget = target.id;
+        inp.dataset.scoreHole = String(h);
+        td.appendChild(inp);
+        tr.appendChild(td);
+        rowInputs[h] = inp;
+      }
+
+      scoreInputIndex.set(key, rowInputs);
+      scoreRowMetaByKey.set(key, {
+        roundIndex,
+        roundName: round?.name || `Round ${roundIndex + 1}`,
+        format: scoreRoundFormat(round),
+        targetType,
+        targetId: target.id,
+        targetName: target.label || target.id
+      });
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    section.appendChild(tableWrap);
+    scoresEditorWrap.appendChild(section);
+  });
+}
+
+function collectScoresForSave() {
+  const roundDraft = collectRoundsSafe();
+  const rounds = roundDraft.length ? roundDraft : (Array.isArray(currentData?.rounds) ? currentData.rounds : []);
+  const out = {
+    rounds: Array.from({ length: rounds.length }, () => ({ teams: {}, players: {}, groups: {} }))
+  };
+
+  for (const [key, inputs] of scoreInputIndex.entries()) {
+    const meta = scoreRowMetaByKey.get(key);
+    if (!meta) continue;
+    const holes = inputs.map((inp, idx) =>
+      scoreCellToNumber(inp?.value, `Round ${meta.roundIndex + 1} ${meta.targetType} ${meta.targetName} hole ${idx + 1}`)
+    );
+    if (!holes.some((v) => v != null)) continue;
+    const bucket = scoreBucketKey(meta.targetType);
+    out.rounds[meta.roundIndex][bucket][meta.targetId] = { holes };
+  }
+  return out;
+}
+
+function buildScoresCsv() {
+  const rows = [["roundIndex", "roundName", "format", "targetType", "targetId", "targetName", ...Array.from({ length: 18 }, (_, i) => `h${i + 1}`)]];
+  const keys = [...scoreRowMetaByKey.keys()].sort((a, b) => {
+    const ma = scoreRowMetaByKey.get(a);
+    const mb = scoreRowMetaByKey.get(b);
+    if (!ma || !mb) return a.localeCompare(b);
+    if (ma.roundIndex !== mb.roundIndex) return ma.roundIndex - mb.roundIndex;
+    return String(ma.targetName || "").localeCompare(String(mb.targetName || ""));
+  });
+
+  for (const key of keys) {
+    const meta = scoreRowMetaByKey.get(key);
+    const inputs = scoreInputIndex.get(key) || [];
+    if (!meta) continue;
+    rows.push([
+      meta.roundIndex,
+      meta.roundName,
+      meta.format,
+      meta.targetType,
+      meta.targetId,
+      meta.targetName,
+      ...Array.from({ length: 18 }, (_, i) => String(inputs[i]?.value || "").trim())
+    ]);
+  }
+
+  return rows.map((line) => line.map(csvEscape).join(",")).join("\n");
+}
+
+function applyScoresCsvToEditor(csvText) {
+  const normalized = normalizeDelimitedText(csvText);
+  const rows = parseCsv(normalized);
+  if (!rows.length) throw new Error("Scores CSV is empty.");
+
+  const header = rows[0].map((h) => String(h || "").trim().toLowerCase());
+  const idx = {};
+  header.forEach((h, i) => { idx[h] = i; });
+
+  const roundIdxCol = idx.roundindex ?? idx.round ?? idx.r;
+  const targetTypeCol = idx.targettype;
+  const targetIdCol = idx.targetid;
+  if (roundIdxCol == null || targetTypeCol == null || targetIdCol == null) {
+    throw new Error("Scores CSV needs columns: roundIndex,targetType,targetId,h1..h18");
+  }
+
+  let matched = 0;
+  let skipped = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const roundIndex = Number(String(row[roundIdxCol] || "").trim());
+    const targetType = normalizeScoreTargetType(row[targetTypeCol]);
+    const targetId = String(row[targetIdCol] || "").trim();
+    if (!Number.isInteger(roundIndex) || roundIndex < 0 || !targetType || !targetId) {
+      skipped += 1;
+      continue;
+    }
+
+    const key = scoreKey(roundIndex, targetType, targetId);
+    const inputs = scoreInputIndex.get(key);
+    if (!inputs) {
+      skipped += 1;
+      continue;
+    }
+
+    for (let h = 0; h < 18; h++) {
+      const hCol = idx[`h${h + 1}`] ?? idx[`hole${h + 1}`];
+      if (hCol == null) continue;
+      const val = String(row[hCol] ?? "").trim();
+      if (!val) {
+        inputs[h].value = "";
+        continue;
+      }
+      const n = scoreCellToNumber(val, `CSV row ${r + 1} h${h + 1}`);
+      inputs[h].value = n == null ? "" : String(n);
+    }
+
+    matched += 1;
+  }
+
+  return { matched, skipped };
 }
 
 function makeCourseInputCell(hole, value, min, max) {
@@ -284,6 +741,7 @@ function renderRounds(rounds) {
     node.addEventListener("change", () => {
       const nextCount = Math.max(1, collectRoundsSafe().length || 1);
       renderPlayers(collectPlayersSafe(), nextCount);
+      renderScoresEditor();
     });
   });
 }
@@ -346,6 +804,12 @@ function renderPlayers(players, roundCount = 1) {
       <td><input data-field="remove" type="checkbox" /></td>
     `;
     playerRows.appendChild(tr);
+  });
+
+  playerRows.querySelectorAll("input").forEach((node) => {
+    node.addEventListener("change", () => {
+      renderScoresEditor();
+    });
   });
 }
 
@@ -447,6 +911,7 @@ function autoAssignGroups() {
       }
     });
   });
+  renderScoresEditor();
 }
 
 function regenerateCodes() {
@@ -475,6 +940,7 @@ function addRoundRow() {
   });
   renderRounds(rounds);
   renderPlayers(collectPlayersSafe(), rounds.length || 1);
+  renderScoresEditor();
 }
 
 function addPlayerRow() {
@@ -495,6 +961,7 @@ function addPlayerRow() {
     remove: false
   });
   renderPlayers(players, teeCount);
+  renderScoresEditor();
 }
 
 function collectRoundsSafe() {
@@ -533,6 +1000,9 @@ function renderPage(data) {
   const rounds = data?.rounds || [];
   renderRounds(rounds);
   renderPlayers(data?.players || [], rounds.length || 1);
+  renderScoresEditor();
+  if (scoresStatus) scoresStatus.textContent = "";
+  loadedScoresCsvText = "";
 
   tidValue.textContent = currentTid;
   scoreboardLink.textContent = scoreboardUrlForTid(currentTid);
@@ -592,7 +1062,8 @@ async function saveTournament() {
       },
       course: collectCourse(),
       rounds: collectRounds(),
-      players: collectPlayers()
+      players: collectPlayers(),
+      scores: collectScoresForSave()
     };
     await api(`/tournaments/${encodeURIComponent(currentTid)}/admin`, {
       method: "POST",
@@ -705,6 +1176,64 @@ function loadSelectedImportFile() {
     });
 }
 
+function loadSelectedScoresCsvFile() {
+  if (!scoresStatus) return;
+  scoresStatus.textContent = "";
+  const file = scoresCsvFileInput?.files?.[0];
+  if (!file) {
+    scoresStatus.textContent = "Choose a scores CSV/TSV file first.";
+    return;
+  }
+  file
+    .text()
+    .then((text) => {
+      loadedScoresCsvText = String(text || "").trim();
+      if (!loadedScoresCsvText) {
+        scoresStatus.textContent = `${file.name} is empty.`;
+        return;
+      }
+      scoresStatus.textContent = `Loaded ${file.name}.`;
+    })
+    .catch((e) => {
+      console.error(e);
+      scoresStatus.textContent = "Failed to read scores file.";
+    });
+}
+
+function downloadScoresCsv() {
+  if (!currentTid) return;
+  try {
+    const csv = buildScoresCsv();
+    downloadText(`scores_${currentTid}.csv`, csv);
+    if (scoresStatus) scoresStatus.textContent = "Scores CSV downloaded.";
+  } catch (e) {
+    console.error(e);
+    if (scoresStatus) scoresStatus.textContent = e.message || String(e);
+  }
+}
+
+async function uploadScoresCsvToTable() {
+  if (!currentTid) return;
+  if (!scoresStatus) return;
+  scoresStatus.textContent = "Uploading…";
+  try {
+    let text = String(loadedScoresCsvText || "").trim();
+    if (!text && scoresCsvFileInput?.files?.[0]) {
+      text = String(await scoresCsvFileInput.files[0].text() || "").trim();
+      loadedScoresCsvText = text;
+    }
+    if (!text) {
+      scoresStatus.textContent = "Load a scores CSV/TSV file first.";
+      return;
+    }
+    const { matched, skipped } = applyScoresCsvToEditor(text);
+    scoresStatus.textContent = `Loaded scores into table (${matched} matched row${matched === 1 ? "" : "s"}, ${skipped} skipped). Save changes to persist.`;
+  } catch (e) {
+    console.error(e);
+    scoresStatus.textContent = e.message || String(e);
+  }
+}
+
 rebuildCourseRows();
 if (par4Btn) {
   par4Btn.addEventListener("click", () => {
@@ -739,6 +1268,9 @@ downloadCodesBtn.addEventListener("click", downloadCodesCsv);
 saveBtn.addEventListener("click", saveTournament);
 importBtn.addEventListener("click", importPlayers);
 if (loadCsvFileBtn) loadCsvFileBtn.addEventListener("click", loadSelectedImportFile);
+if (loadScoresCsvFileBtn) loadScoresCsvFileBtn.addEventListener("click", loadSelectedScoresCsvFile);
+if (uploadScoresCsvBtn) uploadScoresCsvBtn.addEventListener("click", uploadScoresCsvToTable);
+if (downloadScoresCsvBtn) downloadScoresCsvBtn.addEventListener("click", downloadScoresCsv);
 
 const tidFromQuery = String(qs("t") || "").trim();
 const rememberedTid = getRememberedTournamentId();
