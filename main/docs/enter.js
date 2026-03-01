@@ -2033,7 +2033,7 @@ async function main() {
         renderBulkTable();
         restoreActiveInputState(activeInputState);
       } catch { }
-    }, 10_000);
+    }, 30_000);
 
     // keep the timer from being GC'd (optional)
     roundCard._refreshTimer = refreshTimer;
