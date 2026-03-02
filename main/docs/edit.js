@@ -59,6 +59,8 @@ let currentData = null;
 let loadedScoresCsvText = "";
 let scoreInputIndex = new Map();
 let scoreRowMetaByKey = new Map();
+let tournamentCourses = [];
+let savedCourses = [];
 
 const ROUND_FORMATS = [
   { value: "scramble", label: "scramble" },
@@ -683,6 +685,7 @@ function fillCourseRows(pars, strokeIndex) {
 function normalizeCourseForUi(course) {
   const defaultPars = Array(18).fill(4);
   const defaultSi = Array.from({ length: 18 }, (_, i) => i + 1);
+  const courseId = String(course?.courseId || course?.id || "").trim();
   const pars = Array.isArray(course?.pars) && course.pars.length === 18
     ? course.pars.map((v) => Number(v) || 4)
     : defaultPars;
@@ -691,10 +694,88 @@ function normalizeCourseForUi(course) {
     : defaultSi;
   const siErr = validateStrokeIndex(strokeIndex);
   return {
+    courseId,
     name: String(course?.name || "").trim(),
     pars,
     strokeIndex: siErr ? defaultSi : strokeIndex
   };
+}
+
+function extractCourseList(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.courses)) return payload.courses;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+}
+
+function isValidCourseShape(course) {
+  return Array.isArray(course?.pars)
+    && course.pars.length === 18
+    && Array.isArray(course?.strokeIndex)
+    && course.strokeIndex.length === 18;
+}
+
+function normalizeTournamentCourses(data) {
+  const fromList = Array.isArray(data?.courses) ? data.courses : [];
+  const normalizedList = fromList.map((course) => normalizeCourseForUi(course)).filter(isValidCourseShape);
+  if (normalizedList.length) return normalizedList;
+  return [normalizeCourseForUi(data?.course || null)];
+}
+
+function roundCourseOptionsHtml(selectedRef = "tournament:0") {
+  const selected = String(selectedRef || "tournament:0");
+  const out = [];
+  tournamentCourses.forEach((course, idx) => {
+    const ref = `tournament:${idx}`;
+    const label = course?.name || `Course ${idx + 1}`;
+    out.push(`<option value="${ref}" ${selected === ref ? "selected" : ""}>Tournament: ${escapeHtml(label)}</option>`);
+  });
+  savedCourses.forEach((course) => {
+    const id = String(course?.courseId || "").trim();
+    if (!id) return;
+    const ref = `saved:${id}`;
+    const label = course?.name || id;
+    out.push(`<option value="${ref}" ${selected === ref ? "selected" : ""}>Saved: ${escapeHtml(label)}</option>`);
+  });
+  return out.join("");
+}
+
+function refreshRoundCourseSelects() {
+  roundRows.querySelectorAll("select[data-field='course']").forEach((select) => {
+    const prev = String(select.value || "tournament:0");
+    select.innerHTML = roundCourseOptionsHtml(prev);
+    const hasPrev = [...select.options].some((opt) => opt.value === prev);
+    select.value = hasPrev ? prev : "tournament:0";
+  });
+}
+
+async function loadSavedCourses() {
+  try {
+    const payload = await api("/courses");
+    savedCourses = extractCourseList(payload)
+      .map((course) => normalizeCourseForUi(course))
+      .filter((course) => !!String(course?.courseId || "").trim());
+    refreshRoundCourseSelects();
+  } catch (e) {
+    console.error("Failed to load saved courses:", e);
+  }
+}
+
+async function ensureSavedCourseDetails(courseId) {
+  const id = String(courseId || "").trim();
+  if (!id) return null;
+  const fromList = savedCourses.find((course) => String(course?.courseId || "").trim() === id);
+  if (isValidCourseShape(fromList)) return normalizeCourseForUi(fromList);
+
+  const payload = await api(`/courses/${encodeURIComponent(id)}`);
+  const loaded = normalizeCourseForUi(payload?.course || payload);
+  if (!isValidCourseShape(loaded)) {
+    throw new Error(`Saved course ${id} is missing pars/strokeIndex.`);
+  }
+  const existingIdx = savedCourses.findIndex((course) => String(course?.courseId || "").trim() === id);
+  if (existingIdx >= 0) savedCourses[existingIdx] = loaded;
+  else savedCourses.push(loaded);
+  return loaded;
 }
 
 function collectCourse() {

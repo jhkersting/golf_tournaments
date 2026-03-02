@@ -1460,6 +1460,7 @@ th.dots {
   background: color-mix(in srgb, var(--surface-strong) 92%, var(--bg));
   padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
   backdrop-filter: blur(7px);
+  transform-origin: left top;
 }
 
 .hole-map-footer-point-head,

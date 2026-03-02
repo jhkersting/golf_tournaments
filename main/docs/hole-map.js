@@ -26,6 +26,7 @@ const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 const MAP_PROXIMITY_ZOOM_MAX_BOOST = 0.45;
 const TAP_PREVIEW_DURATION_MS = 7000;
+const TAP_DOT_MOBILE_RADIUS_MULTIPLIER = 1.45;
 
 const state = {
   courseFeatures: [],
@@ -66,6 +67,7 @@ const els = {
   yardageDetail: document.getElementById("yardage_detail"),
   holeCanvas: document.getElementById("hole_canvas"),
   holeEmpty: document.getElementById("hole_empty"),
+  holeFooter: document.querySelector(".hole-map-footer"),
 };
 
 function parseHoleRef(value) {
@@ -665,6 +667,34 @@ function clearTapPreviewTimer() {
   state.tapPreviewTimerId = null;
 }
 
+function syncFooterViewportLock() {
+  const footer = els.holeFooter;
+  if (!footer) return;
+
+  const vv = window.visualViewport;
+  if (!vv) {
+    footer.style.left = "";
+    footer.style.top = "";
+    footer.style.bottom = "";
+    footer.style.width = "";
+    footer.style.transform = "";
+    return;
+  }
+
+  const scale = Math.max(1, Number(vv.scale) || 1);
+  const invScale = 1 / scale;
+  const lockedWidth = vv.width * scale;
+  const scaledFooterHeight = footer.offsetHeight * invScale;
+  const top = vv.offsetTop + vv.height - scaledFooterHeight;
+
+  footer.style.left = `${vv.offsetLeft}px`;
+  footer.style.top = `${Math.max(0, top)}px`;
+  footer.style.bottom = "auto";
+  footer.style.width = `${lockedWidth}px`;
+  footer.style.transformOrigin = "left top";
+  footer.style.transform = `scale(${invScale})`;
+}
+
 function getCanvasConfig() {
   if (window.matchMedia("(max-width: 560px)").matches) {
     return { width: 1200, height: 2200, margin: 60 };
@@ -1228,14 +1258,19 @@ async function renderCurrentHole() {
 
   if (Array.isArray(state.tapPoint)) {
     const [tx, ty] = project(state.tapPoint);
+    const tapDotRadius = window.matchMedia("(max-width: 560px)").matches
+      ? 7 * TAP_DOT_MOBILE_RADIUS_MULTIPLIER
+      : 7;
     ctx.beginPath();
-    ctx.arc(tx, ty, 7, 0, Math.PI * 2);
+    ctx.arc(tx, ty, tapDotRadius, 0, Math.PI * 2);
     ctx.fillStyle = darkTheme ? "#2a2d31" : "#e9ecf0";
     ctx.fill();
     ctx.strokeStyle = strokeDefault;
     ctx.lineWidth = 2.4;
     ctx.stroke();
   }
+
+  syncFooterViewportLock();
 }
 
 function setHole(holeNumber) {
@@ -1315,7 +1350,13 @@ function bindEvents() {
 
   window.addEventListener("resize", () => {
     renderCurrentHole();
+    syncFooterViewportLock();
   });
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", syncFooterViewportLock);
+    window.visualViewport.addEventListener("scroll", syncFooterViewportLock);
+  }
 }
 
 async function fetchJson(path) {
@@ -1404,6 +1445,7 @@ async function init() {
   try {
     await loadData();
     renderCurrentHole();
+    syncFooterViewportLock();
     await maybeAutoStartTracking();
   } catch (error) {
     console.error(error);

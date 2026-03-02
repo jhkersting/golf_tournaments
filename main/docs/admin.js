@@ -30,6 +30,66 @@ document.getElementById("siReset").onclick = () => { for (let h=1;h<=18;h++) siR
 
 let savedCourses = [];
 let selectedCourseId = "";
+const PRIMARY_COURSE_REF = "primary";
+
+function isValidCourseShape(course){
+  return Array.isArray(course?.pars)
+    && course.pars.length === 18
+    && Array.isArray(course?.strokeIndex)
+    && course.strokeIndex.length === 18;
+}
+
+function normalizeCourseForTournament(course){
+  const c = normalizeCourse(course);
+  if (!c || !isValidCourseShape(c)) return null;
+  return {
+    ...(c.name ? { name: c.name } : {}),
+    pars: c.pars.map((v) => Number(v) || 0),
+    strokeIndex: c.strokeIndex.map((v) => Number(v) || 0)
+  };
+}
+
+function roundCourseOptionsHtml(selectedRef = PRIMARY_COURSE_REF){
+  const selected = String(selectedRef || PRIMARY_COURSE_REF);
+  const options = [
+    `<option value="${PRIMARY_COURSE_REF}" ${selected === PRIMARY_COURSE_REF ? "selected" : ""}>Primary course setup</option>`
+  ];
+  for (const c of savedCourses) {
+    const id = String(c.courseId || "").trim();
+    if (!id) continue;
+    const ref = `saved:${id}`;
+    const label = c.name || id;
+    options.push(`<option value="${ref}" ${selected === ref ? "selected" : ""}>Saved: ${label}</option>`);
+  }
+  return options.join("");
+}
+
+function refreshRoundCourseSelects(){
+  const selects = roundsEl.querySelectorAll("select[data-course-ref]");
+  selects.forEach((select) => {
+    const prev = String(select.value || PRIMARY_COURSE_REF);
+    select.innerHTML = roundCourseOptionsHtml(prev);
+    const exists = [...select.options].some((opt) => opt.value === prev);
+    select.value = exists ? prev : PRIMARY_COURSE_REF;
+  });
+}
+
+async function ensureSavedCourseDetails(courseId){
+  const id = String(courseId || "").trim();
+  if (!id) return null;
+  const fromList = savedCourses.find((c) => String(c?.courseId || "").trim() === id);
+  if (isValidCourseShape(fromList)) return normalizeCourseForTournament(fromList);
+
+  const payload = await api(`/courses/${encodeURIComponent(id)}`);
+  const loaded = normalizeCourse(payload?.course || payload);
+  if (!isValidCourseShape(loaded)) {
+    throw new Error(`Saved course ${id} is missing pars/strokeIndex.`);
+  }
+  const idx = savedCourses.findIndex((c) => String(c?.courseId || "").trim() === id);
+  if (idx >= 0) savedCourses[idx] = loaded;
+  else savedCourses.push(loaded);
+  return normalizeCourseForTournament(loaded);
+}
 
 function makeInputCell(kind, hole, value, min, max){
   const td = document.createElement("td");
@@ -155,6 +215,7 @@ async function loadCourses(){
       .map(normalizeCourse)
       .filter((c) => c && c.courseId);
     renderCourseOptions();
+    refreshRoundCourseSelects();
     courseStatus.textContent = `Loaded ${savedCourses.length} course${savedCourses.length === 1 ? "" : "s"}.`;
   } catch (e) {
     console.error(e);
@@ -259,6 +320,12 @@ function roundCard(){
         <label>Weight</label>
         <input data-weight type="number" step="0.01" placeholder="0.50" />
       </div>
+      <div class="col">
+        <label>Course for round</label>
+        <select data-course-ref>
+          ${roundCourseOptionsHtml(PRIMARY_COURSE_REF)}
+        </select>
+      </div>
     </div>
 
     <div class="row" style="margin-top:8px;" data-aggrow>
@@ -316,12 +383,14 @@ function getRounds(){
     const parsedWeight = rawWeight === "" ? null : Number(rawWeight);
     const weight = Number.isFinite(parsedWeight) && parsedWeight > 0 ? parsedWeight : null;
     const topX = Number(c.querySelector("[data-topx]")?.value || 4);
+    const courseRef = String(c.querySelector("[data-course-ref]")?.value || PRIMARY_COURSE_REF).trim();
 
     return {
       name: c.querySelector("[data-name]")?.value.trim() || "Round",
       format,
       useHandicap,
       weight,
+      courseRef: courseRef || PRIMARY_COURSE_REF,
       teamAggregation: {
         mode: "avg",
         topX: Math.max(1, Math.min(4, Math.floor(topX || 4)))
@@ -334,6 +403,51 @@ function getRounds(){
     ...r,
     weight: anyExplicitWeight ? (Number.isFinite(r.weight) && r.weight > 0 ? r.weight : 1) : 1
   }));
+}
+
+function collectPrimaryCourseForTournament(){
+  const courseName = document.getElementById("course_name").value.trim();
+  const pars = getPars();
+  const strokeIndex = getStrokeIndex();
+  const siErr = validateStrokeIndex(strokeIndex);
+  if (siErr) throw new Error(siErr);
+  return {
+    ...(courseName ? { name: courseName } : {}),
+    pars,
+    strokeIndex
+  };
+}
+
+async function resolveCoursesAndRounds(rounds, primaryCourse){
+  const courses = [primaryCourse];
+  const refToIndex = new Map([[PRIMARY_COURSE_REF, 0]]);
+  const roundOut = [];
+
+  for (const round of rounds) {
+    const ref = String(round?.courseRef || PRIMARY_COURSE_REF).trim() || PRIMARY_COURSE_REF;
+    let courseIndex = 0;
+    if (ref !== PRIMARY_COURSE_REF) {
+      const id = ref.startsWith("saved:") ? ref.slice("saved:".length).trim() : "";
+      if (!id) throw new Error(`Unknown course selection "${ref}".`);
+      const key = `saved:${id}`;
+      if (!refToIndex.has(key)) {
+        const detail = await ensureSavedCourseDetails(id);
+        if (!detail) throw new Error(`Saved course "${id}" was not found.`);
+        refToIndex.set(key, courses.length);
+        courses.push(detail);
+      }
+      courseIndex = refToIndex.get(key);
+    }
+    roundOut.push({
+      ...round,
+      courseIndex
+    });
+  }
+
+  return {
+    courses,
+    rounds: roundOut.map(({ courseRef, ...rest }) => rest)
+  };
 }
 
 function importOptions(){
@@ -367,15 +481,11 @@ createBtn.onclick = async () => {
   try{
     const name = document.getElementById("t_name").value.trim();
     const dates = document.getElementById("t_dates").value.trim();
-    const rounds = getRounds();
+    const roundDraft = getRounds();
     if (!name) throw new Error("Tournament name is required.");
-    if (!rounds.length) throw new Error("Add at least one round.");
-
-    const courseName = document.getElementById("course_name").value.trim();
-    const pars = getPars();
-    const si = getStrokeIndex();
-    const siErr = validateStrokeIndex(si);
-    if (siErr) throw new Error(siErr);
+    if (!roundDraft.length) throw new Error("Add at least one round.");
+    const primaryCourse = collectPrimaryCourseForTournament();
+    const { courses, rounds } = await resolveCoursesAndRounds(roundDraft, primaryCourse);
 
     createStatus.textContent = "Creating…";
     const out = await api("/tournaments", {
@@ -384,11 +494,8 @@ createBtn.onclick = async () => {
         name,
         dates,
         rounds,
-        course:{
-          ...(courseName ? { name: courseName } : {}),
-          pars,
-          strokeIndex: si
-        }
+        courses,
+        course: courses[0]
       }
     });
     const tid = out.tournamentId;

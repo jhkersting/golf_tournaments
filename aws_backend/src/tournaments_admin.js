@@ -92,6 +92,28 @@ function defaultCourse() {
   };
 }
 
+function normalizeRoundCourseIndex(value, courseCount) {
+  const n = Number(value);
+  const count = Math.max(1, Number(courseCount) || 1);
+  if (!Number.isInteger(n) || n < 0 || n >= count) return 0;
+  return n;
+}
+
+function normalizeCoursesForState(state) {
+  const fromArray = Array.isArray(state?.courses) ? state.courses : [];
+  const validFromArray = [];
+  for (const course of fromArray) {
+    if (validateCourse(course)) continue;
+    validFromArray.push(normalizeCourseForState(course));
+  }
+  if (validFromArray.length) return validFromArray;
+
+  const legacyErr = validateCourse(state?.course);
+  if (!legacyErr) return [normalizeCourseForState(state.course)];
+
+  return [defaultCourse()];
+}
+
 function normalizeGroup(group) {
   const g = String(group || "")
     .trim()
@@ -347,7 +369,7 @@ function applyAutoTwoManGroups(playersById, roundCount) {
   }
 }
 
-function normalizeRoundsOrThrow(roundsIn, existingRounds) {
+function normalizeRoundsOrThrow(roundsIn, existingRounds, courseCount = 1) {
   const raw = Array.isArray(roundsIn) ? roundsIn : existingRounds || [];
   if (!Array.isArray(raw) || raw.length === 0) {
     const err = new Error("At least one round is required.");
@@ -363,6 +385,7 @@ function normalizeRoundsOrThrow(roundsIn, existingRounds) {
       useHandicap:
         round?.useHandicap !== undefined ? !!round.useHandicap : !!existing?.useHandicap,
       weight: normalizeRoundWeight(round?.weight ?? existing?.weight),
+      courseIndex: normalizeRoundCourseIndex(round?.courseIndex ?? existing?.courseIndex, courseCount),
       teamAggregation: normalizeAgg(round?.teamAggregation || existing?.teamAggregation)
     };
   });
@@ -508,6 +531,7 @@ function toAdminPayload(state) {
   const teams = state?.teams || {};
   const players = state?.players || {};
   const roundCount = (state?.rounds || []).length;
+  const courses = normalizeCoursesForState(state);
 
   const teamRows = Object.keys(teams)
     .map((teamId) => ({
@@ -546,7 +570,8 @@ function toAdminPayload(state) {
       rounds: state?.rounds || []
     },
     rounds: state?.rounds || [],
-    course: state?.course || null,
+    course: courses[0] || null,
+    courses,
     scores: projectScoresForAdmin(state?.scores, roundCount),
     teams: teamRows,
     players: playerRows,
@@ -597,17 +622,37 @@ export async function handler(event) {
       current.players = current.players || {};
       requireTournamentEditCode(current, providedEditCode);
 
-      const currentCourseErr = validateCourse(current.course);
-      current.course = currentCourseErr ? defaultCourse() : normalizeCourseForState(current.course);
-      if (body?.course !== undefined) {
+      current.courses = normalizeCoursesForState(current);
+      current.course = current.courses[0];
+      if (body?.courses !== undefined) {
+        if (!Array.isArray(body.courses) || body.courses.length === 0) {
+          const err = new Error("At least one course is required.");
+          err.statusCode = 400;
+          throw err;
+        }
+        const normalized = [];
+        for (let idx = 0; idx < body.courses.length; idx++) {
+          const nextCourseErr = validateCourse(body.courses[idx]);
+          if (nextCourseErr) {
+            const err = new Error(`courses[${idx}]: ${nextCourseErr}`);
+            err.statusCode = 400;
+            throw err;
+          }
+          normalized.push(normalizeCourseForState(body.courses[idx]));
+        }
+        current.courses = normalized;
+      } else if (body?.course !== undefined) {
         const nextCourseErr = validateCourse(body.course);
         if (nextCourseErr) {
           const err = new Error(nextCourseErr);
           err.statusCode = 400;
           throw err;
         }
-        current.course = normalizeCourseForState(body.course);
+        const normalizedFirst = normalizeCourseForState(body.course);
+        const rest = current.courses.slice(1);
+        current.courses = [normalizedFirst, ...rest];
       }
+      current.course = current.courses[0];
 
       const previousCodes = new Set(
         Object.keys(current.codeIndex || {}).concat(
@@ -622,7 +667,7 @@ export async function handler(event) {
       current.tournament.name = name || current.tournament.name || "Tournament";
       current.tournament.dates = dates;
 
-      current.rounds = normalizeRoundsOrThrow(body?.rounds, current.rounds);
+      current.rounds = normalizeRoundsOrThrow(body?.rounds, current.rounds, current.courses.length);
 
       const nextTeams = {};
       for (const teamId of Object.keys(current.teams || {})) {
