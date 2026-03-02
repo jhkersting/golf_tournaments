@@ -1,0 +1,51 @@
+{
+  "courseSlug": "sherrillpark1",
+  "courseId": "bluegolf-sherrillpark1",
+  "name": "Sherrill Park Golf Course - Course #1",
+  "location": "Richardson, TX",
+  "sourceUrls": {
+    "overviewJson": "https://app.bluegolf.com/bluegolf/app/course/sherrillpark1/overview.json",
+    "detailedScorecard": "https://course.bluegolf.com/bluegolf/course/course/sherrillpark1/detailedscorecard.htm"
+  },
+  "pars": [
+    5,
+    4,
+    3,
+    4,
+    5,
+    3,
+    4,
+    4,
+    4,
+    4,
+    5,
+    4,
+    3,
+    5,
+    3,
+    4,
+    4,
+    4
+  ],
+  "strokeIndex": [
+    10,
+    2,
+    18,
+    14,
+    6,
+    16,
+    8,
+    4,
+    12,
+    5,
+    3,
+    11,
+    17,
+    9,
+    15,
+    13,
+    1,
+    7
+  ],
+  "fetchedAtUtc": "2026-03-02T17:09:42.397557+00:00"
+}

@@ -15,6 +15,12 @@ This folder stores scripts and output data for golf course and hole geodata that
 - fetches all queryable operational layers from an ArcGIS Web Map item
 - preserves full feature properties and geometry, including water layers when present
 
+`fetch_bluegolf_course_data.py`:
+- fetches BlueGolf `overview.json` to derive tee + green coordinates per hole
+- fetches BlueGolf `detailedscorecard.htm` and parses `Par` + `Hcp` rows
+- writes coordinate CSV/JSON/GeoJSON plus a backend-ready saved-course payload
+- optionally POSTs that payload to `POST /courses` so the course is saved in AWS backend catalog
+
 ## Usage
 
 From repo root:
@@ -22,6 +28,15 @@ From repo root:
 ```bash
 python3 golf_course_hole_geo_data/fetch_golf_course_holes.py \
   --course "Tenison Park Golf Course"
+```
+
+BlueGolf import + backend save:
+
+```bash
+python3 golf_course_hole_geo_data/fetch_bluegolf_course_data.py \
+  --course-slug sherrillpark1 \
+  --data-slug sherrill-park-golf-course-1 \
+  --save-course
 ```
 
 Example with stricter hole-only fetch:
@@ -61,3 +76,9 @@ Files:
 - `course_with_holes.geojson` (combined course + hole features)
 - `hole_index.json` (hole-number index when detectable from tags)
 - `metadata.json` (source + counts + fetch metadata)
+- `bluegolf_tee_green_coordinates.csv` (tee/green points by hole from BlueGolf overview)
+- `bluegolf_tee_green_coordinates.json` (same as CSV in JSON form)
+- `bluegolf_tee_green_points.geojson` (tee/green points as GeoJSON Features)
+- `bluegolf_course_data.json` (course info + pars/stroke index parsed from detailed scorecard)
+- `bluegolf_saved_course_payload.json` (payload for backend `POST /courses`)
+- `bluegolf_backend_save_response.json` (present when `--save-course` succeeds)

@@ -1,0 +1,1085 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.686978,
+          32.986424
+        ]
+      },
+      "properties": {
+        "hole": 1,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690388,
+          32.989185
+        ]
+      },
+      "properties": {
+        "hole": 1,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690473,
+          32.989303
+        ]
+      },
+      "properties": {
+        "hole": 1,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690546,
+          32.989422
+        ]
+      },
+      "properties": {
+        "hole": 1,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690439,
+          32.990032
+        ]
+      },
+      "properties": {
+        "hole": 2,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687895,
+          32.987896
+        ]
+      },
+      "properties": {
+        "hole": 2,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687799,
+          32.987876
+        ]
+      },
+      "properties": {
+        "hole": 2,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.68771,
+          32.987848
+        ]
+      },
+      "properties": {
+        "hole": 2,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687455,
+          32.988161
+        ]
+      },
+      "properties": {
+        "hole": 3,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.688743,
+          32.988937
+        ]
+      },
+      "properties": {
+        "hole": 3,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.688866,
+          32.989061
+        ]
+      },
+      "properties": {
+        "hole": 3,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.688961,
+          32.989169
+        ]
+      },
+      "properties": {
+        "hole": 3,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690143,
+          32.990092
+        ]
+      },
+      "properties": {
+        "hole": 4,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687016,
+          32.989786
+        ]
+      },
+      "properties": {
+        "hole": 4,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.686855,
+          32.989773
+        ]
+      },
+      "properties": {
+        "hole": 4,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.68673,
+          32.989762
+        ]
+      },
+      "properties": {
+        "hole": 4,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.686062,
+          32.989229
+        ]
+      },
+      "properties": {
+        "hole": 5,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687081,
+          32.993794
+        ]
+      },
+      "properties": {
+        "hole": 5,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687039,
+          32.993935
+        ]
+      },
+      "properties": {
+        "hole": 5,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687006,
+          32.994063
+        ]
+      },
+      "properties": {
+        "hole": 5,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687689,
+          32.994312
+        ]
+      },
+      "properties": {
+        "hole": 6,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.686195,
+          32.9949
+        ]
+      },
+      "properties": {
+        "hole": 6,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.686043,
+          32.994974
+        ]
+      },
+      "properties": {
+        "hole": 6,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685914,
+          32.995036
+        ]
+      },
+      "properties": {
+        "hole": 6,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685526,
+          32.995768
+        ]
+      },
+      "properties": {
+        "hole": 7,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685376,
+          32.992354
+        ]
+      },
+      "properties": {
+        "hole": 7,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.68539,
+          32.992244
+        ]
+      },
+      "properties": {
+        "hole": 7,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685412,
+          32.99214
+        ]
+      },
+      "properties": {
+        "hole": 7,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685984,
+          32.992856
+        ]
+      },
+      "properties": {
+        "hole": 8,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685527,
+          32.989363
+        ]
+      },
+      "properties": {
+        "hole": 8,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685535,
+          32.989221
+        ]
+      },
+      "properties": {
+        "hole": 8,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685556,
+          32.989093
+        ]
+      },
+      "properties": {
+        "hole": 8,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685864,
+          32.989052
+        ]
+      },
+      "properties": {
+        "hole": 9,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685292,
+          32.986184
+        ]
+      },
+      "properties": {
+        "hole": 9,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685284,
+          32.986049
+        ]
+      },
+      "properties": {
+        "hole": 9,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.685293,
+          32.985904
+        ]
+      },
+      "properties": {
+        "hole": 9,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.68711,
+          32.985444
+        ]
+      },
+      "properties": {
+        "hole": 10,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690063,
+          32.986822
+        ]
+      },
+      "properties": {
+        "hole": 10,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690152,
+          32.986939
+        ]
+      },
+      "properties": {
+        "hole": 10,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690232,
+          32.98704
+        ]
+      },
+      "properties": {
+        "hole": 10,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690234,
+          32.986183
+        ]
+      },
+      "properties": {
+        "hole": 11,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.694282,
+          32.98862
+        ]
+      },
+      "properties": {
+        "hole": 11,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.694357,
+          32.988742
+        ]
+      },
+      "properties": {
+        "hole": 11,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.694426,
+          32.988857
+        ]
+      },
+      "properties": {
+        "hole": 11,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.694526,
+          32.989371
+        ]
+      },
+      "properties": {
+        "hole": 12,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.69135,
+          32.987581
+        ]
+      },
+      "properties": {
+        "hole": 12,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691245,
+          32.987487
+        ]
+      },
+      "properties": {
+        "hole": 12,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691154,
+          32.987403
+        ]
+      },
+      "properties": {
+        "hole": 12,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691361,
+          32.988175
+        ]
+      },
+      "properties": {
+        "hole": 13,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.692455,
+          32.988884
+        ]
+      },
+      "properties": {
+        "hole": 13,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.692579,
+          32.988996
+        ]
+      },
+      "properties": {
+        "hole": 13,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.692693,
+          32.989095
+        ]
+      },
+      "properties": {
+        "hole": 13,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.692018,
+          32.989036
+        ]
+      },
+      "properties": {
+        "hole": 14,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691615,
+          32.993831
+        ]
+      },
+      "properties": {
+        "hole": 14,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691666,
+          32.993981
+        ]
+      },
+      "properties": {
+        "hole": 14,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691702,
+          32.994118
+        ]
+      },
+      "properties": {
+        "hole": 14,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691136,
+          32.993811
+        ]
+      },
+      "properties": {
+        "hole": 15,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690033,
+          32.995057
+        ]
+      },
+      "properties": {
+        "hole": 15,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.68999,
+          32.99516
+        ]
+      },
+      "properties": {
+        "hole": 15,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.689934,
+          32.995227
+        ]
+      },
+      "properties": {
+        "hole": 15,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.689639,
+          32.994577
+        ]
+      },
+      "properties": {
+        "hole": 16,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691137,
+          32.991606
+        ]
+      },
+      "properties": {
+        "hole": 16,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691161,
+          32.991519
+        ]
+      },
+      "properties": {
+        "hole": 16,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.691191,
+          32.991436
+        ]
+      },
+      "properties": {
+        "hole": 16,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690561,
+          32.991742
+        ]
+      },
+      "properties": {
+        "hole": 17,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690778,
+          32.988399
+        ]
+      },
+      "properties": {
+        "hole": 17,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690741,
+          32.988283
+        ]
+      },
+      "properties": {
+        "hole": 17,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690701,
+          32.988157
+        ]
+      },
+      "properties": {
+        "hole": 17,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.690698,
+          32.987842
+        ]
+      },
+      "properties": {
+        "hole": 18,
+        "point_type": "tee",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.68745,
+          32.986159
+        ]
+      },
+      "properties": {
+        "hole": 18,
+        "point_type": "green_front",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687317,
+          32.986084
+        ]
+      },
+      "properties": {
+        "hole": 18,
+        "point_type": "green_center",
+        "source": "bluegolf_overview_json"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -96.687217,
+          32.986016
+        ]
+      },
+      "properties": {
+        "hole": 18,
+        "point_type": "green_back",
+        "source": "bluegolf_overview_json"
+      }
+    }
+  ]
+}

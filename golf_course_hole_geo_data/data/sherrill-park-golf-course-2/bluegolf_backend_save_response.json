@@ -1,0 +1,49 @@
+{
+  "ok": true,
+  "course": {
+    "courseId": "bluegolf-sherrillpark2",
+    "name": "Sherrill Park Golf Course - Course #2",
+    "pars": [
+      4,
+      4,
+      4,
+      3,
+      5,
+      4,
+      4,
+      3,
+      4,
+      4,
+      4,
+      3,
+      4,
+      4,
+      5,
+      3,
+      4,
+      4
+    ],
+    "strokeIndex": [
+      8,
+      4,
+      6,
+      17,
+      2,
+      13,
+      9,
+      18,
+      7,
+      11,
+      3,
+      14,
+      10,
+      12,
+      1,
+      15,
+      16,
+      5
+    ],
+    "createdAt": 1772471424537,
+    "updatedAt": 1772471424537
+  }
+}

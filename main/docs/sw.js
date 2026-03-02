@@ -1,4 +1,4 @@
-const SW_VERSION = "2026-03-02-v3";
+const SW_VERSION = "2026-03-02-v5";
 const STATIC_CACHE = `golf-static-${SW_VERSION}`;
 const DATA_CACHE = `golf-data-${SW_VERSION}`;
 const SCOPE_PATH = new URL(self.registration.scope).pathname;
@@ -11,6 +11,7 @@ const STATIC_ASSETS = [
   "./enter.html",
   "./scoreboard.html",
   "./hole-map.html",
+  "./hole-map-simplified.html",
   "./styles.css",
   "./theme.js",
   "./nav.js",
@@ -21,6 +22,7 @@ const STATIC_ASSETS = [
   "./enter.js",
   "./scoreboard.js",
   "./hole-map.js",
+  "./hole-map-simplified.js",
   "./manifest.webmanifest",
   "./icons/icon.svg",
 ];
@@ -79,7 +81,15 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(STATIC_CACHE)
-      .then((cache) => cache.addAll(STATIC_ASSETS))
+      .then(async (cache) => {
+        const results = await Promise.allSettled(
+          STATIC_ASSETS.map((asset) => cache.add(asset))
+        );
+        const failed = results.filter((result) => result.status === "rejected");
+        if (failed.length) {
+          console.warn("SW install cache misses:", failed.length);
+        }
+      })
       .then(() => self.skipWaiting())
   );
 });
