@@ -3,7 +3,17 @@ const DATA_BASE_CANDIDATES = [
   "/golf_tournaments/golf_course_hole_geo_data/data/sherrill-park-golf-course-1",
   "/golf_course_hole_geo_data/data/sherrill-park-golf-course-1",
 ];
-const SVG_NS = "http://www.w3.org/2000/svg";
+const STREET_TILE_LIGHT_URL_TEMPLATE = "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png";
+const STREET_TILE_DARK_URL_TEMPLATE = "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
+const STREET_TILE_SUBDOMAINS = ["a", "b", "c", "d"];
+const SATELLITE_TILE_URL_TEMPLATE =
+  "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const USE_SATELLITE_BASEMAP = false;
+const TILE_SIZE = 256;
+const WEB_MERCATOR_MAX_LAT = 85.05112878;
+const WEB_MERCATOR_RADIUS = 6378137;
+const WEB_MERCATOR_WORLD_WIDTH = 2 * Math.PI * WEB_MERCATOR_RADIUS;
+const WEB_MERCATOR_ORIGIN_SHIFT = WEB_MERCATOR_WORLD_WIDTH / 2;
 const LOCATION_TIMEOUT_MS = 15000;
 const LOCATION_FILTER_MAX_ACCURACY_M = 35;
 const LOCATION_HARD_REJECT_ACCURACY_M = 70;
@@ -14,6 +24,7 @@ const LOCATION_BASE_JUMP_TOLERANCE_M = 12;
 const LOCATION_MAX_REASONABLE_SPEED_MPS = 14;
 const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
+const TAP_PREVIEW_DURATION_MS = 7000;
 
 const state = {
   courseFeatures: [],
@@ -30,8 +41,12 @@ const state = {
   locationPending: false,
   locationPermissionGranted: false,
   tapPoint: null,
+  tapPreviewTimerId: null,
   lastProjection: null,
+  lastCanvasLogicalSize: null,
   dataBase: null,
+  renderNonce: 0,
+  tileImageCache: new Map(),
 };
 
 const els = {
@@ -41,14 +56,12 @@ const els = {
   locBtn: document.getElementById("loc_btn"),
   locClear: document.getElementById("loc_clear"),
   locStatus: document.getElementById("loc_status"),
-  metricHole: document.getElementById("metric_hole"),
-  metricPar: document.getElementById("metric_par"),
+  metricSummary: document.getElementById("metric_summary"),
   metricFront: document.getElementById("metric_front"),
   metricCenter: document.getElementById("metric_center"),
   metricBack: document.getElementById("metric_back"),
-  metricSource: document.getElementById("metric_source"),
   yardageDetail: document.getElementById("yardage_detail"),
-  holeSvg: document.getElementById("hole_svg"),
+  holeCanvas: document.getElementById("hole_canvas"),
   holeEmpty: document.getElementById("hole_empty"),
 };
 
@@ -64,6 +77,24 @@ function parseHoleRef(value) {
 
 function toRad(value) {
   return (value * Math.PI) / 180;
+}
+
+function toDeg(value) {
+  return (value * 180) / Math.PI;
+}
+
+function lonLatToMercator([lon, lat]) {
+  const safeLat = Math.max(-WEB_MERCATOR_MAX_LAT, Math.min(WEB_MERCATOR_MAX_LAT, Number(lat)));
+  const x = WEB_MERCATOR_RADIUS * toRad(Number(lon));
+  const y =
+    WEB_MERCATOR_RADIUS * Math.log(Math.tan(Math.PI / 4 + toRad(safeLat) / 2));
+  return [x, y];
+}
+
+function mercatorToLonLat([x, y]) {
+  const lon = toDeg(Number(x) / WEB_MERCATOR_RADIUS);
+  const lat = toDeg(2 * Math.atan(Math.exp(Number(y) / WEB_MERCATOR_RADIUS)) - Math.PI / 2);
+  return [lon, lat];
 }
 
 function distanceYards(a, b) {
@@ -216,17 +247,21 @@ function createAlignedProjector(features, extraPoints, alignmentStart, alignment
   }
   if (!allPoints.length) return null;
 
-  let sumLon = 0;
-  let sumLat = 0;
-  for (const [lon, lat] of allPoints) {
-    sumLon += lon;
-    sumLat += lat;
-  }
-  const centerLon = sumLon / allPoints.length;
-  const centerLat = sumLat / allPoints.length;
-  const lonScale = Math.max(1e-8, Math.cos(toRad(centerLat)));
+  const allPointsMercator = allPoints.map((point) => lonLatToMercator(point));
 
-  const toLocal = ([lon, lat]) => [(lon - centerLon) * lonScale, lat - centerLat];
+  let sumX = 0;
+  let sumY = 0;
+  for (const [x, y] of allPointsMercator) {
+    sumX += x;
+    sumY += y;
+  }
+  const centerX = sumX / allPointsMercator.length;
+  const centerY = sumY / allPointsMercator.length;
+
+  const toLocal = ([lon, lat]) => {
+    const [mx, my] = lonLatToMercator([lon, lat]);
+    return [mx - centerX, my - centerY];
+  };
 
   let rotationRad = 0;
   if (Array.isArray(alignmentStart) && Array.isArray(alignmentEnd)) {
@@ -266,11 +301,18 @@ function createAlignedProjector(features, extraPoints, alignmentStart, alignment
   const offsetX = (width - drawW) / 2;
   const offsetY = (height - drawH) / 2;
 
-  const project = (point) => {
-    const [rx, ry] = rotate(toLocal(point));
+  const projectMercator = ([mx, my]) => {
+    const lx = Number(mx) - centerX;
+    const ly = Number(my) - centerY;
+    const [rx, ry] = rotate([lx, ly]);
     const x = offsetX + (rx - minX) * scale;
     const y = height - (offsetY + (ry - minY) * scale);
     return [x, y];
+  };
+
+  const project = (point) => {
+    const [mx, my] = lonLatToMercator(point);
+    return projectMercator([mx, my]);
   };
 
   const unproject = (screenPoint) => {
@@ -282,66 +324,228 @@ function createAlignedProjector(features, extraPoints, alignmentStart, alignment
     const ry = (height - y - offsetY) / scale + minY;
     const lx = rx * cosA + ry * sinA;
     const ly = -rx * sinA + ry * cosA;
-    const lon = lx / lonScale + centerLon;
-    const lat = ly + centerLat;
+    const mx = lx + centerX;
+    const my = ly + centerY;
+    const [lon, lat] = mercatorToLonLat([mx, my]);
 
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
     return [lon, lat];
   };
 
-  return { project, unproject };
+  const rotationDeg = (rotationRad * 180) / Math.PI;
+  return { project, projectMercator, unproject, rotationRad, rotationDeg };
 }
 
-function pathFromLineString(coords, project) {
-  if (!Array.isArray(coords) || !coords.length) return "";
-  let d = "";
-  for (let i = 0; i < coords.length; i += 1) {
-    const [x, y] = project(coords[i]);
-    d += `${i === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)} `;
+function mercatorToWorldPixels([mx, my], zoom) {
+  const scale = (TILE_SIZE * (2 ** zoom)) / WEB_MERCATOR_WORLD_WIDTH;
+  const x = (mx + WEB_MERCATOR_ORIGIN_SHIFT) * scale;
+  const y = (WEB_MERCATOR_ORIGIN_SHIFT - my) * scale;
+  return [x, y];
+}
+
+function worldPixelsToMercator([x, y], zoom) {
+  const invScale = WEB_MERCATOR_WORLD_WIDTH / (TILE_SIZE * (2 ** zoom));
+  const mx = Number(x) * invScale - WEB_MERCATOR_ORIGIN_SHIFT;
+  const my = WEB_MERCATOR_ORIGIN_SHIFT - Number(y) * invScale;
+  return [mx, my];
+}
+
+function normalizeTileX(x, zoom) {
+  const count = 2 ** zoom;
+  return ((x % count) + count) % count;
+}
+
+function tileUrl(template, z, x, y) {
+  const subdomain = STREET_TILE_SUBDOMAINS[Math.abs(x + y) % STREET_TILE_SUBDOMAINS.length];
+  return template
+    .replace("{s}", subdomain)
+    .replace("{z}", String(z))
+    .replace("{x}", String(x))
+    .replace("{y}", String(y));
+}
+
+function loadTileImage(url) {
+  if (state.tileImageCache.has(url)) return state.tileImageCache.get(url);
+  const promise = new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Tile failed: ${url}`));
+    image.src = url;
+  });
+  state.tileImageCache.set(url, promise);
+  return promise;
+}
+
+function buildTileFrame(projection, width, height, overscan) {
+  if (!projection?.unproject) return null;
+  const corners = [
+    [0, 0],
+    [width, 0],
+    [width, height],
+    [0, height],
+  ]
+    .map((pt) => projection.unproject(pt))
+    .filter((pt) => Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+  if (corners.length < 2) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const lonLat of corners) {
+    const [mx, my] = lonLatToMercator(lonLat);
+    if (mx < minX) minX = mx;
+    if (mx > maxX) maxX = mx;
+    if (my < minY) minY = my;
+    if (my > maxY) maxY = my;
   }
-  return d.trim();
+
+  const padX = Math.max(2, (maxX - minX) * 0.03);
+  const padY = Math.max(2, (maxY - minY) * 0.03);
+  minX -= padX;
+  maxX += padX;
+  minY -= padY;
+  maxY += padY;
+
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  const halfX = ((maxX - minX) / 2) * overscan;
+  const halfY = ((maxY - minY) / 2) * overscan;
+
+  return {
+    minX: centerX - halfX,
+    maxX: centerX + halfX,
+    minY: centerY - halfY,
+    maxY: centerY + halfY,
+  };
 }
 
-function pathFromPolygon(coords, project) {
-  if (!Array.isArray(coords) || !coords.length) return "";
-  let d = "";
-  for (const ring of coords) {
-    if (!Array.isArray(ring) || !ring.length) continue;
-    for (let i = 0; i < ring.length; i += 1) {
-      const [x, y] = project(ring[i]);
-      d += `${i === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)} `;
+function chooseTileZoom(frame, width, height) {
+  const targetW = Math.max(1, width);
+  const targetH = Math.max(1, height);
+  const mppX = (frame.maxX - frame.minX) / targetW;
+  const mppY = (frame.maxY - frame.minY) / targetH;
+  const mpp = Math.max(mppX, mppY, 0.01);
+  const raw = Math.log2(WEB_MERCATOR_WORLD_WIDTH / (TILE_SIZE * mpp));
+  return Math.max(2, Math.min(20, Math.round(raw)));
+}
+
+function isDarkThemeActive() {
+  const rootTheme = document.documentElement.getAttribute("data-theme") || "";
+  const bodyTheme = document.body?.getAttribute("data-theme") || "";
+  const lowRoot = rootTheme.toLowerCase();
+  const lowBody = bodyTheme.toLowerCase();
+  if (lowRoot.includes("dark") || lowBody.includes("dark")) return true;
+  if (lowRoot.includes("light") || lowBody.includes("light")) return false;
+  return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
+}
+
+function drawGeometryPath(ctx, geometry, project) {
+  if (!geometry?.type) return false;
+  let drew = false;
+  const moveLine = (coords, close) => {
+    if (!Array.isArray(coords) || !coords.length) return;
+    for (let i = 0; i < coords.length; i += 1) {
+      const [x, y] = project(coords[i]);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      drew = true;
     }
-    d += "Z ";
+    if (close) ctx.closePath();
+  };
+
+  if (geometry.type === "LineString") {
+    moveLine(geometry.coordinates || [], false);
+  } else if (geometry.type === "MultiLineString") {
+    for (const line of geometry.coordinates || []) moveLine(line, false);
+  } else if (geometry.type === "Polygon") {
+    for (const ring of geometry.coordinates || []) moveLine(ring, true);
+  } else if (geometry.type === "MultiPolygon") {
+    for (const poly of geometry.coordinates || []) {
+      for (const ring of poly || []) moveLine(ring, true);
+    }
   }
-  return d.trim();
+  return drew;
 }
 
-function pathFromGeometry(geometry, project) {
-  if (!geometry) return "";
-  if (geometry.type === "LineString") return pathFromLineString(geometry.coordinates, project);
-  if (geometry.type === "MultiLineString") {
-    return (geometry.coordinates || [])
-      .map((line) => pathFromLineString(line, project))
-      .filter(Boolean)
-      .join(" ");
-  }
-  if (geometry.type === "Polygon") return pathFromPolygon(geometry.coordinates, project);
-  if (geometry.type === "MultiPolygon") {
-    return (geometry.coordinates || [])
-      .map((poly) => pathFromPolygon(poly, project))
-      .filter(Boolean)
-      .join(" ");
-  }
-  return "";
-}
+async function drawStreetTileBackground(ctx, projection, width, height, nonce, pixelRatio) {
+  const overscan = 1.58;
+  const frame = buildTileFrame(projection, width, height, overscan);
+  if (!frame) return;
 
-function appendSvg(type, attrs) {
-  const node = document.createElementNS(SVG_NS, type);
-  for (const [key, value] of Object.entries(attrs)) {
-    node.setAttribute(key, String(value));
+  const zoom = chooseTileZoom(frame, width * overscan, height * overscan);
+  const template = USE_SATELLITE_BASEMAP
+    ? SATELLITE_TILE_URL_TEMPLATE
+    : (isDarkThemeActive() ? STREET_TILE_DARK_URL_TEMPLATE : STREET_TILE_LIGHT_URL_TEMPLATE);
+
+  const [leftPx, topPx] = mercatorToWorldPixels([frame.minX, frame.maxY], zoom);
+  const [rightPx, bottomPx] = mercatorToWorldPixels([frame.maxX, frame.minY], zoom);
+
+  const minTileX = Math.floor(leftPx / TILE_SIZE);
+  const maxTileX = Math.floor((rightPx - 1) / TILE_SIZE);
+  const minTileY = Math.floor(topPx / TILE_SIZE);
+  const maxTileY = Math.floor((bottomPx - 1) / TILE_SIZE);
+  const tileRows = 2 ** zoom;
+
+  const tileJobs = [];
+  for (let ty = minTileY; ty <= maxTileY; ty += 1) {
+    if (ty < 0 || ty >= tileRows) continue;
+    for (let tx = minTileX; tx <= maxTileX; tx += 1) {
+      const wrappedX = normalizeTileX(tx, zoom);
+      const url = tileUrl(template, zoom, wrappedX, ty);
+      tileJobs.push(
+        loadTileImage(url)
+          .then((image) => ({ image, tx, ty }))
+          .catch(() => null)
+      );
+    }
   }
-  els.holeSvg.appendChild(node);
-  return node;
+
+  const loaded = await Promise.all(tileJobs);
+  if (nonce !== state.renderNonce) return;
+  if (!projection?.projectMercator) return;
+
+  const anchorWorld = [leftPx, topPx];
+  const anchorMerc = worldPixelsToMercator(anchorWorld, zoom);
+  const unitXMerc = worldPixelsToMercator([leftPx + 1, topPx], zoom);
+  const unitYMerc = worldPixelsToMercator([leftPx, topPx + 1], zoom);
+
+  const origin = projection.projectMercator(anchorMerc);
+  const pxX = projection.projectMercator(unitXMerc);
+  const pxY = projection.projectMercator(unitYMerc);
+  if (!origin || !pxX || !pxY) return;
+
+  const a = pxX[0] - origin[0];
+  const b = pxX[1] - origin[1];
+  const c = pxY[0] - origin[0];
+  const d = pxY[1] - origin[1];
+  const e = origin[0];
+  const f = origin[1];
+  const deviceScale =
+    Number.isFinite(pixelRatio) && Number(pixelRatio) > 0
+      ? Number(pixelRatio)
+      : 1;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+  ctx.setTransform(
+    a * deviceScale,
+    b * deviceScale,
+    c * deviceScale,
+    d * deviceScale,
+    e * deviceScale,
+    f * deviceScale
+  );
+  for (const tile of loaded) {
+    if (!tile?.image) continue;
+    const dx = tile.tx * TILE_SIZE - leftPx;
+    const dy = tile.ty * TILE_SIZE - topPx;
+    ctx.drawImage(tile.image, dx, dy, TILE_SIZE, TILE_SIZE);
+  }
+  ctx.restore();
 }
 
 function greenForHole(features) {
@@ -428,6 +632,23 @@ function secureContextMessage() {
 
 function formatYards(value) {
   return Number.isFinite(value) ? String(Math.round(value)) : "—";
+}
+
+function setMetricValue(el, primaryValue, secondaryValue) {
+  if (!el) return;
+  const primary = formatYards(primaryValue);
+  if (!Number.isFinite(secondaryValue)) {
+    el.textContent = primary;
+    return;
+  }
+  const secondary = formatYards(secondaryValue);
+  el.innerHTML = `${primary} <span class="hole-map-footer-sub">(${secondary})</span>`;
+}
+
+function clearTapPreviewTimer() {
+  if (state.tapPreviewTimerId == null) return;
+  clearTimeout(state.tapPreviewTimerId);
+  state.tapPreviewTimerId = null;
 }
 
 function getCanvasConfig() {
@@ -531,9 +752,9 @@ function isLocationOutlier(candidateFix) {
   return distM > toleranceM;
 }
 
-function svgPointFromEvent(event) {
-  if (!els.holeSvg) return null;
-  const rect = els.holeSvg.getBoundingClientRect();
+function canvasPointFromEvent(event) {
+  if (!els.holeCanvas) return null;
+  const rect = els.holeCanvas.getBoundingClientRect();
   if (!rect.width || !rect.height) return null;
 
   const point = event?.changedTouches?.[0] || event?.touches?.[0] || event;
@@ -541,24 +762,27 @@ function svgPointFromEvent(event) {
   const clientY = Number(point?.clientY);
   if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
 
-  const vb = els.holeSvg.viewBox?.baseVal;
-  const vbX = vb?.x ?? 0;
-  const vbY = vb?.y ?? 0;
-  const vbW = vb?.width || rect.width;
-  const vbH = vb?.height || rect.height;
-
-  const x = vbX + ((clientX - rect.left) / rect.width) * vbW;
-  const y = vbY + ((clientY - rect.top) / rect.height) * vbH;
+  const logicalWidth = Number(state.lastCanvasLogicalSize?.width) || els.holeCanvas.width;
+  const logicalHeight = Number(state.lastCanvasLogicalSize?.height) || els.holeCanvas.height;
+  const x = ((clientX - rect.left) / rect.width) * logicalWidth;
+  const y = ((clientY - rect.top) / rect.height) * logicalHeight;
   return [x, y];
 }
 
 function handleHoleTap(event) {
   if (!state.lastProjection?.unproject) return;
-  const svgPoint = svgPointFromEvent(event);
-  if (!svgPoint) return;
-  const mapPoint = state.lastProjection.unproject(svgPoint);
+  const canvasPoint = canvasPointFromEvent(event);
+  if (!canvasPoint) return;
+  const mapPoint = state.lastProjection.unproject(canvasPoint);
   if (!Array.isArray(mapPoint)) return;
+  clearTapPreviewTimer();
   state.tapPoint = mapPoint;
+  state.tapPreviewTimerId = window.setTimeout(() => {
+    state.tapPreviewTimerId = null;
+    if (!Array.isArray(state.tapPoint)) return;
+    state.tapPoint = null;
+    renderCurrentHole();
+  }, TAP_PREVIEW_DURATION_MS);
   renderCurrentHole();
 }
 
@@ -757,7 +981,7 @@ async function maybeAutoStartTracking() {
   updateTrackingButton();
 }
 
-function renderCurrentHole() {
+async function renderCurrentHole() {
   const hole = state.currentHole;
   const features = state.holeMap.get(hole) || [];
   const par = holePar(features);
@@ -767,37 +991,53 @@ function renderCurrentHole() {
   const backTee = backTeeForHole(features, greenCenter, holeLine);
   const greenTargets = greenFrontBackPoints(green, backTee, holeLine);
 
-  let sourceLabel = "Not Set";
-  let playingPoint = null;
+  let baseSourceLabel = "Not Set";
+  let basePoint = null;
 
   if (Array.isArray(state.userLocation)) {
-    sourceLabel = "My Location";
-    playingPoint = state.userLocation;
+    baseSourceLabel = "My Location";
+    basePoint = state.userLocation;
   } else if (Array.isArray(backTee)) {
-    sourceLabel = "Back Tee Default";
-    playingPoint = backTee;
+    baseSourceLabel = "Back Tee Default";
+    basePoint = backTee;
   }
 
+  const usingTapPoint = Array.isArray(state.tapPoint);
+  const sourceLabel = usingTapPoint ? "Tap Point" : baseSourceLabel;
+  const metricPoint = usingTapPoint ? state.tapPoint : basePoint;
+
   const yardsFront =
-    Array.isArray(playingPoint) && Array.isArray(greenTargets.front)
-      ? distanceYards(playingPoint, greenTargets.front)
+    Array.isArray(metricPoint) && Array.isArray(greenTargets.front)
+      ? distanceYards(metricPoint, greenTargets.front)
       : null;
   const yardsCenter =
-    Array.isArray(playingPoint) && Array.isArray(greenTargets.center)
-      ? distanceYards(playingPoint, greenTargets.center)
+    Array.isArray(metricPoint) && Array.isArray(greenTargets.center)
+      ? distanceYards(metricPoint, greenTargets.center)
       : null;
   const yardsBack =
-    Array.isArray(playingPoint) && Array.isArray(greenTargets.back)
-      ? distanceYards(playingPoint, greenTargets.back)
+    Array.isArray(metricPoint) && Array.isArray(greenTargets.back)
+      ? distanceYards(metricPoint, greenTargets.back)
+      : null;
+  const userYardsFront =
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.front)
+      ? distanceYards(state.userLocation, greenTargets.front)
+      : null;
+  const userYardsCenter =
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)
+      ? distanceYards(state.userLocation, greenTargets.center)
+      : null;
+  const userYardsBack =
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.back)
+      ? distanceYards(state.userLocation, greenTargets.back)
       : null;
 
   const userToGreenCenterYards =
-    sourceLabel === "My Location" && Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)
       ? distanceYards(state.userLocation, greenTargets.center)
       : null;
   const mapShouldFocusHole =
     Number.isFinite(userToGreenCenterYards) && userToGreenCenterYards > MAP_FOCUS_MAX_USER_DISTANCE_YARDS;
-  const mapPlayerPoint = mapShouldFocusHole ? null : playingPoint;
+  const mapPlayerPoint = mapShouldFocusHole ? null : basePoint;
   const tapToGreenCenterYards =
     Array.isArray(state.tapPoint) && Array.isArray(greenTargets.center)
       ? distanceYards(state.tapPoint, greenTargets.center)
@@ -807,42 +1047,30 @@ function renderCurrentHole() {
       ? distanceYards(state.userLocation, state.tapPoint)
       : null;
 
-  els.metricHole.textContent = hole == null ? "—" : String(hole);
-  els.metricPar.textContent = par == null ? "—" : String(par);
-  els.metricFront.textContent = formatYards(yardsFront);
-  els.metricCenter.textContent = formatYards(yardsCenter);
-  els.metricBack.textContent = formatYards(yardsBack);
-  els.metricSource.textContent = sourceLabel;
+  els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}`;
+  setMetricValue(els.metricFront, yardsFront, usingTapPoint ? userYardsFront : null);
+  setMetricValue(els.metricCenter, yardsCenter, usingTapPoint ? userYardsCenter : null);
+  setMetricValue(els.metricBack, yardsBack, usingTapPoint ? userYardsBack : null);
 
   let detailText = "";
   if (state.locationError) {
     detailText = state.locationError;
   } else if (sourceLabel === "My Location") {
-    const acc = Number.isFinite(state.locationAccuracyM)
-      ? ` GPS accuracy ~${Math.round(state.locationAccuracyM)}m.`
-      : "";
-    const zoomHint = mapShouldFocusHole
-      ? ` You are ${Math.round(userToGreenCenterYards)} yards from center green, so the map stays focused on the hole.`
-      : "";
-    detailText = `Live yardages from your location.${acc}${zoomHint}`;
+    detailText = "Live yardages from your location.";
   } else if (sourceLabel === "Back Tee Default") {
-    detailText = "Location not set yet. Showing back-tee yardages by default.";
+    detailText = "Showing back-tee yardages by default.";
+  } else if (sourceLabel === "Tap Point") {
+    detailText = "Showing front, center, and back yardages from your tapped spot.";
   } else {
     detailText = "No location or tee reference available for this hole.";
   }
 
   if (Number.isFinite(tapToGreenCenterYards)) {
-    const tapText = `Tap: ${Math.round(tapToGreenCenterYards)}y to center green`;
-    const userText = Number.isFinite(userToTapYards)
-      ? `, ${Math.round(userToTapYards)}y from your location`
-      : ", share location to see your distance to tap";
-    detailText = `${detailText} ${tapText}${userText}.`.trim();
+    detailText = `Tap: ${Math.round(tapToGreenCenterYards)}y to center green.`;
   } else if (!state.locationError) {
-    detailText = `${detailText} Tap map to get center-green yardage.`.trim();
+    detailText = `${detailText} Tap map to set a yardage source.`.trim();
   }
   els.yardageDetail.textContent = detailText;
-
-  while (els.holeSvg.firstChild) els.holeSvg.removeChild(els.holeSvg.firstChild);
 
   if (!features.length) {
     state.lastProjection = null;
@@ -863,7 +1091,16 @@ function renderCurrentHole() {
   ];
 
   const { width, height, margin } = getCanvasConfig();
-  els.holeSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  if (!els.holeCanvas) return;
+  const pixelRatio = Math.max(1, Math.min(3, Number(window.devicePixelRatio) || 1));
+  state.lastCanvasLogicalSize = { width, height };
+  els.holeCanvas.width = Math.round(width * pixelRatio);
+  els.holeCanvas.height = Math.round(height * pixelRatio);
+  const ctx = els.holeCanvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   const projection = createAlignedProjector(
     features,
@@ -883,18 +1120,25 @@ function renderCurrentHole() {
 
   state.lastProjection = projection;
   const { project } = projection;
-
-  appendSvg("rect", {
-    x: 0,
-    y: 0,
-    width,
-    height,
-    class: "hole-stage-bg",
-    rx: 18,
-    ry: 18,
-  });
+  const renderNonce = ++state.renderNonce;
+  const darkTheme = isDarkThemeActive();
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = darkTheme ? "#202225" : "#e9ebef";
+  ctx.fillRect(0, 0, width, height);
+  await drawStreetTileBackground(ctx, projection, width, height, renderNonce, pixelRatio);
+  if (renderNonce !== state.renderNonce) return;
 
   const drawRank = { fairway: 1, green: 2, bunker: 3, tee: 4, hole: 5 };
+  const strokeDefault = darkTheme ? "rgba(243,248,255,0.95)" : "rgba(18,34,54,0.95)";
+  const strokeHalo = darkTheme ? "rgba(8,12,18,0.82)" : "rgba(255,255,255,0.86)";
+  const strokeOther = darkTheme ? "rgba(235,240,248,0.76)" : "rgba(18,34,54,0.72)";
+  const featureFillByType = {
+    fairway: darkTheme ? "rgba(92, 148, 77, 0.34)" : "rgba(104, 168, 90, 0.34)",
+    green: darkTheme ? "rgba(112, 184, 96, 0.42)" : "rgba(108, 191, 88, 0.43)",
+    bunker: darkTheme ? "rgba(177, 155, 112, 0.42)" : "rgba(203, 178, 119, 0.56)",
+    tee: darkTheme ? "rgba(106, 167, 89, 0.4)" : "rgba(112, 178, 94, 0.46)",
+  };
+
   const sorted = [...features].sort((a, b) => {
     const ga = String(a?.properties?.golf || "");
     const gb = String(b?.properties?.golf || "");
@@ -903,60 +1147,106 @@ function renderCurrentHole() {
 
   for (const feature of sorted) {
     const golf = String(feature?.properties?.golf || "other");
-    const d = pathFromGeometry(feature.geometry, project);
-    if (!d) continue;
-
-    const klass =
-      golf === "fairway" || golf === "green" || golf === "bunker" || golf === "tee"
-        ? `hole-shape golf-${golf}`
-        : golf === "hole"
-          ? "hole-path"
-          : "hole-other";
-
-    const node = appendSvg("path", { d, class: klass });
-    const holeRef = parseHoleRef(feature?.properties?.hole_ref ?? feature?.properties?.ref);
-    const title = document.createElementNS(SVG_NS, "title");
-    title.textContent = `${golf}${holeRef ? ` • Hole ${holeRef}` : ""}`;
-    node.appendChild(title);
-  }
-
-  if (Array.isArray(greenTargets.front)) {
-    const [x, y] = project(greenTargets.front);
-    appendSvg("circle", { cx: x, cy: y, r: 6, class: "marker marker-front" });
-  }
-  if (Array.isArray(greenTargets.center)) {
-    const [x, y] = project(greenTargets.center);
-    appendSvg("circle", { cx: x, cy: y, r: 8, class: "marker marker-green" });
-  }
-  if (Array.isArray(greenTargets.back)) {
-    const [x, y] = project(greenTargets.back);
-    appendSvg("circle", { cx: x, cy: y, r: 6, class: "marker marker-back" });
+    if (golf === "hole") continue;
+    const geomType = String(feature?.geometry?.type || "");
+    const isArea = geomType === "Polygon" || geomType === "MultiPolygon";
+    const fillStyle = isArea ? featureFillByType[golf] : null;
+    ctx.beginPath();
+    const drew = drawGeometryPath(ctx, feature.geometry, project);
+    if (!drew) continue;
+    if (fillStyle) {
+      ctx.fillStyle = fillStyle;
+      ctx.fill();
+    }
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.miterLimit = 2;
+    if (fillStyle) {
+      continue;
+    } else {
+      ctx.strokeStyle = strokeOther;
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+    }
   }
 
   if (Array.isArray(backTee)) {
     const [tx, ty] = project(backTee);
-    appendSvg("circle", { cx: tx, cy: ty, r: 7, class: "marker marker-tee" });
+    ctx.beginPath();
+    ctx.arc(tx, ty, 7, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+    ctx.strokeStyle = "#567037";
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
 
   if (Array.isArray(mapPlayerPoint)) {
     const [px, py] = project(mapPlayerPoint);
-    appendSvg("circle", { cx: px, cy: py, r: 8, class: "marker marker-player" });
+    ctx.beginPath();
+    ctx.arc(px, py, 8, 0, Math.PI * 2);
+    ctx.fillStyle = "#2c7ef6";
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
 
   if (Array.isArray(state.tapPoint)) {
     const [tx, ty] = project(state.tapPoint);
-    appendSvg("circle", { cx: tx, cy: ty, r: 7, class: "marker marker-tap" });
-  }
+    ctx.beginPath();
+    ctx.arc(tx, ty, 7, 0, Math.PI * 2);
+    ctx.fillStyle = darkTheme ? "#2a2d31" : "#e9ecf0";
+    ctx.fill();
+    ctx.strokeStyle = strokeDefault;
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
 
-  appendSvg("text", {
-    x: 24,
-    y: 42,
-    class: "hole-label",
-  }).textContent = `Hole ${hole}`;
+    if (Number.isFinite(userToTapYards)) {
+      const bubbleText = `${Math.round(userToTapYards)}y to you`;
+      const fontSize = 16;
+      const padX = 10;
+      const padY = 7;
+      const bubbleGap = 14;
+      ctx.font = `700 ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+      const textWidth = ctx.measureText(bubbleText).width;
+      const bubbleW = textWidth + padX * 2;
+      const bubbleH = fontSize + padY * 2;
+      let bubbleX = tx - bubbleW / 2;
+      bubbleX = Math.max(8, Math.min(width - bubbleW - 8, bubbleX));
+      const bubbleY = Math.max(8, ty - bubbleH - bubbleGap);
+
+      const bubbleStroke = darkTheme ? "rgba(240,246,255,0.98)" : "rgba(18,34,54,0.94)";
+      const bubbleFill = darkTheme ? "rgba(18,23,29,0.92)" : "rgba(253,254,255,0.95)";
+      const bubbleTextColor = darkTheme ? "#f3f8ff" : "#122236";
+      const pointerX = Math.max(bubbleX + 10, Math.min(bubbleX + bubbleW - 10, tx));
+
+      ctx.beginPath();
+      ctx.rect(bubbleX, bubbleY, bubbleW, bubbleH);
+      ctx.fillStyle = bubbleFill;
+      ctx.fill();
+      ctx.strokeStyle = bubbleStroke;
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(pointerX, bubbleY + bubbleH);
+      ctx.lineTo(tx, ty - 8);
+      ctx.strokeStyle = bubbleStroke;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      ctx.fillStyle = bubbleTextColor;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(bubbleText, bubbleX + bubbleW / 2, bubbleY + bubbleH / 2 + 0.5);
+    }
+  }
 }
 
 function setHole(holeNumber) {
   if (!state.holes.includes(holeNumber)) return;
+  clearTapPreviewTimer();
   state.currentHole = holeNumber;
   state.tapPoint = null;
   els.holeSelect.value = String(holeNumber);
@@ -993,8 +1283,8 @@ function bindEvents() {
     });
   }
 
-  if (els.holeSvg) {
-    els.holeSvg.addEventListener("click", handleHoleTap);
+  if (els.holeCanvas) {
+    els.holeCanvas.addEventListener("click", handleHoleTap);
   }
 
   window.addEventListener("keydown", (event) => {
@@ -1004,6 +1294,7 @@ function bindEvents() {
   });
 
   window.addEventListener("beforeunload", () => {
+    clearTapPreviewTimer();
     stopLocationTracking(false, "");
   });
 

@@ -1416,10 +1416,10 @@ th.dots {
   margin-left: 6px;
 }
 
-.hole-map-metrics {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+.hole-map-summary {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .hole-map-stage-wrap {
@@ -1433,7 +1433,7 @@ th.dots {
   max-height: 85vh;
   display: block;
   border-radius: 14px;
-  border: 1px solid var(--border);
+  border: 0;
   background: color-mix(in srgb, var(--surface) 85%, var(--bg));
 }
 
@@ -1472,93 +1472,18 @@ th.dots {
   line-height: 1.1;
 }
 
+.hole-map-footer-sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .hole-map-empty {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
   text-align: center;
-}
-
-.hole-stage-bg {
-  fill: color-mix(in srgb, var(--surface-strong) 94%, var(--bg));
-  stroke: var(--border);
-  stroke-width: 1;
-}
-
-.hole-shape {
-  fill: none;
-  stroke: var(--text);
-  stroke-width: 1;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.hole-path {
-  fill: none;
-  stroke: var(--text);
-  stroke-width: 1.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.hole-other {
-  fill: none;
-  stroke: var(--text);
-  stroke-width: 0.9;
-  vector-effect: non-scaling-stroke;
-}
-
-.marker {
-  stroke-width: 2;
-}
-
-.marker-green {
-  fill: #fff;
-  stroke: #2f8f33;
-}
-
-.marker-front {
-  fill: #e6fff0;
-  stroke: #2f8f33;
-}
-
-.marker-back {
-  fill: #fff1f1;
-  stroke: #944141;
-}
-
-.marker-tee {
-  fill: #fff;
-  stroke: #567037;
-}
-
-.marker-player {
-  fill: #2c7ef6;
-  stroke: #fff;
-}
-
-.marker-tap {
-  fill: var(--surface-strong);
-  stroke: var(--text);
-  stroke-width: 2.4;
-}
-
-.marker-player.fallback {
-  fill: #ff8a27;
-}
-
-.marker-user {
-  fill: #fff;
-  stroke: #2c7ef6;
-}
-
-.hole-label {
-  fill: var(--text);
-  font-size: 26px;
-  font-weight: 800;
 }
 
 @media (max-width: 560px) {
@@ -1598,10 +1523,6 @@ th.dots {
   .hole-map-location .small {
     grid-column: 1 / -1;
     margin-left: 0;
-  }
-
-  .hole-map-metrics {
-    grid-template-columns: 1fr 1fr;
   }
 
   .hole-map-footer-head {

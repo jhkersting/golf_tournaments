@@ -52,17 +52,13 @@
       <button id="loc_clear" class="secondary" type="button">Clear Location</button>
       <div class="small" id="loc_status">Location not set.</div>
     </div>
-    <div class="hole-map-metrics">
-      <div class="pill">Hole <span id="metric_hole">—</span></div>
-      <div class="pill">Par <span id="metric_par">—</span></div>
-      <div class="pill">Using <span id="metric_source">—</span></div>
-    </div>
+    <div class="hole-map-summary" id="metric_summary">Hole — | Par —</div>
     <div class="small" id="yardage_detail">—</div>
   </div>
 
   <div class="card">
     <div class="hole-map-stage-wrap">
-      <svg id="hole_svg" class="hole-map-stage" viewBox="0 0 1200 760" role="img" aria-label="Hole layout"></svg>
+      <canvas id="hole_canvas" class="hole-map-stage" width="1200" height="760" role="img" aria-label="Hole layout"></canvas>
       <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
     </div>
   </div>
