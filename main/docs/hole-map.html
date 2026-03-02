@@ -17,10 +17,11 @@
   <link rel="stylesheet" href="styles.css" />
   <title>Map + Enter Scores</title>
 </head>
-<body class="hole-map-page" style="display: block;">
+<body class="hole-map-page" style="visibility: hidden;">
 <header>
   <div class="nav">
     <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
+    <a href="./scoreboard.html" class="mobile-header-link mobile-header-link-primary" data-scoreboard-link>Scoreboard</a>
     <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
     <div class="actions">
       <a href="./index.html">Home</a>
@@ -37,6 +38,17 @@
     <h1 style="margin:0 0 8px 0;">Map + Enter Scores</h1>
     <div class="small">
       Uses your player code and tournament setup to open the current round/hole, then chooses full or simplified map data for that round's course.
+    </div>
+  </div>
+
+  <div id="map_ticker_shell" class="map-ticker-shell">
+    <div class="enter-ticker" id="enter_ticker" style="display:none;">
+      <div class="enter-ticker-inner">
+        <div class="enter-ticker-title" id="enter_ticker_title"></div>
+        <div class="enter-ticker-viewport">
+          <div class="enter-ticker-track" id="enter_ticker_track"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -79,6 +91,8 @@
     <span id="metric_back">—</span>
   </div>
 </div>
+
+<div id="score_notifier" class="score-notifier" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script type="module" src="map.js"></script>
 </body>

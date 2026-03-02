@@ -468,6 +468,10 @@ hr {
   bottom: 58px;
 }
 
+.hole-map-page .score-notifier {
+  bottom: calc(112px + env(safe-area-inset-bottom));
+}
+
 .score-notifier.show {
   opacity: 1;
   transform: translateY(0);
@@ -844,6 +848,45 @@ hr {
   border-radius: 4px;
 }
 
+.map-ticker-shell {
+  margin-bottom: 12px;
+}
+
+.hole-map-page .map-ticker-shell .enter-ticker {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.hole-map-page .map-ticker-shell .enter-ticker-inner {
+  width: 100%;
+}
+
+.hole-map-page .map-ticker-shell .enter-ticker-title {
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+.hole-map-page .map-ticker-shell .enter-ticker.is-stuck {
+  position: fixed;
+  top: var(--map-ticker-stick-top, 56px);
+  left: 0;
+  right: 0;
+  width: 100%;
+  z-index: 75;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+}
+
+.hole-map-page .map-ticker-shell .enter-ticker.is-stuck .enter-ticker-inner {
+  width: min(100%, 1080px);
+}
+
 .stats-kpis {
   margin-top: 10px;
   display: grid;
@@ -1127,7 +1170,12 @@ th.dots {
     padding-right: 52px;
   }
 
-  .enter-page .brand {
+  .enter-page .brand,
+  .scoreboard-page .brand {
+    padding-right: 220px;
+  }
+
+  .hole-map-page .brand {
     padding-right: 148px;
   }
 
@@ -1135,13 +1183,20 @@ th.dots {
     display: inline-flex;
     position: absolute;
     top: 10px;
-    right: 40px;
     min-height: 25px;
     border-radius: 5px !important;
     padding: 1px 5px !important;
     font-size: 12px !important;
     align-items: center;
     justify-content: center;
+  }
+
+  .mobile-header-link-primary {
+    right: 40px;
+  }
+
+  .mobile-header-link-secondary {
+    right: 136px;
   }
 
   .main-action-link {
@@ -1177,6 +1232,10 @@ th.dots {
     padding: 10px 10px 20px;
   }
 
+  .scoreboard-page .container {
+    padding-top: 0;
+  }
+
   .score-notifier {
     left: 10px;
     right: 10px;
@@ -1186,6 +1245,10 @@ th.dots {
 
   .enter-page .score-notifier {
     bottom: 74px;
+  }
+
+  .hole-map-page .score-notifier {
+    bottom: calc(126px + env(safe-area-inset-bottom));
   }
 
   .enter-page .container {
