@@ -4,7 +4,6 @@ const DATA_BASE_CANDIDATES = [
   "/golf_course_hole_geo_data/data/sherrill-park-golf-course-1",
 ];
 const SVG_NS = "http://www.w3.org/2000/svg";
-const LOCATION_ACCURACY_TARGET_M = 12;
 const LOCATION_TIMEOUT_MS = 15000;
 const LOCATION_FILTER_MAX_ACCURACY_M = 35;
 const LOCATION_HARD_REJECT_ACCURACY_M = 70;
@@ -493,14 +492,6 @@ function pruneLocationFixes(nowMs) {
     .slice(-LOCATION_SMOOTH_MAX_FIXES);
 }
 
-function bestFixAccuracyM() {
-  if (!state.locationFixes.length) return Infinity;
-  return state.locationFixes.reduce(
-    (best, fix) => Math.min(best, Number.isFinite(fix.accuracyM) ? fix.accuracyM : Infinity),
-    Infinity
-  );
-}
-
 function smoothedLocationFromFixes(nowMs) {
   if (!state.locationFixes.length) return null;
 
@@ -629,22 +620,12 @@ function applyLocationFix(position) {
     pruneLocationFixes(fix.tsMs);
   }
 
-  const bestAccuracy = bestFixAccuracyM();
-  if (!Number.isFinite(bestAccuracy) || bestAccuracy > LOCATION_ACCURACY_TARGET_M) {
-    updateLocationStatus(
-      `GPS accuracy ${Math.round(fix.accuracyM)}m (best ${Math.round(bestAccuracy)}m). Waiting for <=${LOCATION_ACCURACY_TARGET_M}m.`
-    );
-    updateTrackingButton();
-    renderCurrentHole();
-    return;
-  }
-
   const smoothed = smoothedLocationFromFixes(fix.tsMs) || fix.coords;
   if (!Array.isArray(state.userLocation)) {
     state.userLocation = smoothed;
   } else {
     const deltaM = distanceMeters(state.userLocation, smoothed);
-    if (deltaM >= LOCATION_MIN_MOVEMENT_UPDATE_M || fix.accuracyM <= LOCATION_ACCURACY_TARGET_M) {
+    if (deltaM >= LOCATION_MIN_MOVEMENT_UPDATE_M) {
       state.userLocation = smoothed;
     }
   }
@@ -703,7 +684,7 @@ function startLocationTracking() {
   state.lastAcceptedLocationFix = null;
   state.locationPending = true;
   state.locationError = "";
-  updateLocationStatus(`Acquiring precise GPS (target <=${LOCATION_ACCURACY_TARGET_M}m)...`);
+  updateLocationStatus("Acquiring precise GPS...");
   try {
     state.locationWatchId = navigator.geolocation.watchPosition(
       (position) => {
@@ -848,10 +829,6 @@ function renderCurrentHole() {
     detailText = "Location not set yet. Showing back-tee yardages by default.";
   } else {
     detailText = "No location or tee reference available for this hole.";
-  }
-
-  if (Number.isFinite(state.locationAccuracyM) && state.locationAccuracyM > LOCATION_ACCURACY_TARGET_M) {
-    detailText = `${detailText} Waiting for higher-accuracy GPS fix (currently ~${Math.round(state.locationAccuracyM)}m).`.trim();
   }
 
   if (Number.isFinite(tapToGreenCenterYards)) {
