@@ -1233,8 +1233,206 @@ th.dots {
     padding: 0 8px;
   }
 
-  .enter-ticker-title {
+.enter-ticker-title {
     min-width: 138px;
     padding-right: 8px;
+  }
+}
+
+.hole-map-controls {
+  display: grid;
+  gap: 12px;
+}
+
+.hole-map-nav {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.hole-map-nav label {
+  margin: 0;
+}
+
+.hole-map-nav select {
+  width: 140px;
+  min-width: 120px;
+}
+
+.hole-map-location {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.hole-map-location label {
+  margin: 0;
+}
+
+.hole-map-location select {
+  width: auto;
+  min-width: 72px;
+}
+
+.hole-map-location .small {
+  margin-left: 6px;
+}
+
+.hole-map-metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.hole-map-stage-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.hole-map-stage {
+  width: 100%;
+  height: auto;
+  max-height: 85vh;
+  display: block;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 85%, var(--bg));
+}
+
+.hole-map-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.hole-stage-bg {
+  fill: color-mix(in srgb, var(--surface-strong) 94%, var(--bg));
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.hole-shape {
+  stroke-width: 1.1;
+}
+
+.hole-shape.golf-fairway {
+  fill: rgba(123, 207, 90, 0.72);
+  stroke: rgba(58, 130, 40, 0.8);
+}
+
+.hole-shape.golf-green {
+  fill: rgba(47, 143, 51, 0.9);
+  stroke: rgba(26, 96, 28, 0.95);
+}
+
+.hole-shape.golf-bunker {
+  fill: rgba(227, 207, 143, 0.88);
+  stroke: rgba(140, 116, 53, 0.85);
+}
+
+.hole-shape.golf-tee {
+  fill: rgba(87, 112, 55, 0.82);
+  stroke: rgba(56, 79, 31, 0.95);
+}
+
+.hole-path {
+  fill: none;
+  stroke: #f16b6b;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hole-other {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.2;
+}
+
+.marker {
+  stroke-width: 2;
+}
+
+.marker-green {
+  fill: #fff;
+  stroke: #2f8f33;
+}
+
+.marker-front {
+  fill: #e6fff0;
+  stroke: #2f8f33;
+}
+
+.marker-back {
+  fill: #fff1f1;
+  stroke: #944141;
+}
+
+.marker-tee {
+  fill: #fff;
+  stroke: #567037;
+}
+
+.marker-player {
+  fill: #2c7ef6;
+  stroke: #fff;
+}
+
+.marker-player.fallback {
+  fill: #ff8a27;
+}
+
+.marker-user {
+  fill: #fff;
+  stroke: #2c7ef6;
+}
+
+.hole-label {
+  fill: var(--text);
+  font-size: 26px;
+  font-weight: 800;
+}
+
+@media (max-width: 560px) {
+  .hole-map-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    align-items: end;
+  }
+
+  .hole-map-nav label {
+    grid-column: 1 / -1;
+  }
+
+  .hole-map-nav select,
+  .hole-map-nav button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .hole-map-location {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .hole-map-location select,
+  .hole-map-location button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .hole-map-location .small {
+    grid-column: 1 / -1;
+    margin-left: 0;
+  }
+
+  .hole-map-metrics {
+    grid-template-columns: 1fr 1fr;
   }
 }

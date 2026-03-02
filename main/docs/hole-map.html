@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="theme.js" defer></script>
+  <script src="nav.js" defer></script>
+  <link rel="stylesheet" href="styles.css" />
+  <title>Hole Map</title>
+</head>
+<body style="display: block;">
+<header>
+  <div class="nav">
+    <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
+    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
+    <div class="actions">
+      <a href="./index.html">Home</a>
+      <a href="./enter.html">Enter Scores</a>
+      <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
+      <a href="./hole-map.html">Hole Map</a>
+      <button type="button" class="theme-toggle" data-theme-toggle></button>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+  <div class="card">
+    <h1 style="margin:0 0 8px 0;">Hole Layout + Yardage</h1>
+    <div class="small">
+      Uses Course 1 shapes for Sherrill Park. Select a hole, allow location access, and the page will show yards to the green.
+      If your location is over <b>1000 yards</b> from the selected green, yardage is automatically calculated from the back tee.
+    </div>
+  </div>
+
+  <div class="card hole-map-controls">
+    <div class="hole-map-nav">
+      <button id="hole_prev" class="secondary" type="button">Previous Hole</button>
+      <label for="hole_select">Hole</label>
+      <select id="hole_select"></select>
+      <button id="hole_next" class="secondary" type="button">Next Hole</button>
+    </div>
+    <div class="hole-map-location">
+      <button id="loc_btn" type="button">Use My Location</button>
+      <button id="loc_clear" class="secondary" type="button">Clear Location</button>
+      <div class="small" id="loc_status">Location not set.</div>
+    </div>
+    <div class="hole-map-metrics">
+      <div class="pill">Hole <span id="metric_hole">—</span></div>
+      <div class="pill">Par <span id="metric_par">—</span></div>
+      <div class="pill">Yards Front <span id="metric_front">—</span></div>
+      <div class="pill">Yards Center <span id="metric_center">—</span></div>
+      <div class="pill">Yards Back <span id="metric_back">—</span></div>
+      <div class="pill">Using <span id="metric_source">—</span></div>
+    </div>
+    <div class="small" id="yardage_detail">—</div>
+  </div>
+
+  <div class="card">
+    <div class="hole-map-stage-wrap">
+      <svg id="hole_svg" class="hole-map-stage" viewBox="0 0 1200 760" role="img" aria-label="Hole layout"></svg>
+      <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="hole-map.js"></script>
+</body>
+</html>

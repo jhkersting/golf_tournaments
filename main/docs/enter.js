@@ -925,10 +925,9 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   sortTickerEntries(teamRoundGrossEntries);
   const teamRoundGrossItems = teamRoundGrossEntries.map((x) => x.node);
 
-  // Update brand dot to current leading team color (active round first, then tournament fallback).
-  const leadingRoundTeam = teamRoundEntries.find((x) => x.hasData);
+  // Update brand dot to weighted total leader color (all-rounds team standings).
   const leadingTournamentTeam = teamTournamentEntries.find((x) => x.hasData);
-  setBrandDotColor((leadingRoundTeam || leadingTournamentTeam || null)?.color || null);
+  setBrandDotColor((leadingTournamentTeam || null)?.color || null);
 
   const individualGrossLabel = isTwoManRound ? "Groups Gross" : "Gross";
   const individualNetLabel = isTwoManRound ? "Groups Net" : "Net";

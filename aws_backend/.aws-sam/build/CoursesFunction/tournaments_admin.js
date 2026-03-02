@@ -4,6 +4,7 @@ import {
   requireAdmin,
   uid,
   code4,
+  normalizeHoles,
   getJson,
   putJson,
   requireTournamentEditCode,
@@ -196,6 +197,130 @@ function normalizeGroups(value, roundCount, fallbackGroup = null) {
   return out;
 }
 
+function roundFormat(round) {
+  return normalizeRoundFormat(round?.format);
+}
+
+function scoreTargetTypeForRound(round) {
+  const fmt = roundFormat(round);
+  if (fmt === "scramble") return "team";
+  if (fmt === "two_man") return "group";
+  return "player";
+}
+
+function groupId(teamId, groupLabel) {
+  const team = String(teamId || "").trim();
+  const group = normalizeGroup(groupLabel);
+  if (!team || !group) return "";
+  return `${team}::${group}`;
+}
+
+function groupForPlayerRound(player, roundIndex) {
+  const idx = Math.max(0, Math.floor(Number(roundIndex) || 0));
+  if (Array.isArray(player?.groups)) {
+    const g = normalizeGroup(player.groups[idx]);
+    if (g) return g;
+  }
+  if (idx === 0) return normalizeGroup(player?.group);
+  return null;
+}
+
+function buildValidGroupIdsByRound(playersById, rounds) {
+  const roundCount = Math.max(0, Number(rounds?.length || 0));
+  const sets = Array.from({ length: roundCount }, () => new Set());
+  for (let r = 0; r < roundCount; r++) {
+    if (scoreTargetTypeForRound(rounds[r]) !== "group") continue;
+    for (const player of Object.values(playersById || {})) {
+      const gid = groupId(player?.teamId, groupForPlayerRound(player, r));
+      if (gid) sets[r].add(gid);
+    }
+  }
+  return sets;
+}
+
+function safeHoleArray(raw) {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = Array(18).fill(null);
+  for (let i = 0; i < 18; i++) {
+    const v = arr[i];
+    if (v == null || (typeof v === "string" && v.trim() === "")) {
+      out[i] = null;
+      continue;
+    }
+    const n = Number(v);
+    if (!Number.isFinite(n)) {
+      out[i] = null;
+      continue;
+    }
+    const iv = Math.round(n);
+    out[i] = iv >= 1 && iv <= 20 ? iv : null;
+  }
+  return out;
+}
+
+function normalizeScoreEntryHoles(entry) {
+  const holesRaw = Array.isArray(entry) ? entry : entry?.holes;
+  if (!Array.isArray(holesRaw)) {
+    const err = new Error("scores entries must include holes arrays of length 18");
+    err.statusCode = 400;
+    throw err;
+  }
+  return normalizeHoles(holesRaw);
+}
+
+function normalizeScoresForState(scoresIn, roundCount, validTeamIds, validPlayerIds, validGroupIdsByRound) {
+  if (!scoresIn || typeof scoresIn !== "object") {
+    const err = new Error("scores must be an object");
+    err.statusCode = 400;
+    throw err;
+  }
+  const inRounds = Array.isArray(scoresIn.rounds) ? scoresIn.rounds : [];
+  const out = { rounds: [] };
+
+  for (let r = 0; r < roundCount; r++) {
+    const srcRound = inRounds[r] || {};
+    const outRound = { teams: {}, players: {}, groups: {} };
+
+    for (const [teamId, entry] of Object.entries(srcRound?.teams || {})) {
+      if (!validTeamIds.has(teamId)) continue;
+      outRound.teams[teamId] = { holes: normalizeScoreEntryHoles(entry), meta: Array(18).fill(null) };
+    }
+    for (const [playerId, entry] of Object.entries(srcRound?.players || {})) {
+      if (!validPlayerIds.has(playerId)) continue;
+      outRound.players[playerId] = { holes: normalizeScoreEntryHoles(entry), meta: Array(18).fill(null) };
+    }
+    const allowedGroupIds = validGroupIdsByRound?.[r] || new Set();
+    for (const [gid, entry] of Object.entries(srcRound?.groups || {})) {
+      if (!allowedGroupIds.has(gid)) continue;
+      outRound.groups[gid] = { holes: normalizeScoreEntryHoles(entry), meta: Array(18).fill(null) };
+    }
+
+    out.rounds.push(outRound);
+  }
+
+  return out;
+}
+
+function projectScoresForAdmin(scores, roundCount) {
+  const sourceRounds = Array.isArray(scores?.rounds) ? scores.rounds : [];
+  const out = { rounds: [] };
+  for (let r = 0; r < roundCount; r++) {
+    const sourceRound = sourceRounds[r] || {};
+    const outRound = { teams: {}, players: {}, groups: {} };
+    for (const [teamId, entry] of Object.entries(sourceRound?.teams || {})) {
+      outRound.teams[teamId] = { holes: safeHoleArray(entry?.holes || entry) };
+    }
+    for (const [playerId, entry] of Object.entries(sourceRound?.players || {})) {
+      outRound.players[playerId] = { holes: safeHoleArray(entry?.holes || entry) };
+    }
+    for (const [gid, entry] of Object.entries(sourceRound?.groups || {})) {
+      outRound.groups[gid] = { holes: safeHoleArray(entry?.holes || entry) };
+    }
+    out.rounds.push(outRound);
+  }
+  return out;
+}
+
 function applyAutoTwoManGroups(playersById, roundCount) {
   const byTeam = new Map();
   for (const playerId of Object.keys(playersById || {})) {
@@ -353,21 +478,27 @@ function normalizePlayerPayload(payload, existingPlayer, roundCount) {
   };
 }
 
-function cleanupScores(scores, validTeamIds, validPlayerIds, roundCount) {
+function cleanupScores(scores, validTeamIds, validPlayerIds, roundCount, validGroupIdsByRound) {
   const clean = scores || { rounds: [] };
   clean.rounds = Array.isArray(clean.rounds) ? clean.rounds : [];
 
-  while (clean.rounds.length < roundCount) clean.rounds.push({ teams: {}, players: {} });
+  while (clean.rounds.length < roundCount) clean.rounds.push({ teams: {}, players: {}, groups: {} });
   if (clean.rounds.length > roundCount) clean.rounds = clean.rounds.slice(0, roundCount);
 
-  for (const round of clean.rounds) {
+  for (let r = 0; r < clean.rounds.length; r++) {
+    const round = clean.rounds[r];
     round.teams = round.teams || {};
     round.players = round.players || {};
+    round.groups = round.groups || {};
+    const allowedGroupIds = validGroupIdsByRound?.[r] || new Set();
     for (const teamId of Object.keys(round.teams)) {
       if (!validTeamIds.has(teamId)) delete round.teams[teamId];
     }
     for (const playerId of Object.keys(round.players)) {
       if (!validPlayerIds.has(playerId)) delete round.players[playerId];
+    }
+    for (const gid of Object.keys(round.groups)) {
+      if (!allowedGroupIds.has(gid)) delete round.groups[gid];
     }
   }
   return clean;
@@ -416,6 +547,7 @@ function toAdminPayload(state) {
     },
     rounds: state?.rounds || [],
     course: state?.course || null,
+    scores: projectScoresForAdmin(state?.scores, roundCount),
     teams: teamRows,
     players: playerRows,
     hasTwoManBestBall: isTwoManTournament(state?.rounds || []),
@@ -575,12 +707,23 @@ export async function handler(event) {
       }
 
       const validPlayerIds = new Set(Object.keys(nextPlayers));
+      const validGroupIdsByRound = buildValidGroupIdsByRound(nextPlayers, current.rounds);
       current.scores = cleanupScores(
         current.scores,
         validTeamIds,
         validPlayerIds,
-        current.rounds.length
+        current.rounds.length,
+        validGroupIdsByRound
       );
+      if (body?.scores !== undefined) {
+        current.scores = normalizeScoresForState(
+          body.scores,
+          current.rounds.length,
+          validTeamIds,
+          validPlayerIds,
+          validGroupIdsByRound
+        );
+      }
 
       current.players = nextPlayers;
       current.teams = nextTeams;

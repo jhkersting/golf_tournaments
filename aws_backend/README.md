@@ -37,6 +37,10 @@ Top-X behavior for player-based formats (`team_best_ball`, `singles`, `shamble`)
 - Round team leaderboard: sum of Top X
 - Weighted all-round team leaderboard: average of Top X
 
+Two-man behavior:
+- Round team leaderboard: sum of two-man group scores
+- Weighted all-round team leaderboard: average of two-man group scores
+
 ## Static JSON Paths (PUBLIC_BUCKET)
 - `/tournaments/{tid}.json`  (contains `score_data`, leaderboards, hole arrays, to-par arrays)
 - `/enter/{code}.json`       (player + team + rounds + course + saved gross holes per round)

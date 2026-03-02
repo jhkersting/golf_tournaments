@@ -871,9 +871,35 @@ export function materializePublicFromState(state){
       for (const teamId of Object.keys(teams)){
         const sc = derived.team[teamId];
         if (!sc) continue;
+
+        // Weighted all-round two-man contribution should be the average of
+        // two-man groups, while the round leaderboard remains team-summed.
+        const groupPairs = Object.values(sc.groups || {}).map((groupSc) => {
+          const gross = Array.isArray(groupSc?.gross) ? groupSc.gross : Array(18).fill(null);
+          const net = Array.isArray(groupSc?.net) ? groupSc.net : gross;
+          const thru = thruFromHoles(gross);
+          if (!Number.isFinite(thru) || thru <= 0) return null;
+
+          const parPlayed = gross.reduce((acc, v, i) => {
+            return acc + (v == null ? 0 : Number(course.pars[i] || 0));
+          }, 0);
+          const strokes = useHandicap ? sumPlayed(net) : sumPlayed(gross);
+          return { strokes, par: parPlayed };
+        }).filter(Boolean);
+
+        const cur = teamTotals.get(teamId);
+        if (groupPairs.length){
+          const groupCount = groupPairs.length;
+          const avgStrokes = groupPairs.reduce((a, p) => a + Number(p.strokes || 0), 0) / groupCount;
+          const avgPar = groupPairs.reduce((a, p) => a + Number(p.par || 0), 0) / groupCount;
+          cur.strokes += avgStrokes * weight;
+          cur.par += avgPar * weight;
+          continue;
+        }
+
+        // Legacy fallback when group detail is unavailable.
         const parPlayed = sc.grossTotal - sc.grossToParTotal;
         const strokes = useHandicap ? sc.netTotal : sc.grossTotal;
-        const cur = teamTotals.get(teamId);
         cur.strokes += Number(strokes || 0) * weight;
         cur.par += Number(parPlayed || 0) * weight;
       }

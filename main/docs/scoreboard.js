@@ -148,6 +148,14 @@ function rowHasAnyData(row) {
   return false;
 }
 
+function weightedTeamLeaderRow() {
+  const rows = TOURN?.score_data?.leaderboard_all?.teams || [];
+  const rowsWithData = rows.filter((row) => rowHasAnyData(row));
+  if (!rowsWithData.length) return null;
+  const dataAllRounds = buildScoreboardResponse(TOURN, "all");
+  return [...rowsWithData].sort((a, b) => defaultSortComparator(a, b, true, dataAllRounds))[0] || null;
+}
+
 function leaderboardHasAnyData(leaderboard) {
   const teams = leaderboard?.teams || [];
   for (const row of teams) {
@@ -1483,14 +1491,6 @@ function renderLeaderboard(data) {
       return compareRows(a.row, b.row, sortState.key, sortState.dir, showGrossNet, data, isTeam);
     });
 
-  const leader = sortedRows.find((entry) => entry.hasData)?.row || null;
-  if (leader) {
-    const leaderColor = colorForTeam(leader?.teamId, leader?.teamName);
-    setBrandDotColor(leaderColor);
-  } else {
-    setBrandDotColor(null);
-  }
-
   const colCount = leaderboardColCount(data);
   const rowByKey = new Map();
   head.querySelectorAll("button[data-sort-key]").forEach((btn) => {
@@ -2205,6 +2205,12 @@ function startAutoRefresh() {
 function render() {
   if (!TOURN) return;
   setHeaderTournamentName(TOURN?.tournament?.name);
+  const weightedLeader = weightedTeamLeaderRow();
+  if (weightedLeader) {
+    setBrandDotColor(colorForTeam(weightedLeader?.teamId, weightedLeader?.teamName));
+  } else {
+    setBrandDotColor(null);
+  }
   applyModeConstraints(currentRound);
   const data = buildScoreboardResponse(TOURN, currentRound);
 
