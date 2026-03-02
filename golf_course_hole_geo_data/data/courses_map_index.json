@@ -1,13 +1,19 @@
 {
-  "generated_at_utc": "2026-03-02T17:45:58.538498+00:00",
+  "generated_at_utc": "2026-03-02T18:53:11.443855+00:00",
   "data_root": "golf_course_hole_geo_data/data",
-  "course_count": 3,
+  "course_count": 4,
   "counts_by_map_level": {
     "full": 2,
-    "simplified": 1,
+    "simplified": 2,
     "none": 0
   },
   "courses_by_slug": {
+    "keeton-park-gc": {
+      "name": "Keeton Park Golf Course",
+      "map_level": "simplified",
+      "has_full_map": false,
+      "has_simplified_map": true
+    },
     "sherrill-park-golf-course-1": {
       "name": "Sherrill Park Golf Course - Course 1",
       "map_level": "full",
@@ -28,6 +34,25 @@
     }
   },
   "courses": [
+    {
+      "slug": "keeton-park-gc",
+      "name": "Keeton Park Golf Course",
+      "path": "golf_course_hole_geo_data/data/keeton-park-gc",
+      "map_level": "simplified",
+      "has_full_map": false,
+      "has_simplified_map": true,
+      "holes": {
+        "full_map_holes": null,
+        "simplified_map_holes": 18
+      },
+      "files": {
+        "course_geojson": false,
+        "hole_features_geojson": false,
+        "hole_index_json": false,
+        "bluegolf_coordinates_json": true,
+        "bluegolf_course_data_json": true
+      }
+    },
     {
       "slug": "sherrill-park-golf-course-1",
       "name": "Sherrill Park Golf Course - Course 1",

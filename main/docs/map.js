@@ -164,9 +164,14 @@ function distanceMeters(a, b) {
 }
 
 function readLonLatFromRow(row, prefix) {
-  const lat = Number(row?.[`${prefix}_lat`]);
-  const lon = Number(row?.[`${prefix}_lon`]);
+  const rawLat = row?.[`${prefix}_lat`];
+  const rawLon = row?.[`${prefix}_lon`];
+  if (rawLat == null || rawLon == null) return null;
+  if (String(rawLat).trim() === "" || String(rawLon).trim() === "") return null;
+  const lat = Number(rawLat);
+  const lon = Number(rawLon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
   return [lon, lat];
 }
 
@@ -695,7 +700,7 @@ function secureContextMessage() {
 }
 
 function formatYards(value) {
-  return Number.isFinite(value) ? String(Math.round(value)) : "—";
+  return Number.isFinite(value) ? String(Math.round(value)) : "-";
 }
 
 function setMetricValue(el, primaryValue, secondaryValue) {
@@ -1079,6 +1084,7 @@ async function renderCurrentHole() {
   const usingFullMode = state.mapMode === MAP_MODE_FULL;
   const features = usingFullMode ? (state.holeMap.get(hole) || []) : [];
   const holeData = usingFullMode ? null : (state.bluegolfHoleMap.get(hole) || null);
+  const targetAvailable = { front: false, center: false, back: false };
   let par = null;
   let backTee = null;
   let alignmentStart = null;
@@ -1099,19 +1105,42 @@ async function renderCurrentHole() {
     greenTargets.front = computedTargets.front;
     greenTargets.center = computedTargets.center;
     greenTargets.back = computedTargets.back;
+    targetAvailable.front = Array.isArray(greenTargets.front);
+    targetAvailable.center = Array.isArray(greenTargets.center);
+    targetAvailable.back = Array.isArray(greenTargets.back);
     alignmentStart = backTee || firstLinePoint(holeLine) || featureCentroid(green) || null;
     alignmentEnd = greenTargets.center || lastLinePoint(holeLine) || featureCentroid(green) || null;
   } else {
     const parsedPar = Number(state.bluegolfCourse?.pars?.[Number(hole) - 1]);
     par = Number.isFinite(parsedPar) ? parsedPar : null;
     backTee = readLonLatFromRow(holeData, "tee");
-    greenTargets.front = readLonLatFromRow(holeData, "green_front");
-    greenTargets.center = readLonLatFromRow(holeData, "green_center");
-    greenTargets.back = readLonLatFromRow(holeData, "green_back");
-    if (!Array.isArray(greenTargets.front)) greenTargets.front = greenTargets.center || greenTargets.back;
-    if (!Array.isArray(greenTargets.back)) greenTargets.back = greenTargets.center || greenTargets.front;
+    const rawFront = readLonLatFromRow(holeData, "green_front");
+    const rawCenter = readLonLatFromRow(holeData, "green_center");
+    const rawBack = readLonLatFromRow(holeData, "green_back");
+    targetAvailable.front = Array.isArray(rawFront);
+    targetAvailable.center = Array.isArray(rawCenter);
+    targetAvailable.back = Array.isArray(rawBack);
+    greenTargets.front = rawFront;
+    greenTargets.center = rawCenter;
+    greenTargets.back = rawBack;
     alignmentStart = backTee || greenTargets.front || greenTargets.center || null;
     alignmentEnd = greenTargets.center || greenTargets.back || greenTargets.front || null;
+  }
+
+  // Harden against incomplete course rows: permit missing front/back/center and derive fallbacks.
+  if (!Array.isArray(greenTargets.center)) {
+    greenTargets.center = Array.isArray(greenTargets.front)
+      ? greenTargets.front
+      : (Array.isArray(greenTargets.back) ? greenTargets.back : null);
+  }
+  if (!Array.isArray(greenTargets.front)) greenTargets.front = greenTargets.center || greenTargets.back;
+  if (!Array.isArray(greenTargets.back)) greenTargets.back = greenTargets.center || greenTargets.front;
+
+  if (!Array.isArray(alignmentStart)) {
+    alignmentStart = backTee || greenTargets.front || greenTargets.center || greenTargets.back || null;
+  }
+  if (!Array.isArray(alignmentEnd)) {
+    alignmentEnd = greenTargets.center || greenTargets.back || greenTargets.front || alignmentStart || null;
   }
 
   let baseSourceLabel = "Not Set";
@@ -1188,9 +1217,21 @@ async function renderCurrentHole() {
   if (els.metricToPoint) {
     els.metricToPoint.textContent = showToPoint ? formatYards(userToTapYards) : "—";
   }
-  setMetricValue(els.metricFront, yardsFront, usingTapPoint ? userYardsFront : null);
-  setMetricValue(els.metricCenter, yardsCenter, usingTapPoint ? userYardsCenter : null);
-  setMetricValue(els.metricBack, yardsBack, usingTapPoint ? userYardsBack : null);
+  setMetricValue(
+    els.metricFront,
+    targetAvailable.front ? yardsFront : null,
+    usingTapPoint && targetAvailable.front ? userYardsFront : null
+  );
+  setMetricValue(
+    els.metricCenter,
+    targetAvailable.center ? yardsCenter : null,
+    usingTapPoint && targetAvailable.center ? userYardsCenter : null
+  );
+  setMetricValue(
+    els.metricBack,
+    targetAvailable.back ? yardsBack : null,
+    usingTapPoint && targetAvailable.back ? userYardsBack : null
+  );
 
   let detailText = "";
   if (state.locationError) {
@@ -1651,7 +1692,10 @@ function ensureScoreCard() {
         <h2 style="margin:0;">Enter Scores</h2>
         <div class="small" id="map_course_info">Loading…</div>
       </div>
-      <div id="map_round_tabs" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;"></div>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px;">
+        <span class="small" style="font-weight:700;">Round:</span>
+        <div id="map_round_tabs" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+      </div>
       <div id="map_score_rows" style="display:flex; gap:8px; overflow:auto; padding:2px 1px; margin-top:10px;"></div>
       <div class="actions hole-actions" style="margin-top:10px;">
         <button id="map_submit_hole_btn" type="button">Submit hole</button>
