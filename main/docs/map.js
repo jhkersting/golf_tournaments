@@ -39,8 +39,10 @@ const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 const MAP_PROXIMITY_ZOOM_MAX_BOOST = 0.45;
 const TAP_PREVIEW_DURATION_MS = 7000;
-const TAP_DOT_MOBILE_RADIUS_MULTIPLIER = 1.45;
+const TAP_DOT_MOBILE_RADIUS_MULTIPLIER = 1.75;
+const PLAYER_DOT_MOBILE_RADIUS_MULTIPLIER = 1.65;
 const SCORE_AUTO_REFRESH_MS = 30_000;
+const MISSING_BACK_EXTENSION_YARDS = 30;
 
 const state = {
   courseFeatures: [],
@@ -161,6 +163,21 @@ function distanceYards(a, b) {
 
 function distanceMeters(a, b) {
   return distanceYards(a, b) / 1.0936133;
+}
+
+function projectBeyondPoint(startPoint, endPoint, yards) {
+  if (!Array.isArray(startPoint) || !Array.isArray(endPoint)) return null;
+  const [sx, sy] = lonLatToMercator(startPoint);
+  const [ex, ey] = lonLatToMercator(endPoint);
+  const dx = ex - sx;
+  const dy = ey - sy;
+  const len = Math.hypot(dx, dy);
+  if (!Number.isFinite(len) || len < 1e-6) return null;
+  const meters = Number(yards) / 1.0936133;
+  if (!Number.isFinite(meters) || meters <= 0) return null;
+  const nx = dx / len;
+  const ny = dy / len;
+  return mercatorToLonLat([ex + nx * meters, ey + ny * meters]);
 }
 
 function readLonLatFromRow(row, prefix) {
@@ -1263,11 +1280,25 @@ async function renderCurrentHole() {
   }
   els.holeEmpty.style.display = "none";
 
+  let syntheticBackProjectionPoint = null;
+  if (!targetAvailable.back && Array.isArray(greenTargets.center)) {
+    const backDirectionStart =
+      (targetAvailable.front && Array.isArray(greenTargets.front))
+        ? greenTargets.front
+        : (Array.isArray(backTee) ? backTee : alignmentStart);
+    syntheticBackProjectionPoint = projectBeyondPoint(
+      backDirectionStart,
+      greenTargets.center,
+      MISSING_BACK_EXTENSION_YARDS
+    );
+  }
+
   const extraPoints = [
     backTee,
     greenTargets.front,
     greenTargets.center,
     greenTargets.back,
+    syntheticBackProjectionPoint,
     mapPlayerPoint,
   ];
 
@@ -1311,6 +1342,7 @@ async function renderCurrentHole() {
   if (renderNonce !== state.renderNonce) return;
 
   const strokeDefault = darkTheme ? "rgba(243,248,255,0.95)" : "rgba(18,34,54,0.95)";
+  const isMobileDot = window.matchMedia("(max-width: 560px)").matches;
   if (usingFullMode) {
     const drawRank = { fairway: 1, green: 2, bunker: 3, tee: 4, hole: 5 };
     const strokeOther = darkTheme ? "rgba(235,240,248,0.76)" : "rgba(18,34,54,0.72)";
@@ -1354,19 +1386,23 @@ async function renderCurrentHole() {
 
   if (Array.isArray(backTee)) {
     const [tx, ty] = project(backTee);
+    const teeDotRadius = isMobileDot ? 11 : 9;
     ctx.beginPath();
-    ctx.arc(tx, ty, 7, 0, Math.PI * 2);
-    ctx.fillStyle = "#fff";
+    ctx.arc(tx, ty, teeDotRadius, 0, Math.PI * 2);
+    ctx.fillStyle = "#000";
     ctx.fill();
-    ctx.strokeStyle = "#567037";
+    ctx.strokeStyle = "#fff";
     ctx.lineWidth = 2;
     ctx.stroke();
   }
 
   if (Array.isArray(mapPlayerPoint)) {
     const [px, py] = project(mapPlayerPoint);
+    const playerDotRadius = isMobileDot
+      ? 8 * PLAYER_DOT_MOBILE_RADIUS_MULTIPLIER
+      : 8;
     ctx.beginPath();
-    ctx.arc(px, py, 8, 0, Math.PI * 2);
+    ctx.arc(px, py, playerDotRadius, 0, Math.PI * 2);
     ctx.fillStyle = "#2c7ef6";
     ctx.fill();
     ctx.strokeStyle = "#fff";
@@ -1376,7 +1412,7 @@ async function renderCurrentHole() {
 
   if (Array.isArray(state.tapPoint)) {
     const [tx, ty] = project(state.tapPoint);
-    const tapDotRadius = window.matchMedia("(max-width: 560px)").matches
+    const tapDotRadius = isMobileDot
       ? 7 * TAP_DOT_MOBILE_RADIUS_MULTIPLIER
       : 7;
     ctx.beginPath();
