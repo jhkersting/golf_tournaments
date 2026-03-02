@@ -188,7 +188,7 @@ def main() -> int:
         layer_title = str(layer.get("title") or f"layer-{idx}")
         layer_id = str(layer.get("id") or idx)
 
-        if not layer_url or "FeatureLayer" not in layer_type:
+        if not layer_url:
             layer_summaries.append(
                 {
                     "index": idx,
@@ -196,17 +196,31 @@ def main() -> int:
                     "id": layer_id,
                     "layer_type": layer_type,
                     "url": layer_url,
-                    "status": "skipped_non_feature_layer",
+                    "status": "skipped_missing_layer_url",
                 }
             )
             continue
 
-        layer_info = get_json(layer_url, timeout=args.timeout)
-        layer_geojson = fetch_layer_features(
-            layer_url=layer_url,
-            timeout=args.timeout,
-            batch_size=args.batch_size,
-        )
+        try:
+            layer_info = get_json(layer_url, timeout=args.timeout)
+            layer_geojson = fetch_layer_features(
+                layer_url=layer_url,
+                timeout=args.timeout,
+                batch_size=args.batch_size,
+            )
+        except Exception as exc:
+            layer_summaries.append(
+                {
+                    "index": idx,
+                    "title": layer_title,
+                    "id": layer_id,
+                    "layer_type": layer_type,
+                    "url": layer_url,
+                    "status": "skipped_non_queryable_layer",
+                    "error": str(exc),
+                }
+            )
+            continue
 
         for feature in layer_geojson.get("features", []):
             props = feature.get("properties")

@@ -1355,41 +1355,28 @@ th.dots {
 }
 
 .hole-shape {
-  stroke-width: 1.1;
-}
-
-.hole-shape.golf-fairway {
-  fill: rgba(123, 207, 90, 0.72);
-  stroke: rgba(58, 130, 40, 0.8);
-}
-
-.hole-shape.golf-green {
-  fill: rgba(47, 143, 51, 0.9);
-  stroke: rgba(26, 96, 28, 0.95);
-}
-
-.hole-shape.golf-bunker {
-  fill: rgba(227, 207, 143, 0.88);
-  stroke: rgba(140, 116, 53, 0.85);
-}
-
-.hole-shape.golf-tee {
-  fill: rgba(87, 112, 55, 0.82);
-  stroke: rgba(56, 79, 31, 0.95);
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .hole-path {
   fill: none;
-  stroke: #f16b6b;
-  stroke-width: 2.2;
+  stroke: var(--text);
+  stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .hole-other {
   fill: none;
-  stroke: var(--border-strong);
-  stroke-width: 1.2;
+  stroke: var(--text);
+  stroke-width: 0.9;
+  vector-effect: non-scaling-stroke;
 }
 
 .marker {
@@ -1419,6 +1406,12 @@ th.dots {
 .marker-player {
   fill: #2c7ef6;
   stroke: #fff;
+}
+
+.marker-tap {
+  fill: var(--surface-strong);
+  stroke: var(--text);
+  stroke-width: 2.4;
 }
 
 .marker-player.fallback {

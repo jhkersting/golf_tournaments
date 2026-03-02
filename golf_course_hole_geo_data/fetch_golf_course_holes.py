@@ -19,7 +19,15 @@ from urllib3.util.retry import Retry
 
 DEFAULT_ENDPOINT = "https://overpass-api.de/api/interpreter"
 DEFAULT_USER_AGENT = "golf-tournaments-overpass-client/1.0"
-DEFAULT_GOLF_TAGS = ["hole", "fairway", "green", "tee", "bunker"]
+DEFAULT_GOLF_TAGS = [
+    "hole",
+    "fairway",
+    "green",
+    "tee",
+    "bunker",
+    "water_hazard",
+    "lateral_water_hazard",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +98,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--include-water",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Include non-golf-tagged water features inside the course area/bbox "
+            "(natural=water, waterway=*, landuse=reservoir). Default: enabled."
+        ),
+    )
+    parser.add_argument(
         "--user-agent",
         default=DEFAULT_USER_AGENT,
         help=f"User-Agent header sent to Overpass (default: {DEFAULT_USER_AGENT}).",
@@ -129,8 +146,20 @@ def build_feature_query_for_area(
     course_name: str,
     golf_tag_regex: str,
     query_timeout: int,
+    include_water: bool,
 ) -> str:
     escaped = escape_overpass(course_name)
+    water_clause = ""
+    if include_water:
+        water_clause = """
+  node["natural"="water"](area.courseArea);
+  way["natural"="water"](area.courseArea);
+  relation["natural"="water"](area.courseArea);
+  way["waterway"](area.courseArea);
+  relation["waterway"](area.courseArea);
+  way["landuse"="reservoir"](area.courseArea);
+  relation["landuse"="reservoir"](area.courseArea);
+"""
     return f"""
 [out:json][timeout:{query_timeout}];
 area["leisure"="golf_course"]["name"="{escaped}"]->.courseArea;
@@ -138,6 +167,7 @@ area["leisure"="golf_course"]["name"="{escaped}"]->.courseArea;
   node["golf"~"{golf_tag_regex}"](area.courseArea);
   way["golf"~"{golf_tag_regex}"](area.courseArea);
   relation["golf"~"{golf_tag_regex}"](area.courseArea);
+{water_clause}
 );
 out body geom;
 """
@@ -147,14 +177,27 @@ def build_feature_query_for_bbox(
     bbox: tuple[float, float, float, float],
     golf_tag_regex: str,
     query_timeout: int,
+    include_water: bool,
 ) -> str:
     south, west, north, east = bbox
+    water_clause = ""
+    if include_water:
+        water_clause = f"""
+  node["natural"="water"]({south},{west},{north},{east});
+  way["natural"="water"]({south},{west},{north},{east});
+  relation["natural"="water"]({south},{west},{north},{east});
+  way["waterway"]({south},{west},{north},{east});
+  relation["waterway"]({south},{west},{north},{east});
+  way["landuse"="reservoir"]({south},{west},{north},{east});
+  relation["landuse"="reservoir"]({south},{west},{north},{east});
+"""
     return f"""
 [out:json][timeout:{query_timeout}];
 (
   node["golf"~"{golf_tag_regex}"]({south},{west},{north},{east});
   way["golf"~"{golf_tag_regex}"]({south},{west},{north},{east});
   relation["golf"~"{golf_tag_regex}"]({south},{west},{north},{east});
+{water_clause}
 );
 out body geom;
 """
@@ -241,6 +284,28 @@ def parse_hole_ref(tags: dict[str, Any]) -> int | None:
     return None
 
 
+def normalize_golf_tag(tags: dict[str, Any]) -> str | None:
+    raw_golf = str(tags.get("golf") or "").strip().lower()
+    if raw_golf in {"water_hazard", "lateral_water_hazard", "water"}:
+        return "water"
+    if raw_golf:
+        return raw_golf
+
+    natural = str(tags.get("natural") or "").strip().lower()
+    if natural == "water":
+        return "water"
+
+    waterway = str(tags.get("waterway") or "").strip().lower()
+    if waterway:
+        return "water"
+
+    landuse = str(tags.get("landuse") or "").strip().lower()
+    if landuse == "reservoir":
+        return "water"
+
+    return None
+
+
 def geometry_from_element(element: dict[str, Any]) -> dict[str, Any] | None:
     element_type = element.get("type")
     if element_type == "node":
@@ -277,6 +342,10 @@ def feature_from_element(element: dict[str, Any], source_layer: str) -> dict[str
         "source_layer": source_layer,
         **tags,
     }
+    normalized_golf = normalize_golf_tag(tags)
+    if normalized_golf is not None:
+        properties["golf"] = normalized_golf
+
     hole_ref = parse_hole_ref(tags)
     if hole_ref is not None:
         properties["hole_ref"] = hole_ref
@@ -406,6 +475,7 @@ def build_metadata(
     course_query_endpoint: str,
     feature_query_endpoint: str,
     golf_tags: list[str],
+    include_water: bool,
     course_features: list[dict[str, Any]],
     area_features: list[dict[str, Any]],
     area_source: str,
@@ -428,6 +498,7 @@ def build_metadata(
         "course_query_endpoint_used": course_query_endpoint,
         "feature_query_endpoint_used": feature_query_endpoint,
         "golf_tags_requested": golf_tags,
+        "include_water": include_water,
         "course_feature_count": len(course_features),
         "area_feature_count": len(area_features),
         "area_query_source": area_source,
@@ -474,6 +545,7 @@ def main() -> int:
             course_name=args.course,
             golf_tag_regex=golf_tag_regex,
             query_timeout=args.query_timeout,
+            include_water=args.include_water,
         )
         area_payload, feature_query_endpoint = query_with_fallback(clients, area_query)
         area_features = features_from_elements(area_payload["elements"], "course_area")
@@ -488,6 +560,7 @@ def main() -> int:
                 bbox=bbox_fallback,
                 golf_tag_regex=golf_tag_regex,
                 query_timeout=args.query_timeout,
+                include_water=args.include_water,
             )
             bbox_payload, feature_query_endpoint = query_with_fallback(clients, bbox_query)
             area_features = features_from_elements(
@@ -509,6 +582,7 @@ def main() -> int:
             course_query_endpoint=course_query_endpoint,
             feature_query_endpoint=feature_query_endpoint,
             golf_tags=args.golf_tags,
+            include_water=args.include_water,
             course_features=course_features,
             area_features=area_features,
             area_source=area_source,

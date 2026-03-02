@@ -4,7 +4,8 @@ const DATA_BASE_CANDIDATES = [
   "/golf_course_hole_geo_data/data/sherrill-park-golf-course-1",
 ];
 const SVG_NS = "http://www.w3.org/2000/svg";
-const LOCATION_REFRESH_MS = 2000;
+const LOCATION_ACCURACY_TARGET_M = 12;
+const LOCATION_TIMEOUT_MS = 15000;
 const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 
@@ -17,10 +18,11 @@ const state = {
   userLocation: null,
   locationAccuracyM: null,
   locationError: "",
-  locationIntervalMs: LOCATION_REFRESH_MS,
-  locationTimerId: null,
+  locationWatchId: null,
   locationPending: false,
   locationPermissionGranted: false,
+  tapPoint: null,
+  lastProjection: null,
   dataBase: null,
 };
 
@@ -259,7 +261,23 @@ function createAlignedProjector(features, extraPoints, alignmentStart, alignment
     return [x, y];
   };
 
-  return { project };
+  const unproject = (screenPoint) => {
+    if (!Array.isArray(screenPoint) || screenPoint.length < 2) return null;
+    const [x, y] = screenPoint;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+    const rx = (x - offsetX) / scale + minX;
+    const ry = (height - y - offsetY) / scale + minY;
+    const lx = rx * cosA + ry * sinA;
+    const ly = -rx * sinA + ry * cosA;
+    const lon = lx / lonScale + centerLon;
+    const lat = ly + centerLat;
+
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+    return [lon, lat];
+  };
+
+  return { project, unproject };
 }
 
 function pathFromLineString(coords, project) {
@@ -400,15 +418,6 @@ function formatYards(value) {
   return Number.isFinite(value) ? String(Math.round(value)) : "—";
 }
 
-function clampIntervalMs(value) {
-  if (!Number.isFinite(value)) return 2000;
-  if (value <= 1000) return 1000;
-  if (value >= 3000) return 3000;
-  if (value < 1500) return 1000;
-  if (value < 2500) return 2000;
-  return 3000;
-}
-
 function getCanvasConfig() {
   if (window.matchMedia("(max-width: 560px)").matches) {
     return { width: 1200, height: 2200, margin: 60 };
@@ -434,7 +443,7 @@ function persistGeolocationGrant(granted) {
 
 function updateTrackingButton() {
   const hasSharedLocation =
-    state.locationPermissionGranted || Array.isArray(state.userLocation) || Boolean(state.locationTimerId);
+    state.locationPermissionGranted || Array.isArray(state.userLocation) || state.locationWatchId != null;
 
   if (els.locBtn) {
     els.locBtn.style.display = hasSharedLocation ? "none" : "";
@@ -448,10 +457,41 @@ function updateTrackingButton() {
   }
 }
 
+function svgPointFromEvent(event) {
+  if (!els.holeSvg) return null;
+  const rect = els.holeSvg.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+
+  const point = event?.changedTouches?.[0] || event?.touches?.[0] || event;
+  const clientX = Number(point?.clientX);
+  const clientY = Number(point?.clientY);
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+
+  const vb = els.holeSvg.viewBox?.baseVal;
+  const vbX = vb?.x ?? 0;
+  const vbY = vb?.y ?? 0;
+  const vbW = vb?.width || rect.width;
+  const vbH = vb?.height || rect.height;
+
+  const x = vbX + ((clientX - rect.left) / rect.width) * vbW;
+  const y = vbY + ((clientY - rect.top) / rect.height) * vbH;
+  return [x, y];
+}
+
+function handleHoleTap(event) {
+  if (!state.lastProjection?.unproject) return;
+  const svgPoint = svgPointFromEvent(event);
+  if (!svgPoint) return;
+  const mapPoint = state.lastProjection.unproject(svgPoint);
+  if (!Array.isArray(mapPoint)) return;
+  state.tapPoint = mapPoint;
+  renderCurrentHole();
+}
+
 function stopLocationTracking(clearLocation, statusText) {
-  if (state.locationTimerId) {
-    clearInterval(state.locationTimerId);
-    state.locationTimerId = null;
+  if (state.locationWatchId != null && "geolocation" in navigator) {
+    navigator.geolocation.clearWatch(state.locationWatchId);
+    state.locationWatchId = null;
   }
   state.locationPending = false;
 
@@ -467,67 +507,58 @@ function stopLocationTracking(clearLocation, statusText) {
   updateTrackingButton();
 }
 
-function pullLocationOnce() {
-  const secureMsg = secureContextMessage();
-  if (secureMsg) {
-    state.locationError = secureMsg;
-    stopLocationTracking(false, secureMsg);
+function applyLocationFix(position) {
+  const lon = Number(position?.coords?.longitude);
+  const lat = Number(position?.coords?.latitude);
+  const accuracy = Number(position?.coords?.accuracy);
+  state.locationAccuracyM = Number.isFinite(accuracy) ? accuracy : null;
+  state.locationError = "";
+  state.locationPermissionGranted = true;
+  persistGeolocationGrant(true);
+
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+    updateLocationStatus("Location received, but coordinates were invalid.");
+    updateTrackingButton();
     renderCurrentHole();
     return;
   }
 
-  if (!("geolocation" in navigator)) {
-    state.locationError = "This browser does not support geolocation.";
-    stopLocationTracking(false, state.locationError);
+  if (Number.isFinite(accuracy) && accuracy > LOCATION_ACCURACY_TARGET_M) {
+    updateLocationStatus(
+      `GPS accuracy ${Math.round(accuracy)}m. Waiting for <=${LOCATION_ACCURACY_TARGET_M}m.`
+    );
+    updateTrackingButton();
     renderCurrentHole();
     return;
   }
 
-  if (state.locationPending) return;
-
-  state.locationPending = true;
+  state.userLocation = [lon, lat];
+  const accText = Number.isFinite(accuracy) ? ` (${Math.round(accuracy)}m)` : "";
+  updateLocationStatus(`Tracking precise location${accText}.`);
   updateTrackingButton();
+  renderCurrentHole();
+}
 
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      state.locationPending = false;
-      state.userLocation = [position.coords.longitude, position.coords.latitude];
-      state.locationAccuracyM = position.coords.accuracy;
-      state.locationError = "";
-      state.locationPermissionGranted = true;
-      persistGeolocationGrant(true);
-      updateLocationStatus(`Tracking location every ${state.locationIntervalMs / 1000}s.`);
-      updateTrackingButton();
-      renderCurrentHole();
-    },
-    (error) => {
-      state.locationPending = false;
-      const codeMap = {
-        1: "Location permission was denied.",
-        2: "Location is unavailable.",
-        3: "Location request timed out.",
-      };
-      const base = codeMap[error.code] || "Could not get current location.";
-      const detail = error?.message ? ` ${error.message}` : "";
-      state.locationError = `${base}${detail}`.trim();
+function handleLocationFailure(error) {
+  const codeMap = {
+    1: "Location permission was denied.",
+    2: "Location is unavailable.",
+    3: "Location request timed out.",
+  };
+  const base = codeMap[error?.code] || "Could not get current location.";
+  const detail = error?.message ? ` ${error.message}` : "";
+  state.locationError = `${base}${detail}`.trim();
 
-      if (error.code === 1) {
-        state.locationPermissionGranted = false;
-        persistGeolocationGrant(false);
-        stopLocationTracking(false, state.locationError);
-      } else {
-        updateLocationStatus(state.locationError);
-        updateTrackingButton();
-      }
+  if (error?.code === 1) {
+    state.locationPermissionGranted = false;
+    persistGeolocationGrant(false);
+    stopLocationTracking(false, state.locationError);
+  } else {
+    updateLocationStatus(state.locationError);
+    updateTrackingButton();
+  }
 
-      renderCurrentHole();
-    },
-    {
-      enableHighAccuracy: true,
-      timeout: 9000,
-      maximumAge: 500,
-    }
-  );
+  renderCurrentHole();
 }
 
 function startLocationTracking() {
@@ -546,18 +577,35 @@ function startLocationTracking() {
     return;
   }
 
-  const selectedMs = clampIntervalMs(LOCATION_REFRESH_MS);
-  state.locationIntervalMs = selectedMs;
-
-  if (state.locationTimerId) {
-    clearInterval(state.locationTimerId);
-    state.locationTimerId = null;
+  if (state.locationWatchId != null) {
+    navigator.geolocation.clearWatch(state.locationWatchId);
+    state.locationWatchId = null;
   }
 
+  state.locationPending = true;
   state.locationError = "";
-  updateLocationStatus(`Tracking location every ${selectedMs / 1000}s.`);
-  pullLocationOnce();
-  state.locationTimerId = setInterval(pullLocationOnce, selectedMs);
+  updateLocationStatus(`Acquiring precise GPS (target <=${LOCATION_ACCURACY_TARGET_M}m)...`);
+  try {
+    state.locationWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        state.locationPending = false;
+        applyLocationFix(position);
+      },
+      (error) => {
+        state.locationPending = false;
+        handleLocationFailure(error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: LOCATION_TIMEOUT_MS,
+        maximumAge: 0,
+      }
+    );
+  } catch (error) {
+    state.locationPending = false;
+    state.locationError = `Could not start location watch. ${error?.message || ""}`.trim();
+    updateLocationStatus(state.locationError);
+  }
   updateTrackingButton();
 }
 
@@ -650,6 +698,14 @@ function renderCurrentHole() {
   const mapShouldFocusHole =
     Number.isFinite(userToGreenCenterYards) && userToGreenCenterYards > MAP_FOCUS_MAX_USER_DISTANCE_YARDS;
   const mapPlayerPoint = mapShouldFocusHole ? null : playingPoint;
+  const tapToGreenCenterYards =
+    Array.isArray(state.tapPoint) && Array.isArray(greenTargets.center)
+      ? distanceYards(state.tapPoint, greenTargets.center)
+      : null;
+  const userToTapYards =
+    Array.isArray(state.tapPoint) && Array.isArray(state.userLocation)
+      ? distanceYards(state.userLocation, state.tapPoint)
+      : null;
 
   els.metricHole.textContent = hole == null ? "—" : String(hole);
   els.metricPar.textContent = par == null ? "—" : String(par);
@@ -658,8 +714,9 @@ function renderCurrentHole() {
   els.metricBack.textContent = formatYards(yardsBack);
   els.metricSource.textContent = sourceLabel;
 
+  let detailText = "";
   if (state.locationError) {
-    els.yardageDetail.textContent = state.locationError;
+    detailText = state.locationError;
   } else if (sourceLabel === "My Location") {
     const acc = Number.isFinite(state.locationAccuracyM)
       ? ` GPS accuracy ~${Math.round(state.locationAccuracyM)}m.`
@@ -667,16 +724,32 @@ function renderCurrentHole() {
     const zoomHint = mapShouldFocusHole
       ? ` You are ${Math.round(userToGreenCenterYards)} yards from center green, so the map stays focused on the hole.`
       : "";
-    els.yardageDetail.textContent = `Live yardages from your location updating every ${state.locationIntervalMs / 1000}s.${acc}${zoomHint}`;
+    detailText = `Live yardages from your location.${acc}${zoomHint}`;
   } else if (sourceLabel === "Back Tee Default") {
-    els.yardageDetail.textContent = "Location not set yet. Showing back-tee yardages by default.";
+    detailText = "Location not set yet. Showing back-tee yardages by default.";
   } else {
-    els.yardageDetail.textContent = "No location or tee reference available for this hole.";
+    detailText = "No location or tee reference available for this hole.";
   }
+
+  if (Number.isFinite(state.locationAccuracyM) && state.locationAccuracyM > LOCATION_ACCURACY_TARGET_M) {
+    detailText = `${detailText} Waiting for higher-accuracy GPS fix (currently ~${Math.round(state.locationAccuracyM)}m).`.trim();
+  }
+
+  if (Number.isFinite(tapToGreenCenterYards)) {
+    const tapText = `Tap: ${Math.round(tapToGreenCenterYards)}y to center green`;
+    const userText = Number.isFinite(userToTapYards)
+      ? `, ${Math.round(userToTapYards)}y from your location`
+      : ", share location to see your distance to tap";
+    detailText = `${detailText} ${tapText}${userText}.`.trim();
+  } else if (!state.locationError) {
+    detailText = `${detailText} Tap map to get center-green yardage.`.trim();
+  }
+  els.yardageDetail.textContent = detailText;
 
   while (els.holeSvg.firstChild) els.holeSvg.removeChild(els.holeSvg.firstChild);
 
   if (!features.length) {
+    state.lastProjection = null;
     els.holeEmpty.style.display = "";
     return;
   }
@@ -707,10 +780,12 @@ function renderCurrentHole() {
   );
 
   if (!projection) {
+    state.lastProjection = null;
     els.holeEmpty.style.display = "";
     return;
   }
 
+  state.lastProjection = projection;
   const { project } = projection;
 
   appendSvg("rect", {
@@ -772,6 +847,11 @@ function renderCurrentHole() {
     appendSvg("circle", { cx: px, cy: py, r: 8, class: "marker marker-player" });
   }
 
+  if (Array.isArray(state.tapPoint)) {
+    const [tx, ty] = project(state.tapPoint);
+    appendSvg("circle", { cx: tx, cy: ty, r: 7, class: "marker marker-tap" });
+  }
+
   appendSvg("text", {
     x: 24,
     y: 42,
@@ -782,6 +862,7 @@ function renderCurrentHole() {
 function setHole(holeNumber) {
   if (!state.holes.includes(holeNumber)) return;
   state.currentHole = holeNumber;
+  state.tapPoint = null;
   els.holeSelect.value = String(holeNumber);
   renderCurrentHole();
 }
@@ -814,6 +895,10 @@ function bindEvents() {
       stopLocationTracking(true, "Location cleared.");
       renderCurrentHole();
     });
+  }
+
+  if (els.holeSvg) {
+    els.holeSvg.addEventListener("click", handleHoleTap);
   }
 
   window.addEventListener("keydown", (event) => {
