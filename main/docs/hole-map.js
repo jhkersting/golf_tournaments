@@ -5,6 +5,8 @@ const DATA_BASE_CANDIDATES = [
 ];
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LOCATION_REFRESH_MS = 2000;
+const GEO_GRANTED_KEY = "hole-map:geo-granted";
+const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 
 const state = {
   courseFeatures: [],
@@ -18,6 +20,7 @@ const state = {
   locationIntervalMs: LOCATION_REFRESH_MS,
   locationTimerId: null,
   locationPending: false,
+  locationPermissionGranted: false,
   dataBase: null,
 };
 
@@ -46,8 +49,7 @@ function parseHoleRef(value) {
   const match = raw.match(/\d{1,2}/);
   if (!match) return null;
   const hole = Number(match[0]);
-  if (!Number.isFinite(hole)) return null;
-  return hole;
+  return Number.isFinite(hole) ? hole : null;
 }
 
 function toRad(value) {
@@ -80,12 +82,14 @@ function collectPositions(geometry, out) {
     if (Array.isArray(coords) && coords.length === 2) out.push(coords);
     return;
   }
+
   if (type === "MultiPoint" || type === "LineString") {
     for (const point of coords) {
       if (Array.isArray(point) && point.length === 2) out.push(point);
     }
     return;
   }
+
   if (type === "MultiLineString" || type === "Polygon") {
     for (const line of coords) {
       if (!Array.isArray(line)) continue;
@@ -95,6 +99,7 @@ function collectPositions(geometry, out) {
     }
     return;
   }
+
   if (type === "MultiPolygon") {
     for (const poly of coords) {
       if (!Array.isArray(poly)) continue;
@@ -139,11 +144,13 @@ function ringArea(ring) {
 function featureArea(feature) {
   const geom = feature?.geometry;
   if (!geom) return 0;
+
   if (geom.type === "Polygon") {
     return Array.isArray(geom.coordinates)
       ? geom.coordinates.reduce((sum, ring) => sum + ringArea(ring), 0)
       : 0;
   }
+
   if (geom.type === "MultiPolygon") {
     if (!Array.isArray(geom.coordinates)) return 0;
     let total = 0;
@@ -153,6 +160,7 @@ function featureArea(feature) {
     }
     return total;
   }
+
   return 0;
 }
 
@@ -251,7 +259,7 @@ function createAlignedProjector(features, extraPoints, alignmentStart, alignment
     return [x, y];
   };
 
-  return { project, rotationRad };
+  return { project };
 }
 
 function pathFromLineString(coords, project) {
@@ -345,9 +353,7 @@ function greenFrontBackPoints(greenFeature, backTee, holeLine) {
 
   let teeRef = Array.isArray(backTee) ? backTee : firstLinePoint(holeLine);
   if (!Array.isArray(teeRef)) teeRef = center;
-  if (!Array.isArray(teeRef)) {
-    return { front: center, center, back: center };
-  }
+  if (!Array.isArray(teeRef)) return { front: center, center, back: center };
 
   let front = pts[0];
   let back = pts[0];
@@ -410,10 +416,36 @@ function getCanvasConfig() {
   return { width: 1200, height: 760, margin: 52 };
 }
 
+function readGeolocationGrant() {
+  try {
+    return localStorage.getItem(GEO_GRANTED_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function persistGeolocationGrant(granted) {
+  try {
+    localStorage.setItem(GEO_GRANTED_KEY, granted ? "1" : "0");
+  } catch (_) {
+    // ignore
+  }
+}
+
 function updateTrackingButton() {
-  const tracking = Boolean(state.locationTimerId);
-  els.locBtn.textContent = tracking ? "Tracking..." : "Use My Location";
-  els.locBtn.disabled = Boolean(state.locationPending);
+  const hasSharedLocation =
+    state.locationPermissionGranted || Array.isArray(state.userLocation) || Boolean(state.locationTimerId);
+
+  if (els.locBtn) {
+    els.locBtn.style.display = hasSharedLocation ? "none" : "";
+    els.locBtn.disabled = Boolean(state.locationPending);
+    els.locBtn.textContent = state.locationPending ? "Locating..." : "Use My Location";
+  }
+
+  if (els.locClear) {
+    els.locClear.style.display = hasSharedLocation ? "" : "none";
+    els.locClear.disabled = Boolean(state.locationPending);
+  }
 }
 
 function stopLocationTracking(clearLocation, statusText) {
@@ -427,6 +459,8 @@ function stopLocationTracking(clearLocation, statusText) {
     state.userLocation = null;
     state.locationAccuracyM = null;
     state.locationError = "";
+    state.locationPermissionGranted = false;
+    persistGeolocationGrant(false);
   }
 
   if (statusText) updateLocationStatus(statusText);
@@ -448,6 +482,7 @@ function pullLocationOnce() {
     renderCurrentHole();
     return;
   }
+
   if (state.locationPending) return;
 
   state.locationPending = true;
@@ -459,11 +494,9 @@ function pullLocationOnce() {
       state.userLocation = [position.coords.longitude, position.coords.latitude];
       state.locationAccuracyM = position.coords.accuracy;
       state.locationError = "";
-      if (state.locationTimerId) {
-        updateLocationStatus(`Tracking location every ${state.locationIntervalMs / 1000}s.`);
-      } else {
-        updateLocationStatus("Location captured.");
-      }
+      state.locationPermissionGranted = true;
+      persistGeolocationGrant(true);
+      updateLocationStatus(`Tracking location every ${state.locationIntervalMs / 1000}s.`);
       updateTrackingButton();
       renderCurrentHole();
     },
@@ -477,12 +510,16 @@ function pullLocationOnce() {
       const base = codeMap[error.code] || "Could not get current location.";
       const detail = error?.message ? ` ${error.message}` : "";
       state.locationError = `${base}${detail}`.trim();
+
       if (error.code === 1) {
+        state.locationPermissionGranted = false;
+        persistGeolocationGrant(false);
         stopLocationTracking(false, state.locationError);
       } else {
         updateLocationStatus(state.locationError);
         updateTrackingButton();
       }
+
       renderCurrentHole();
     },
     {
@@ -524,6 +561,54 @@ function startLocationTracking() {
   updateTrackingButton();
 }
 
+async function maybeAutoStartTracking() {
+  const secureMsg = secureContextMessage();
+  if (secureMsg) return;
+  if (!("geolocation" in navigator)) return;
+
+  const savedGranted = readGeolocationGrant();
+
+  if (navigator.permissions?.query) {
+    try {
+      const perm = await navigator.permissions.query({ name: "geolocation" });
+
+      if (perm.state === "granted") {
+        state.locationPermissionGranted = true;
+        persistGeolocationGrant(true);
+        startLocationTracking();
+      } else if (savedGranted) {
+        // Older browser state may still prompt, but this preserves continuous behavior after prior grant.
+        startLocationTracking();
+      }
+
+      if (typeof perm.onchange !== "undefined") {
+        perm.onchange = () => {
+          if (perm.state === "granted") {
+            state.locationPermissionGranted = true;
+            persistGeolocationGrant(true);
+            startLocationTracking();
+            return;
+          }
+          if (perm.state === "denied") {
+            state.locationPermissionGranted = false;
+            persistGeolocationGrant(false);
+            stopLocationTracking(false, "Location permission was denied.");
+            renderCurrentHole();
+          }
+        };
+      }
+
+      updateTrackingButton();
+      return;
+    } catch (_) {
+      // Fall through to local hint.
+    }
+  }
+
+  if (savedGranted) startLocationTracking();
+  updateTrackingButton();
+}
+
 function renderCurrentHole() {
   const hole = state.currentHole;
   const features = state.holeMap.get(hole) || [];
@@ -536,19 +621,10 @@ function renderCurrentHole() {
 
   let sourceLabel = "Not Set";
   let playingPoint = null;
-  let actualFromUserToCenter = null;
-  let usingBackTeeFallback = false;
 
-  if (Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)) {
-    actualFromUserToCenter = distanceYards(state.userLocation, greenTargets.center);
-    if (actualFromUserToCenter > 1000 && Array.isArray(backTee)) {
-      sourceLabel = "Back Tee Fallback";
-      playingPoint = backTee;
-      usingBackTeeFallback = true;
-    } else {
-      sourceLabel = "My Location";
-      playingPoint = state.userLocation;
-    }
+  if (Array.isArray(state.userLocation)) {
+    sourceLabel = "My Location";
+    playingPoint = state.userLocation;
   } else if (Array.isArray(backTee)) {
     sourceLabel = "Back Tee Default";
     playingPoint = backTee;
@@ -567,6 +643,14 @@ function renderCurrentHole() {
       ? distanceYards(playingPoint, greenTargets.back)
       : null;
 
+  const userToGreenCenterYards =
+    sourceLabel === "My Location" && Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)
+      ? distanceYards(state.userLocation, greenTargets.center)
+      : null;
+  const mapShouldFocusHole =
+    Number.isFinite(userToGreenCenterYards) && userToGreenCenterYards > MAP_FOCUS_MAX_USER_DISTANCE_YARDS;
+  const mapPlayerPoint = mapShouldFocusHole ? null : playingPoint;
+
   els.metricHole.textContent = hole == null ? "—" : String(hole);
   els.metricPar.textContent = par == null ? "—" : String(par);
   els.metricFront.textContent = formatYards(yardsFront);
@@ -576,13 +660,14 @@ function renderCurrentHole() {
 
   if (state.locationError) {
     els.yardageDetail.textContent = state.locationError;
-  } else if (sourceLabel === "Back Tee Fallback") {
-    els.yardageDetail.textContent = `You are ${Math.round(actualFromUserToCenter)} yards from center green, so this hole uses back-tee yardages (front/center/back).`;
   } else if (sourceLabel === "My Location") {
     const acc = Number.isFinite(state.locationAccuracyM)
       ? ` GPS accuracy ~${Math.round(state.locationAccuracyM)}m.`
       : "";
-    els.yardageDetail.textContent = `Live yardages from your location updating every ${state.locationIntervalMs / 1000}s.${acc}`;
+    const zoomHint = mapShouldFocusHole
+      ? ` You are ${Math.round(userToGreenCenterYards)} yards from center green, so the map stays focused on the hole.`
+      : "";
+    els.yardageDetail.textContent = `Live yardages from your location updating every ${state.locationIntervalMs / 1000}s.${acc}${zoomHint}`;
   } else if (sourceLabel === "Back Tee Default") {
     els.yardageDetail.textContent = "Location not set yet. Showing back-tee yardages by default.";
   } else {
@@ -597,22 +682,20 @@ function renderCurrentHole() {
   }
   els.holeEmpty.style.display = "none";
 
-  const alignmentStart =
-    backTee || firstLinePoint(holeLine) || featureCentroid(green) || null;
-  const alignmentEnd =
-    greenTargets.center || lastLinePoint(holeLine) || featureCentroid(green) || null;
+  const alignmentStart = backTee || firstLinePoint(holeLine) || featureCentroid(green) || null;
+  const alignmentEnd = greenTargets.center || lastLinePoint(holeLine) || featureCentroid(green) || null;
 
   const extraPoints = [
     backTee,
     greenTargets.front,
     greenTargets.center,
     greenTargets.back,
-    playingPoint,
+    mapPlayerPoint,
   ];
-  if (!usingBackTeeFallback) extraPoints.push(state.userLocation);
 
   const { width, height, margin } = getCanvasConfig();
   els.holeSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
   const projection = createAlignedProjector(
     features,
     extraPoints,
@@ -651,12 +734,14 @@ function renderCurrentHole() {
     const golf = String(feature?.properties?.golf || "other");
     const d = pathFromGeometry(feature.geometry, project);
     if (!d) continue;
+
     const klass =
       golf === "fairway" || golf === "green" || golf === "bunker" || golf === "tee"
         ? `hole-shape golf-${golf}`
         : golf === "hole"
           ? "hole-path"
           : "hole-other";
+
     const node = appendSvg("path", { d, class: klass });
     const holeRef = parseHoleRef(feature?.properties?.hole_ref ?? feature?.properties?.ref);
     const title = document.createElementNS(SVG_NS, "title");
@@ -682,19 +767,9 @@ function renderCurrentHole() {
     appendSvg("circle", { cx: tx, cy: ty, r: 7, class: "marker marker-tee" });
   }
 
-  if (Array.isArray(playingPoint)) {
-    const [px, py] = project(playingPoint);
-    appendSvg("circle", {
-      cx: px,
-      cy: py,
-      r: 8,
-      class: `marker marker-player ${usingBackTeeFallback ? "fallback" : ""}`,
-    });
-  }
-
-  if (!usingBackTeeFallback && Array.isArray(state.userLocation)) {
-    const [ux, uy] = project(state.userLocation);
-    appendSvg("circle", { cx: ux, cy: uy, r: 4.5, class: "marker marker-user" });
+  if (Array.isArray(mapPlayerPoint)) {
+    const [px, py] = project(mapPlayerPoint);
+    appendSvg("circle", { cx: px, cy: py, r: 8, class: "marker marker-player" });
   }
 
   appendSvg("text", {
@@ -728,14 +803,18 @@ function bindEvents() {
   els.holePrev.addEventListener("click", () => nextHole(-1));
   els.holeNext.addEventListener("click", () => nextHole(1));
 
-  els.locBtn.addEventListener("click", () => {
-    startLocationTracking();
-  });
+  if (els.locBtn) {
+    els.locBtn.addEventListener("click", () => {
+      startLocationTracking();
+    });
+  }
 
-  els.locClear.addEventListener("click", () => {
-    stopLocationTracking(true, "Location cleared.");
-    renderCurrentHole();
-  });
+  if (els.locClear) {
+    els.locClear.addEventListener("click", () => {
+      stopLocationTracking(true, "Location cleared.");
+      renderCurrentHole();
+    });
+  }
 
   window.addEventListener("keydown", (event) => {
     if (event.target && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
@@ -823,11 +902,18 @@ async function loadData() {
 
 async function init() {
   bindEvents();
+  state.locationPermissionGranted = readGeolocationGrant();
   updateTrackingButton();
-  updateLocationStatus("Location not set.");
+  updateLocationStatus(
+    state.locationPermissionGranted
+      ? "Reusing saved location permission..."
+      : "Location not shared yet."
+  );
+
   try {
     await loadData();
     renderCurrentHole();
+    await maybeAutoStartTracking();
   } catch (error) {
     console.error(error);
     state.locationError = `Could not load hole data: ${error.message}`;
