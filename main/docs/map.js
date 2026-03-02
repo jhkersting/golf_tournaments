@@ -40,6 +40,8 @@ const LOCATION_MAX_REASONABLE_SPEED_MPS = 14;
 const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 const MAP_PROXIMITY_ZOOM_MAX_BOOST = 0.45;
+const USER_ZOOM_MIN = 1;
+const USER_ZOOM_MAX = 3;
 const TAP_PREVIEW_DURATION_MS = 7000;
 const TAP_DOT_MOBILE_RADIUS_MULTIPLIER = 1.75;
 const PLAYER_DOT_MOBILE_RADIUS_MULTIPLIER = 1.65;
@@ -72,6 +74,7 @@ const state = {
   mapLabel: "",
   renderNonce: 0,
   tileImageCache: new Map(),
+  userZoomMultiplier: 1,
 };
 
 const entryState = {
@@ -115,6 +118,10 @@ let tickerPhase = "hold";
 let tickerPhaseStartedAt = 0;
 let holeControlsStickyActive = false;
 let holeControlsStickyPlaceholder = null;
+let pinchZoomActive = false;
+let pinchZoomStartDistance = 0;
+let pinchZoomStartValue = 1;
+let pinchZoomLastEndedAtMs = 0;
 const SCORE_NOTIFIER_SHOW_MS = 2300;
 const SCORE_NOTIFIER_GAP_MS = 200;
 const TICKER_SPEED_PX_PER_SEC = 52;
@@ -750,6 +757,105 @@ function greenFrontBackPoints(greenFeature, backTee, holeLine) {
   };
 }
 
+function isLonLatPoint(point) {
+  return (
+    Array.isArray(point) &&
+    point.length >= 2 &&
+    Number.isFinite(Number(point[0])) &&
+    Number.isFinite(Number(point[1]))
+  );
+}
+
+function sanitizeLonLatPoint(point) {
+  if (!isLonLatPoint(point)) return null;
+  return [Number(point[0]), Number(point[1])];
+}
+
+function polylineLengthYards(points) {
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    total += distanceYards(points[i], points[i + 1]);
+  }
+  return total;
+}
+
+function holeLinePathPoints(holeLine) {
+  const geom = holeLine?.geometry;
+  if (!geom) return [];
+  if (geom.type === "LineString") {
+    return (Array.isArray(geom.coordinates) ? geom.coordinates : [])
+      .map(sanitizeLonLatPoint)
+      .filter(Boolean);
+  }
+  if (geom.type === "MultiLineString") {
+    const lines = (Array.isArray(geom.coordinates) ? geom.coordinates : [])
+      .map((line) => (Array.isArray(line) ? line.map(sanitizeLonLatPoint).filter(Boolean) : []))
+      .filter((line) => line.length >= 2);
+    if (!lines.length) return [];
+    lines.sort((a, b) => polylineLengthYards(b) - polylineLengthYards(a));
+    return lines[0];
+  }
+  return [];
+}
+
+function orientPathTowardsGreen(pathPoints, teeRef, greenRef) {
+  if (!Array.isArray(pathPoints) || pathPoints.length < 2) return [];
+  const forward = [...pathPoints];
+  const reverse = [...pathPoints].reverse();
+  const score = (points) => {
+    const start = points[0];
+    const end = points[points.length - 1];
+    let total = 0;
+    if (isLonLatPoint(teeRef)) total += distanceYards(start, teeRef);
+    if (isLonLatPoint(greenRef)) total += distanceYards(end, greenRef);
+    return total;
+  };
+  return score(forward) <= score(reverse) ? forward : reverse;
+}
+
+function markerPointsAlongPath(pathPoints, yardsToGreenValues) {
+  if (!Array.isArray(pathPoints) || pathPoints.length < 2) return [];
+  const segmentLengths = [];
+  let totalLength = 0;
+  for (let i = 0; i < pathPoints.length - 1; i += 1) {
+    const len = distanceYards(pathPoints[i], pathPoints[i + 1]);
+    segmentLengths.push(len);
+    totalLength += len;
+  }
+  if (!Number.isFinite(totalLength) || totalLength <= 0) return [];
+
+  const markerPoints = [];
+  for (const rawValue of yardsToGreenValues || []) {
+    const yardsToGreen = Number(rawValue);
+    if (!Number.isFinite(yardsToGreen) || yardsToGreen <= 0) continue;
+    const targetFromStart = totalLength - yardsToGreen;
+    if (!Number.isFinite(targetFromStart) || targetFromStart <= 0 || targetFromStart >= totalLength) continue;
+
+    let traversed = 0;
+    for (let i = 0; i < segmentLengths.length; i += 1) {
+      const segLen = segmentLengths[i];
+      const next = traversed + segLen;
+      if (targetFromStart > next) {
+        traversed = next;
+        continue;
+      }
+      const ratio = segLen > 1e-9 ? (targetFromStart - traversed) / segLen : 0;
+      const a = pathPoints[i];
+      const b = pathPoints[i + 1];
+      markerPoints.push({
+        yardsToGreen,
+        point: [
+          a[0] + (b[0] - a[0]) * ratio,
+          a[1] + (b[1] - a[1]) * ratio,
+        ],
+      });
+      break;
+    }
+  }
+  return markerPoints;
+}
+
 function holePar(features) {
   for (const feature of features) {
     if (String(feature?.properties?.golf || "") !== "hole") continue;
@@ -766,6 +872,19 @@ function updateLocationStatus(text) {
 function secureContextMessage() {
   if (window.isSecureContext) return "";
   return "Location requires HTTPS or localhost. Open this page via https:// (not file:// or plain http://).";
+}
+
+function clampUserZoom(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(USER_ZOOM_MIN, Math.min(USER_ZOOM_MAX, parsed));
+}
+
+function setUserZoom(value, { rerender = true } = {}) {
+  const next = clampUserZoom(value);
+  if (Math.abs(next - state.userZoomMultiplier) < 1e-6) return;
+  state.userZoomMultiplier = next;
+  if (rerender) renderCurrentHole();
 }
 
 function formatYards(value) {
@@ -808,6 +927,7 @@ function syncHoleControlsStickyOffset() {
   const header = document.querySelector("header");
   const headerBottom = Math.max(0, Math.round(header?.getBoundingClientRect().bottom || 0));
   els.controlsCard.style.setProperty("--hole-controls-stick-top", `${headerBottom}px`);
+  const STICKY_HYSTERESIS_PX = 6;
 
   if (!holeControlsStickyPlaceholder || !holeControlsStickyPlaceholder.isConnected) {
     const placeholder = document.createElement("div");
@@ -822,9 +942,24 @@ function syncHoleControlsStickyOffset() {
     holeControlsStickyActive && holeControlsStickyPlaceholder
       ? holeControlsStickyPlaceholder.getBoundingClientRect()
       : els.controlsCard.getBoundingClientRect();
-  const shouldStick = anchorRect.top <= headerBottom;
+  const controlsStyle = window.getComputedStyle(els.controlsCard);
+  const marginTop = Number.parseFloat(controlsStyle.marginTop) || 0;
+  const marginBottom = Number.parseFloat(controlsStyle.marginBottom) || 0;
+  const flowHeight = Math.max(
+    0,
+    Math.round(
+      (els.controlsCard.getBoundingClientRect().height || els.controlsCard.offsetHeight || 0) + marginTop + marginBottom
+    )
+  );
+  const shouldStick = holeControlsStickyActive
+    ? anchorRect.top <= headerBottom + STICKY_HYSTERESIS_PX
+    : anchorRect.top <= headerBottom;
 
   if (shouldStick && !holeControlsStickyActive) {
+    if (holeControlsStickyPlaceholder) {
+      holeControlsStickyPlaceholder.style.display = "block";
+      holeControlsStickyPlaceholder.style.height = `${flowHeight}px`;
+    }
     holeControlsStickyActive = true;
     els.controlsCard.classList.add("is-stuck");
   } else if (!shouldStick && holeControlsStickyActive) {
@@ -842,13 +977,9 @@ function syncHoleControlsStickyOffset() {
 
   if (!holeControlsStickyActive) return;
 
-  const controlsHeight = Math.max(
-    0,
-    Math.round(els.controlsCard.getBoundingClientRect().height || els.controlsCard.offsetHeight || 0)
-  );
   if (holeControlsStickyPlaceholder) {
     holeControlsStickyPlaceholder.style.display = "block";
-    holeControlsStickyPlaceholder.style.height = `${controlsHeight}px`;
+    holeControlsStickyPlaceholder.style.height = `${flowHeight}px`;
   }
 
   const pinnedRect =
@@ -895,7 +1026,7 @@ function syncFooterViewportLock() {
   const top = vv.offsetTop + vv.height - scaledFooterHeight;
 
   footer.style.left = `${vv.offsetLeft}px`;
-  footer.style.top = `${Math.max(0, top)}px`;
+  footer.style.top = `${Math.max(0, top)+1}px`;
   footer.style.bottom = "auto";
   footer.style.width = `${lockedWidth}px`;
   footer.style.transformOrigin = "left top";
@@ -1021,7 +1152,67 @@ function canvasPointFromEvent(event) {
   return [x, y];
 }
 
+function touchDistance(touchA, touchB) {
+  const ax = Number(touchA?.clientX);
+  const ay = Number(touchA?.clientY);
+  const bx = Number(touchB?.clientX);
+  const by = Number(touchB?.clientY);
+  if (![ax, ay, bx, by].every(Number.isFinite)) return 0;
+  return Math.hypot(ax - bx, ay - by);
+}
+
+function beginPinchZoom(touchA, touchB) {
+  const distance = touchDistance(touchA, touchB);
+  if (!Number.isFinite(distance) || distance < 8) return false;
+  pinchZoomActive = true;
+  pinchZoomStartDistance = distance;
+  pinchZoomStartValue = clampUserZoom(state.userZoomMultiplier);
+  return true;
+}
+
+function handleCanvasTouchStart(event) {
+  if ((event?.touches?.length || 0) < 2) return;
+  if (beginPinchZoom(event.touches[0], event.touches[1])) {
+    event.preventDefault();
+  }
+}
+
+function handleCanvasTouchMove(event) {
+  const touches = event?.touches || [];
+  if (touches.length < 2) return;
+  if (!pinchZoomActive && !beginPinchZoom(touches[0], touches[1])) return;
+
+  const distance = touchDistance(touches[0], touches[1]);
+  if (!Number.isFinite(distance) || distance <= 0 || pinchZoomStartDistance <= 0) return;
+  event.preventDefault();
+  const ratio = distance / pinchZoomStartDistance;
+  setUserZoom(pinchZoomStartValue * ratio);
+}
+
+function finishPinchZoom() {
+  if (!pinchZoomActive) return;
+  pinchZoomActive = false;
+  pinchZoomStartDistance = 0;
+  pinchZoomStartValue = clampUserZoom(state.userZoomMultiplier);
+  pinchZoomLastEndedAtMs = Date.now();
+}
+
+function handleCanvasTouchEnd(event) {
+  const touches = event?.touches || [];
+  if (touches.length >= 2) {
+    beginPinchZoom(touches[0], touches[1]);
+    return;
+  }
+  finishPinchZoom();
+}
+
+function handleCanvasTouchCancel() {
+  finishPinchZoom();
+}
+
 function handleHoleTap(event) {
+  if (pinchZoomActive) return;
+  if (Date.now() - pinchZoomLastEndedAtMs < 300) return;
   if (!state.lastProjection?.unproject) return;
   const canvasPoint = canvasPointFromEvent(event);
   if (!canvasPoint) return;
@@ -1239,6 +1430,7 @@ async function renderCurrentHole() {
   const usingFullMode = state.mapMode === MAP_MODE_FULL;
   const features = usingFullMode ? (state.holeMap.get(hole) || []) : [];
   const holeData = usingFullMode ? null : (state.bluegolfHoleMap.get(hole) || null);
+  let holeLine = null;
   const targetAvailable = { front: false, center: false, back: false };
   let par = null;
   let backTee = null;
@@ -1253,7 +1445,7 @@ async function renderCurrentHole() {
   if (usingFullMode) {
     par = holePar(features);
     const green = greenForHole(features);
-    const holeLine = holeLineForHole(features);
+    holeLine = holeLineForHole(features);
     const greenCenter = featureCentroid(green);
     backTee = backTeeForHole(features, greenCenter, holeLine);
     const computedTargets = greenFrontBackPoints(green, backTee, holeLine);
@@ -1353,6 +1545,7 @@ async function renderCurrentHole() {
     );
     return 1 + nearFactor * MAP_PROXIMITY_ZOOM_MAX_BOOST;
   })();
+  const finalZoomMultiplier = proximityZoomMultiplier * clampUserZoom(state.userZoomMultiplier);
   const tapToGreenCenterYards =
     Array.isArray(state.tapPoint) && Array.isArray(greenTargets.center)
       ? distanceYards(state.tapPoint, greenTargets.center)
@@ -1441,6 +1634,39 @@ async function renderCurrentHole() {
     mapPlayerPoint,
   ];
 
+  const teeRefForMarkers = Array.isArray(backTee) ? backTee : alignmentStart;
+  const greenRefForMarkers = Array.isArray(greenTargets.center) ? greenTargets.center : alignmentEnd;
+  const markerPathPoints = (() => {
+    if (usingFullMode && holeLine) {
+      const basePath = holeLinePathPoints(holeLine);
+      if (basePath.length >= 2) {
+        let oriented = orientPathTowardsGreen(basePath, teeRefForMarkers, greenRefForMarkers);
+        if (isLonLatPoint(teeRefForMarkers)) {
+          const start = oriented[0];
+          if (!start || distanceYards(start, teeRefForMarkers) > 3) {
+            oriented = [teeRefForMarkers, ...oriented];
+          }
+        }
+        if (isLonLatPoint(greenRefForMarkers)) {
+          const end = oriented[oriented.length - 1];
+          if (!end || distanceYards(end, greenRefForMarkers) > 3) {
+            oriented = [...oriented, greenRefForMarkers];
+          }
+        }
+        return oriented;
+      }
+    }
+    if (
+      isLonLatPoint(teeRefForMarkers) &&
+      isLonLatPoint(greenRefForMarkers) &&
+      distanceYards(teeRefForMarkers, greenRefForMarkers) > 1
+    ) {
+      return [teeRefForMarkers, greenRefForMarkers];
+    }
+    return [];
+  })();
+  const pathDistanceMarkers = markerPointsAlongPath(markerPathPoints, []);
+
   const { width, height, margin } = getCanvasConfig();
   if (!els.holeCanvas) return;
   const pixelRatio = Math.max(1, Math.min(3, Number(window.devicePixelRatio) || 1));
@@ -1461,7 +1687,7 @@ async function renderCurrentHole() {
     width,
     height,
     margin,
-    proximityZoomMultiplier
+    finalZoomMultiplier
   );
 
   if (!projection) {
@@ -1533,6 +1759,27 @@ async function renderCurrentHole() {
     ctx.strokeStyle = "#fff";
     ctx.lineWidth = 2;
     ctx.stroke();
+  }
+
+  for (const marker of pathDistanceMarkers) {
+    const point = sanitizeLonLatPoint(marker?.point);
+    if (!point) continue;
+    const [mx, my] = project(point);
+    const markerRadius = isMobileDot ? 11 : 9;
+    ctx.beginPath();
+    ctx.arc(mx, my, markerRadius, 0, Math.PI * 2);
+    ctx.fillStyle = darkTheme ? "rgba(12, 16, 20, 0.84)" : "rgba(255, 255, 255, 0.87)";
+    ctx.fill();
+    ctx.strokeStyle = darkTheme ? "rgba(255,255,255,0.86)" : "rgba(24,38,56,0.85)";
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    const text = String(Math.round(Number(marker.yardsToGreen)));
+    ctx.fillStyle = darkTheme ? "#f4f7fb" : "#16283f";
+    ctx.font = `700 ${isMobileDot ? 10 : 11}px "JetBrains Mono", monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, mx, my + 0.25);
   }
 
   if (Array.isArray(mapPlayerPoint)) {
@@ -1676,6 +1923,10 @@ function bindEvents() {
 
   if (els.holeCanvas) {
     els.holeCanvas.addEventListener("click", handleHoleTap);
+    els.holeCanvas.addEventListener("touchstart", handleCanvasTouchStart, { passive: false });
+    els.holeCanvas.addEventListener("touchmove", handleCanvasTouchMove, { passive: false });
+    els.holeCanvas.addEventListener("touchend", handleCanvasTouchEnd, { passive: true });
+    els.holeCanvas.addEventListener("touchcancel", handleCanvasTouchCancel, { passive: true });
   }
 
   window.addEventListener("keydown", (event) => {
@@ -2733,7 +2984,10 @@ function ensureScoreCard() {
     const submitBtn = card.querySelector("#map_submit_hole_btn");
     const changeCodeBtn = card.querySelector("#map_change_code_btn");
     submitBtn?.addEventListener("click", async () => {
-      await submitCurrentHole({ allowEmpty: false, advanceToSuggested: true });
+      const submitted = await submitCurrentHole({ allowEmpty: false, advanceToSuggested: false });
+      if (submitted?.ok && submitted?.submitted) {
+        nextHole(1);
+      }
     });
     changeCodeBtn?.addEventListener("click", clearCodeAndReload);
   }

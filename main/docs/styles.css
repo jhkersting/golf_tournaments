@@ -1449,9 +1449,6 @@ th.dots {
   width: var(--hole-controls-fixed-width, auto);
   z-index: 85;
 
-  #metric_summary{
-    display: none;
-  }
 }
 
 .hole-map-controls-placeholder {
@@ -1461,7 +1458,7 @@ th.dots {
 }
 
 .hole-map-page .container {
-  padding-bottom: 24px;
+  padding-bottom: calc(138px + env(safe-area-inset-bottom));
 }
 
 .hole-map-nav {
@@ -1537,12 +1534,16 @@ th.dots {
 }
 
 .hole-map-footer {
-  position: static;
-  z-index: 1;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-strong) 92%, var(--bg));
-  padding: 10px 14px;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
   backdrop-filter: blur(7px);
+  transform-origin: left top;
 }
 
 .hole-map-footer-point-head,
@@ -1611,7 +1612,7 @@ th.dots {
 
 @media (max-width: 560px) {
   .hole-map-page .container {
-    padding-bottom: 24px;
+    padding-bottom: calc(150px + env(safe-area-inset-bottom));
   }
 
   .hole-map-nav {
