@@ -351,6 +351,22 @@ function toParText(v) {
   return d > 0 ? `+${d}` : `${d}`;
 }
 
+function holeDeltaText(scoreValue, parValue) {
+  const par = Number(parValue);
+  if (!Number.isFinite(par) || par <= 0) return "";
+  const score = Number(String(scoreValue ?? "").trim());
+  if (!Number.isFinite(score) || score <= 0) return "";
+  const diff = Math.round(score - par);
+  return diff >= 0 ? `+${diff}` : `${diff}`;
+}
+
+function syncHoleDeltaLabel(labelEl, scoreValue, parValue) {
+  if (!labelEl) return;
+  const text = holeDeltaText(scoreValue, parValue);
+  labelEl.textContent = text;
+  labelEl.style.visibility = text ? "visible" : "hidden";
+}
+
 function toParFromKeys(row, keys) {
   for (const key of keys) {
     if (row?.[key] != null) return toParText(row[key]);
@@ -1680,15 +1696,23 @@ async function main() {
       const inputs = [];
 
       function makeScoreInput(initialStr) {
+        const wrap = el("div", { style: "display:flex; align-items:center; gap:6px; margin-top:8px;" });
         const inp = el("input", {
           type: "number",
           min: "1",
           max: "20",
           step: "1",
-          style: "width:78px; min-height:38px; padding:6px 8px; border-radius:10px; border:1px solid var(--border); background:var(--field-bg); color:var(--text); font-size:16px;",
+          style: "width:78px; min-height:38px; padding:6px 8px; border-radius:10px; border:1px solid var(--border); background:var(--field-bg); color:var(--text); font-size:16px; margin-top:0;",
         });
+        const delta = el("span", { class: "small", style: "min-width:22px; font-weight:700;" }, "");
         inp.value = initialStr ?? "";
-        return inp;
+        syncHoleDeltaLabel(delta, inp.value, holeCourse?.pars?.[currentHole]);
+        inp.addEventListener("input", () => {
+          syncHoleDeltaLabel(delta, inp.value, holeCourse?.pars?.[currentHole]);
+        });
+        wrap.appendChild(inp);
+        wrap.appendChild(delta);
+        return { wrap, inp };
       }
 
       if (type === "team") {
@@ -1710,14 +1734,14 @@ async function main() {
           )
         );
 
-        const inp = makeScoreInput(initial);
+        const { wrap, inp } = makeScoreInput(initial);
         inp.setAttribute("data-enter-scope", "hole");
         inp.setAttribute("data-target-id", teamId);
         inp.setAttribute("data-hole-index", String(currentHole));
         inp.addEventListener("input", () => setHoleDraft(r, currentHole, teamId, inp.value));
         inputs.push({ targetId: teamId, input: inp });
 
-        row.appendChild(inp);
+        row.appendChild(wrap);
         grid.appendChild(row);
       } else if (type === "group") {
         const ids = targetIds.length
@@ -1743,14 +1767,14 @@ async function main() {
             )
           );
 
-          const inp = makeScoreInput(initial);
+          const { wrap, inp } = makeScoreInput(initial);
           inp.setAttribute("data-enter-scope", "hole");
           inp.setAttribute("data-target-id", gid);
           inp.setAttribute("data-hole-index", String(currentHole));
           inp.addEventListener("input", () => setHoleDraft(r, currentHole, gid, inp.value));
           inputs.push({ targetId: gid, input: inp });
 
-          row.appendChild(inp);
+          row.appendChild(wrap);
           grid.appendChild(row);
         }
       } else {
@@ -1778,14 +1802,14 @@ async function main() {
             )
           );
 
-          const inp = makeScoreInput(initial);
+          const { wrap, inp } = makeScoreInput(initial);
           inp.setAttribute("data-enter-scope", "hole");
           inp.setAttribute("data-target-id", pid);
           inp.setAttribute("data-hole-index", String(currentHole));
           inp.addEventListener("input", () => setHoleDraft(r, currentHole, pid, inp.value));
           inputs.push({ targetId: pid, input: inp });
 
-          row.appendChild(inp);
+          row.appendChild(wrap);
           grid.appendChild(row);
         }
       }
@@ -1921,6 +1945,7 @@ async function main() {
       bulkPane.innerHTML = "";
 
       const { type, savedByTarget, targetIds } = getSavedForRound();
+      const coursePars = courseForRound(tjson, r).pars || Array(18).fill(4);
       const ids =
         type === "team"
           ? targetIds
@@ -1985,6 +2010,7 @@ async function main() {
 
         for (let i = 0; i < 9; i++) {
           const td = el("td");
+          const inputWrap = el("div", { style: "display:inline-flex; align-items:center; gap:4px;" });
           const inp = el("input", {
             type: "number",
             min: "1",
@@ -1992,15 +2018,22 @@ async function main() {
             step: "1",
             class: "hole-input bulk-hole-input",
           });
+          const delta = el("span", { class: "small", style: "min-width:18px; font-weight:700;" }, "");
           const dv = getBulkDraft(r, id, i);
           const initial = dv !== undefined ? dv : holes[i] == null ? "" : String(holes[i]);
           inp.value = initial ?? "";
           inp.setAttribute("data-enter-scope", "bulk");
           inp.setAttribute("data-target-id", id);
           inp.setAttribute("data-hole-index", String(i));
-          inp.addEventListener("input", () => setBulkDraft(r, id, i, inp.value));
+          syncHoleDeltaLabel(delta, inp.value, coursePars[i]);
+          inp.addEventListener("input", () => {
+            setBulkDraft(r, id, i, inp.value);
+            syncHoleDeltaLabel(delta, inp.value, coursePars[i]);
+          });
           rowInputs[id][i] = inp;
-          td.appendChild(inp);
+          inputWrap.appendChild(inp);
+          inputWrap.appendChild(delta);
+          td.appendChild(inputWrap);
           frontRow.appendChild(td);
         }
 
@@ -2008,6 +2041,7 @@ async function main() {
         backRow.appendChild(el("td", { class: "mono bulk-side" }, "Back 9"));
         for (let i = 9; i < 18; i++) {
           const td = el("td");
+          const inputWrap = el("div", { style: "display:inline-flex; align-items:center; gap:4px;" });
           const inp = el("input", {
             type: "number",
             min: "1",
@@ -2015,15 +2049,22 @@ async function main() {
             step: "1",
             class: "hole-input bulk-hole-input",
           });
+          const delta = el("span", { class: "small", style: "min-width:18px; font-weight:700;" }, "");
           const dv = getBulkDraft(r, id, i);
           const initial = dv !== undefined ? dv : holes[i] == null ? "" : String(holes[i]);
           inp.value = initial ?? "";
           inp.setAttribute("data-enter-scope", "bulk");
           inp.setAttribute("data-target-id", id);
           inp.setAttribute("data-hole-index", String(i));
-          inp.addEventListener("input", () => setBulkDraft(r, id, i, inp.value));
+          syncHoleDeltaLabel(delta, inp.value, coursePars[i]);
+          inp.addEventListener("input", () => {
+            setBulkDraft(r, id, i, inp.value);
+            syncHoleDeltaLabel(delta, inp.value, coursePars[i]);
+          });
           rowInputs[id][i] = inp;
-          td.appendChild(inp);
+          inputWrap.appendChild(inp);
+          inputWrap.appendChild(delta);
+          td.appendChild(inputWrap);
           backRow.appendChild(td);
         }
 

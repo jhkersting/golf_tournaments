@@ -113,7 +113,8 @@ let tickerEndX = 0;
 let tickerPrevTs = 0;
 let tickerPhase = "hold";
 let tickerPhaseStartedAt = 0;
-let tickerStickyActive = false;
+let holeControlsStickyActive = false;
+let holeControlsStickyPlaceholder = null;
 const SCORE_NOTIFIER_SHOW_MS = 2300;
 const SCORE_NOTIFIER_GAP_MS = 200;
 const TICKER_SPEED_PX_PER_SEC = 52;
@@ -802,9 +803,76 @@ function syncScoreNotifierOffset() {
   scoreNotifier.style.bottom = `${Math.max(14, footerHeight + 14)}px`;
 }
 
+function syncHoleControlsStickyOffset() {
+  if (!els.controlsCard || !els.container) return;
+  const header = document.querySelector("header");
+  const headerBottom = Math.max(0, Math.round(header?.getBoundingClientRect().bottom || 0));
+  els.controlsCard.style.setProperty("--hole-controls-stick-top", `${headerBottom}px`);
+
+  if (!holeControlsStickyPlaceholder || !holeControlsStickyPlaceholder.isConnected) {
+    const placeholder = document.createElement("div");
+    placeholder.className = "hole-map-controls-placeholder";
+    placeholder.style.display = "none";
+    placeholder.style.height = "0px";
+    els.controlsCard.insertAdjacentElement("afterend", placeholder);
+    holeControlsStickyPlaceholder = placeholder;
+  }
+
+  const anchorRect =
+    holeControlsStickyActive && holeControlsStickyPlaceholder
+      ? holeControlsStickyPlaceholder.getBoundingClientRect()
+      : els.controlsCard.getBoundingClientRect();
+  const shouldStick = anchorRect.top <= headerBottom;
+
+  if (shouldStick && !holeControlsStickyActive) {
+    holeControlsStickyActive = true;
+    els.controlsCard.classList.add("is-stuck");
+  } else if (!shouldStick && holeControlsStickyActive) {
+    holeControlsStickyActive = false;
+    els.controlsCard.classList.remove("is-stuck");
+    els.controlsCard.style.removeProperty("--hole-controls-fixed-top");
+    els.controlsCard.style.removeProperty("--hole-controls-fixed-left");
+    els.controlsCard.style.removeProperty("--hole-controls-fixed-width");
+    if (holeControlsStickyPlaceholder) {
+      holeControlsStickyPlaceholder.style.display = "none";
+      holeControlsStickyPlaceholder.style.height = "0px";
+    }
+    return;
+  }
+
+  if (!holeControlsStickyActive) return;
+
+  const controlsHeight = Math.max(
+    0,
+    Math.round(els.controlsCard.getBoundingClientRect().height || els.controlsCard.offsetHeight || 0)
+  );
+  if (holeControlsStickyPlaceholder) {
+    holeControlsStickyPlaceholder.style.display = "block";
+    holeControlsStickyPlaceholder.style.height = `${controlsHeight}px`;
+  }
+
+  const pinnedRect =
+    holeControlsStickyPlaceholder && holeControlsStickyPlaceholder.style.display !== "none"
+      ? holeControlsStickyPlaceholder.getBoundingClientRect()
+      : els.controlsCard.getBoundingClientRect();
+  els.controlsCard.style.setProperty("--hole-controls-fixed-top", `${headerBottom}px`);
+  els.controlsCard.style.setProperty("--hole-controls-fixed-left", `${Math.round(pinnedRect.left)}px`);
+  els.controlsCard.style.setProperty("--hole-controls-fixed-width", `${Math.round(pinnedRect.width)}px`);
+}
+
 function syncFooterViewportLock() {
   const footer = els.holeFooter;
   if (!footer) {
+    syncScoreNotifierOffset();
+    return;
+  }
+  const position = window.getComputedStyle(footer).position;
+  if (position !== "fixed") {
+    footer.style.left = "";
+    footer.style.top = "";
+    footer.style.bottom = "";
+    footer.style.width = "";
+    footer.style.transform = "";
     syncScoreNotifierOffset();
     return;
   }
@@ -1297,7 +1365,8 @@ async function renderCurrentHole() {
 
   if (els.metricSummary) {
     const label = state.mapLabel ? ` (${state.mapLabel})` : "";
-    els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}${label}`;
+    els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}`;
+    //els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}${label}`;
   }
   if (els.metricToPointHead) els.metricToPointHead.style.display = showToPoint ? "" : "none";
   if (els.metricToPointRow) els.metricToPointRow.style.display = showToPoint ? "" : "none";
@@ -1824,6 +1893,22 @@ function toParText(v) {
   return d > 0 ? `+${d}` : `${d}`;
 }
 
+function holeDeltaText(scoreValue, parValue) {
+  const par = Number(parValue);
+  if (!Number.isFinite(par) || par <= 0) return "";
+  const score = Number(String(scoreValue ?? "").trim());
+  if (!Number.isFinite(score) || score <= 0) return "";
+  const diff = Math.round(score - par);
+  return diff >= 0 ? `+${diff}` : `${diff}`;
+}
+
+function syncHoleDeltaLabel(labelEl, scoreValue, parValue) {
+  if (!labelEl) return;
+  const text = holeDeltaText(scoreValue, parValue);
+  labelEl.textContent = text;
+  labelEl.style.visibility = text ? "visible" : "hidden";
+}
+
 function toParFromKeys(row, keys) {
   for (const key of keys) {
     if (row?.[key] != null) return toParText(row[key]);
@@ -2266,29 +2351,9 @@ function runTickerFrame(ts) {
 }
 
 function updateMapTickerStickyState() {
-  if (!ticker || !tickerShell || ticker.style.display === "none") {
-    if (ticker) ticker.classList.remove("is-stuck");
-    if (tickerShell) tickerShell.style.height = "";
-    tickerStickyActive = false;
-    return;
-  }
-  const header = document.querySelector("header");
-  const headerBottom = Math.max(0, Math.round(header?.getBoundingClientRect().bottom || 0));
-  ticker.style.setProperty("--map-ticker-stick-top", `${headerBottom}px`);
-
-  const shellRect = tickerShell.getBoundingClientRect();
-  const shouldStick = shellRect.top <= headerBottom;
-  if (shouldStick && !tickerStickyActive) {
-    tickerStickyActive = true;
-    ticker.classList.add("is-stuck");
-    tickerShell.style.height = `${ticker.offsetHeight}px`;
-  } else if (!shouldStick && tickerStickyActive) {
-    tickerStickyActive = false;
-    ticker.classList.remove("is-stuck");
-    tickerShell.style.height = "";
-  } else if (tickerStickyActive) {
-    tickerShell.style.height = `${ticker.offsetHeight}px`;
-  }
+  syncHoleControlsStickyOffset();
+  if (ticker) ticker.classList.remove("is-stuck");
+  if (tickerShell) tickerShell.style.height = "";
 }
 
 function renderTicker(tjson, playersById, teamsById, roundIndex) {
@@ -2654,7 +2719,12 @@ function ensureScoreCard() {
       </div>
       <div class="small" id="map_score_status" style="margin-top:8px;"></div>
     `;
-    els.controlsCard.insertAdjacentElement("afterend", card);
+    const mapStageCard = els.container.querySelector(".hole-map-stage-wrap")?.closest(".card");
+    if (mapStageCard) {
+      mapStageCard.insertAdjacentElement("afterend", card);
+    } else {
+      els.controlsCard.insertAdjacentElement("afterend", card);
+    }
     els.scoreCard = card;
     els.roundTabs = card.querySelector("#map_round_tabs");
     els.scoreRows = card.querySelector("#map_score_rows");
@@ -3012,6 +3082,7 @@ function renderScoreRows() {
   entryState.currentInputs = [];
   const roundIndex = entryState.selectedRoundIndex;
   const holeIndex = entryState.currentHoleIndex;
+  const holePar = courseParsForRound(entryState.tournament, roundIndex)?.[holeIndex];
   const { mode, targets, savedByTarget } = roundTargets(roundIndex);
   if (!targets.length) {
     els.scoreRows.innerHTML = `<div class="small">No score targets for this round.</div>`;
@@ -3057,11 +3128,24 @@ function renderScoreRows() {
     input.step = "1";
     input.value = initial;
     input.className = "hole-input";
-    input.style.marginTop = "8px";
+    input.style.marginTop = "0";
+    const inputWrap = document.createElement("div");
+    inputWrap.style.display = "flex";
+    inputWrap.style.alignItems = "center";
+    inputWrap.style.gap = "6px";
+    inputWrap.style.marginTop = "8px";
+    const delta = document.createElement("span");
+    delta.className = "small";
+    delta.style.minWidth = "22px";
+    delta.style.fontWeight = "700";
+    syncHoleDeltaLabel(delta, input.value, holePar);
     input.addEventListener("input", () => {
       setHoleDraft(roundIndex, holeIndex, target.id, input.value);
+      syncHoleDeltaLabel(delta, input.value, holePar);
     });
-    row.appendChild(input);
+    inputWrap.appendChild(input);
+    inputWrap.appendChild(delta);
+    row.appendChild(inputWrap);
     els.scoreRows.appendChild(row);
     entryState.currentInputs.push({ targetId: target.id, input });
   }

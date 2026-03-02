@@ -1,4 +1,4 @@
-const SW_VERSION = "2026-03-02-v6";
+const SW_VERSION = "2026-03-02-v8";
 const STATIC_CACHE = `golf-static-${SW_VERSION}`;
 const DATA_CACHE = `golf-data-${SW_VERSION}`;
 const SCOPE_PATH = new URL(self.registration.scope).pathname;

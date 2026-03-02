@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -17,83 +18,90 @@
   <link rel="stylesheet" href="styles.css" />
   <title>Map + Enter Scores</title>
 </head>
+
 <body class="hole-map-page" style="visibility: hidden;">
-<header>
-  <div class="nav">
-    <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
-    <a href="./scoreboard.html" class="mobile-header-link mobile-header-link-primary" data-scoreboard-link>Scoreboard</a>
-    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
-    <div class="actions">
-      <a href="./index.html">Home</a>
-      <a href="./enter.html">Enter Scores</a>
-      <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
-      <a href="./hole-map.html">Hole Map</a>
-      <button type="button" class="theme-toggle" data-theme-toggle></button>
+  <header>
+    <div class="nav">
+      <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
+      <a href="./scoreboard.html" class="mobile-header-link mobile-header-link-primary"
+        data-scoreboard-link>Scoreboard</a>
+      <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu"
+        aria-expanded="false">☰</button>
+      <div class="actions">
+        <a href="./index.html">Home</a>
+        <a href="./enter.html">Enter Scores</a>
+        <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
+        <a href="./hole-map.html">Hole Map</a>
+        <button type="button" class="theme-toggle" data-theme-toggle></button>
+      </div>
     </div>
-  </div>
-</header>
+  </header>
 
-<div class="container">
-  <div class="card">
-    <h1 style="margin:0 0 8px 0;">Map + Enter Scores</h1>
-    <div class="small">
-      Uses your player code and tournament setup to open the current round/hole, then chooses full or simplified map data for that round's course.
+  <div class="container">
+    <div class="card">
+      <h1 style="margin:0 0 8px 0;">Map + Enter Scores</h1>
+      <div class="small">
+        Uses your player code and tournament setup to open the current round/hole, then chooses full or simplified map
+        data for that round's course.
+      </div>
     </div>
-  </div>
 
-  <div id="map_ticker_shell" class="map-ticker-shell">
-    <div class="enter-ticker" id="enter_ticker" style="display:none;">
-      <div class="enter-ticker-inner">
-        <div class="enter-ticker-title" id="enter_ticker_title"></div>
-        <div class="enter-ticker-viewport">
-          <div class="enter-ticker-track" id="enter_ticker_track"></div>
+    <div id="map_ticker_shell" class="map-ticker-shell">
+      <div class="enter-ticker" id="enter_ticker" style="display:none;">
+        <div class="enter-ticker-inner">
+          <div class="enter-ticker-title" id="enter_ticker_title"></div>
+          <div class="enter-ticker-viewport">
+            <div class="enter-ticker-track" id="enter_ticker_track"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card hole-map-controls">
+      <div class="hole-map-nav">
+        <button id="hole_prev" class="secondary" type="button"><-</button>
+            <select id="hole_select" aria-label="Current hole"></select>
+            <button id="hole_next" class="secondary" type="button">-></button>
+      </div>
+
+      <div class="hole-map-summary" id="metric_summary">Hole — | Par —</div>
+    </div>
+
+    <div class="card">
+      <div class="hole-map-stage-wrap">
+        <canvas id="hole_canvas" class="hole-map-stage" width="1200" height="760" role="img"
+          aria-label="Hole layout"></canvas>
+        <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
+        <div class="hole-map-location">
+          <button id="loc_btn" type="button">Use My Location</button>
+          <button id="loc_clear" class="secondary" type="button">Clear Location</button>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="card hole-map-controls">
-    <div class="hole-map-nav">
-      <button id="hole_prev" class="secondary" type="button"><-</button>
-      <select id="hole_select" aria-label="Current hole"></select>
-      <button id="hole_next" class="secondary" type="button">-></button>
+  <div class="hole-map-footer" aria-live="polite">
+    <div class="hole-map-footer-point-head" id="metric_to_point_head">
+      <span>To Point</span>
     </div>
-    <div class="hole-map-location">
-      <button id="loc_btn" type="button">Use My Location</button>
-      <button id="loc_clear" class="secondary" type="button">Clear Location</button>
+    <div class="hole-map-footer-point-value" id="metric_to_point_row">
+      <span id="metric_to_point">—</span>
     </div>
-    <div class="hole-map-summary" id="metric_summary">Hole — | Par —</div>
-  </div>
-
-  <div class="card">
-    <div class="hole-map-stage-wrap">
-      <canvas id="hole_canvas" class="hole-map-stage" width="1200" height="760" role="img" aria-label="Hole layout"></canvas>
-      <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
+    <div class="hole-map-footer-head">
+      <span>front</span>
+      <span>CENTER</span>
+      <span>back</span>
+    </div>
+    <div class="hole-map-footer-values">
+      <span id="metric_front">—</span>
+      <span id="metric_center">—</span>
+      <span id="metric_back">—</span>
     </div>
   </div>
-</div>
 
-<div class="hole-map-footer" aria-live="polite">
-  <div class="hole-map-footer-point-head" id="metric_to_point_head">
-    <span>To Point</span>
-  </div>
-  <div class="hole-map-footer-point-value" id="metric_to_point_row">
-    <span id="metric_to_point">—</span>
-  </div>
-  <div class="hole-map-footer-head">
-    <span>front</span>
-    <span>CENTER</span>
-    <span>back</span>
-  </div>
-  <div class="hole-map-footer-values">
-    <span id="metric_front">—</span>
-    <span id="metric_center">—</span>
-    <span id="metric_back">—</span>
-  </div>
-</div>
+  <div id="score_notifier" class="score-notifier" role="status" aria-live="polite" aria-atomic="true"></div>
 
-<div id="score_notifier" class="score-notifier" role="status" aria-live="polite" aria-atomic="true"></div>
-
-<script type="module" src="map.js"></script>
+  <script type="module" src="map.js"></script>
 </body>
+
 </html>
