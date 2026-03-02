@@ -2,6 +2,7 @@ import {
   api,
   staticJson,
   qs,
+  createTeamColorRegistry,
   setHeaderTournamentName,
   getRememberedPlayerCode,
   rememberPlayerCode,
@@ -86,6 +87,7 @@ const entryState = {
   submitting: false,
   refreshTimer: 0,
 };
+const teamColors = createTeamColorRegistry();
 
 const els = {
   container: document.querySelector(".container"),
@@ -1601,6 +1603,26 @@ function normalizeTeamId(teamId) {
   return teamId == null ? "" : String(teamId).trim();
 }
 
+function seedTeamColors(tjson) {
+  const seen = new Set();
+  let totalTeams = 0;
+  const add = (teamId) => {
+    const id = normalizeTeamId(teamId);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    totalTeams += 1;
+  };
+  (tjson?.teams || []).forEach((team) => add(team?.teamId || team?.id));
+  (tjson?.players || []).forEach((player) => add(player?.teamId));
+  teamColors.reset(totalTeams);
+  seen.forEach((id) => teamColors.add(id));
+}
+
+function colorForTeam(teamId) {
+  const id = normalizeTeamId(teamId);
+  return teamColors.get(id);
+}
+
 function normalizeGroup(groupValue) {
   return String(groupValue || "")
     .trim()
@@ -1633,6 +1655,19 @@ function teeTimeForPlayerRound(player, roundIndex) {
   }
   if (roundIndex === 0) {
     const fallback = String(player.teeTime || "").trim().toLowerCase();
+    if (fallback) return fallback;
+  }
+  return "";
+}
+
+function teeTimeDisplayForPlayerRound(player, roundIndex) {
+  if (!player || roundIndex < 0) return "";
+  if (Array.isArray(player.teeTimes)) {
+    const v = String(player.teeTimes[roundIndex] || "").trim();
+    if (v) return v;
+  }
+  if (roundIndex === 0) {
+    const fallback = String(player.teeTime || "").trim();
     if (fallback) return fallback;
   }
   return "";
@@ -1963,9 +1998,10 @@ function roundTargets(roundIndex) {
   if (mode === "team") {
     const teamId = normalizeTeamId(entryState.enter?.team?.teamId);
     if (!teamId) return { mode, targets: [] };
+    const teamName = entryState.enter?.team?.teamName || teamId;
     return {
       mode,
-      targets: [{ id: teamId, label: entryState.enter?.team?.teamName || teamId }],
+      targets: [{ id: teamId, label: teamName, subtitle: "Team score", teamId }],
       savedByTarget: {
         [teamId]: normalizeScoreArray(scoreRound?.team?.[teamId]?.gross),
       },
@@ -1992,7 +2028,12 @@ function roundTargets(roundIndex) {
     }
     return {
       mode,
-      targets: [{ id: groupId, label: `Group ${actorGroup || "—"}${names.length ? ` (${names.join(", ")})` : ""}` }],
+      targets: [{
+        id: groupId,
+        label: `Group ${actorGroup || "—"}`,
+        subtitle: names.length ? names.join(", ") : "Pair",
+        teamId,
+      }],
       savedByTarget,
     };
   }
@@ -2005,7 +2046,22 @@ function roundTargets(roundIndex) {
   return {
     mode,
     targets: ids
-      .map((id) => ({ id, label: entryState.playersById?.[id]?.name || id }))
+      .map((id) => {
+        const player = entryState.playersById?.[id];
+        if (!player) return { id, label: id, subtitle: "", teamId: "" };
+        const subtitleParts = [];
+        const grp = groupForPlayerRound(player, roundIndex);
+        if (grp) subtitleParts.push(`Group ${grp}`);
+        if (player?.handicap != null && player?.handicap !== "") subtitleParts.push(`hcp ${player.handicap}`);
+        const teeDisplay = teeTimeDisplayForPlayerRound(player, roundIndex);
+        if (teeDisplay) subtitleParts.push(teeDisplay);
+        return {
+          id,
+          label: player?.name || id,
+          subtitle: subtitleParts.join(" • "),
+          teamId: normalizeTeamId(player?.teamId),
+        };
+      })
       .filter((target) => !!target.id),
     savedByTarget,
   };
@@ -2073,22 +2129,41 @@ function renderScoreRows() {
   entryState.currentInputs = [];
   const roundIndex = entryState.selectedRoundIndex;
   const holeIndex = entryState.currentHoleIndex;
-  const { targets, savedByTarget } = roundTargets(roundIndex);
+  const { mode, targets, savedByTarget } = roundTargets(roundIndex);
   if (!targets.length) {
     els.scoreRows.innerHTML = `<div class="small">No score targets for this round.</div>`;
     return;
   }
+
+  const actor = entryState.playersById?.[entryState.enter?.player?.playerId] || entryState.enter?.player || {};
+  const actorTeeDisplay = teeTimeDisplayForPlayerRound(actor, roundIndex);
+  const modeText = mode === "team"
+    ? "Scramble round"
+    : mode === "group"
+      ? "Two-man round"
+      : "Showing your tee-time players";
+  const summary = document.createElement("div");
+  summary.className = "small";
+  summary.style.width = "100%";
+  summary.style.marginBottom = "2px";
+  summary.textContent = actorTeeDisplay
+    ? `${modeText} • Tee time ${actorTeeDisplay}`
+    : modeText;
+  els.scoreRows.appendChild(summary);
 
   for (const target of targets) {
     const existing = (savedByTarget[target.id] || Array(18).fill(null))[holeIndex];
     const draft = getHoleDraft(roundIndex, holeIndex, target.id);
     const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
     const row = document.createElement("div");
-    row.className = "hole-row";
+    row.className = "hole-row team-accent";
+    const accent = colorForTeam(target.teamId);
+    if (accent) row.style.setProperty("--team-accent", accent);
     row.style.minWidth = "180px";
     row.style.maxWidth = "220px";
     row.innerHTML = `
       <div><b>${target.label}</b></div>
+      ${target.subtitle ? `<div class="small" style="margin-top:2px;">${target.subtitle}</div>` : ""}
       <div class="small" style="margin-top:4px;">Existing: ${existing == null ? "—" : existing}</div>
     `;
     const input = document.createElement("input");
@@ -2284,6 +2359,7 @@ async function initializeEntryContext() {
   }
 
   setHeaderTournamentName(tournament?.tournament?.name);
+  seedTeamColors(tournament);
   entryState.mapIndex = await fetchCourseMapIndex();
 }
 
