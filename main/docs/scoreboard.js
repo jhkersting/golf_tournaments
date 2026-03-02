@@ -390,6 +390,18 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
           ? row?.name || playerNames.get(id) || id
           : row?.teamName || teamNames.get(id) || id;
 
+      const showGrossAndNet = !!nextRoundCfg.useHandicap;
+      const roundToParData = { course: { pars: coursePars, parTotal: sumHoles(coursePars) } };
+      const grossToParRaw = showGrossAndNet ? grossToParForRow(row, roundToParData) : null;
+      const netToParRaw = showGrossAndNet ? netToParForRow(row, roundToParData) : null;
+      const hasGrossAndNetToPar =
+        showGrossAndNet &&
+        grossToParRaw != null &&
+        netToParRaw != null &&
+        grossToParRaw !== "—" &&
+        netToParRaw !== "—";
+      const grossToPar = hasGrossAndNetToPar ? grossToParRaw : null;
+      const netToPar = hasGrossAndNetToPar ? netToParRaw : null;
       for (let holeIndex = 0; holeIndex < 18; holeIndex++) {
         const nextGross = normalizePostedScore(nextEntry?.gross?.[holeIndex]);
         if (nextGross == null) continue;
@@ -405,7 +417,9 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
           roundIndex,
           name,
           result: scoreResultLabel(diffToPar),
-          toPar: leaderboardToParValue(row),
+          toPar: hasGrossAndNetToPar ? `${grossToPar} [${netToPar}]` : leaderboardToParValue(row),
+          grossToPar,
+          netToPar,
           hole: holeIndex + 1,
           diffToPar
         });
@@ -450,7 +464,22 @@ function renderScoreNotifierEvent(event) {
 
   const line = document.createElement("div");
   line.className = "score-notifier-line";
-  line.textContent = `${event.name} ${event.result} (${event.toPar}) ${event.hole}`;
+  line.appendChild(document.createTextNode(`${event.name} ${event.result} (`));
+  if (event.grossToPar != null && event.netToPar != null) {
+    const grossEl = document.createElement("span");
+    grossEl.className = "score-emph-gross";
+    grossEl.textContent = String(event.grossToPar);
+    line.appendChild(grossEl);
+    line.appendChild(document.createTextNode(" ["));
+    const netEl = document.createElement("span");
+    netEl.className = "score-emph-net";
+    netEl.textContent = String(event.netToPar);
+    line.appendChild(netEl);
+    line.appendChild(document.createTextNode("]"));
+  } else {
+    line.appendChild(document.createTextNode(String(event.toPar ?? "E")));
+  }
+  line.appendChild(document.createTextNode(`) ${event.hole}`));
   scoreNotifier.appendChild(line);
 }
 
@@ -798,9 +827,15 @@ function buildScorecardTable(scores, useHandicap) {
 
   const summary = document.createElement("div");
   summary.className = "small scorecard-summary";
-  summary.textContent = useHandicap
-    ? `Gross ${grossTotal} (${toParStrFromDiff(grossToParTotal)}) • Net ${netTotal} (${toParStrFromDiff(netToParTotal)}) • Thru ${displayThru(thru)}`
-    : `Gross ${grossTotal} (${toParStrFromDiff(grossToParTotal)}) • Thru ${displayThru(thru)}`;
+  if (useHandicap) {
+    summary.innerHTML =
+      `<span class="score-emph-gross">Gross ${grossTotal} (${toParStrFromDiff(grossToParTotal)})</span>` +
+      ` • ` +
+      `<span class="score-emph-net">Net ${netTotal} (${toParStrFromDiff(netToParTotal)})</span>` +
+      ` • Thru ${displayThru(thru)}`;
+  } else {
+    summary.textContent = `Gross ${grossTotal} (${toParStrFromDiff(grossToParTotal)}) • Thru ${displayThru(thru)}`;
+  }
   wrap.appendChild(summary);
 
   const tbl = document.createElement("table");
@@ -833,15 +868,23 @@ function buildScorecardTable(scores, useHandicap) {
     const played = sectionPlayedCount(arr, start, end);
     const totalCell = played ? String(segmentTotal(arr, start, end)) : "";
     const toParCell = played ? toParStrFromDiff(segmentToPar(arr, par, start, end)) : "";
+    const scoreWeightClass = useHandicap
+      ? (String(label).endsWith(" Net") || String(label) === "Net"
+        ? "score-emph-net"
+        : (String(label).endsWith(" Gross") || String(label) === "Gross"
+          ? "score-emph-gross"
+          : ""))
+      : "";
+    const emph = scoreWeightClass ? ` class="${scoreWeightClass}"` : "";
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td class="left"><b>${label}</b></td>` +
+      `<td class="left"><b${emph}>${label}</b></td>` +
       Array.from({ length: end - start + 1 }, (_, k) => {
         const i = start + k;
         return holeScoreCell(arr[i], par[i]);
       }).join("") +
-      `<td class="mono"><b>${totalCell}</b></td>` +
-      `<td class="mono"><b>${toParCell}</b></td>`;
+      `<td class="mono"><b${emph}>${totalCell}</b></td>` +
+      `<td class="mono"><b${emph}>${toParCell}</b></td>`;
     tbody.appendChild(tr);
   }
 
@@ -1186,15 +1229,23 @@ function buildTwoManGroupBreakdownTable(par, groups, useHandicap) {
 
   function addDataRow(label, arr, start, end) {
     const played = sectionPlayedCount(arr, start, end);
+    const scoreWeightClass = useHandicap
+      ? (String(label).endsWith(" Net") || String(label) === "Net"
+        ? "score-emph-net"
+        : (String(label).endsWith(" Gross") || String(label) === "Gross"
+          ? "score-emph-gross"
+          : ""))
+      : "";
+    const emph = scoreWeightClass ? ` class="${scoreWeightClass}"` : "";
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td class="left"><b>${label}</b></td>` +
+      `<td class="left"><b${emph}>${label}</b></td>` +
       Array.from({ length: end - start + 1 }, (_, k) => {
         const i = start + k;
         return holeScoreCell(arr[i], par[i]);
       }).join("") +
-      `<td class="mono"><b>${played ? segmentTotal(arr, start, end) : ""}</b></td>` +
-      `<td class="mono"><b>${played ? toParStrFromDiff(segmentToPar(arr, par, start, end)) : ""}</b></td>`;
+      `<td class="mono"><b${emph}>${played ? segmentTotal(arr, start, end) : ""}</b></td>` +
+      `<td class="mono"><b${emph}>${played ? toParStrFromDiff(segmentToPar(arr, par, start, end)) : ""}</b></td>`;
     tbody.appendChild(tr);
   }
 
@@ -1452,8 +1503,8 @@ function renderLeaderboard(data) {
     head.innerHTML = `
       <th class="rank-col"></th>
       <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
-      <th class="metric-col">${headBtn("Gross ±", "gross")}</th>
-      <th class="metric-col">${headBtn("Net ±", "net")}</th>
+      <th class="metric-col">${headBtn('<span class="score-emph-gross">Gross ±</span>', "gross")}</th>
+      <th class="metric-col">${headBtn('<span class="score-emph-net">Net ±</span>', "net")}</th>
       <th class="thru-col">${headBtn("Thru", "thru")}</th>
     `;
   } else {
@@ -1540,8 +1591,8 @@ function renderLeaderboard(data) {
       tr.innerHTML = `
         <td class="mono rank-col">${rankCellValue}</td>
         ${nameCell}
-        <td class="mono metric-col"><b>${grossToParForRow(r, data)}</b></td>
-        <td class="mono metric-col"><b>${netToParForRow(r, data)}</b></td>
+        <td class="mono metric-col"><b class="score-emph-gross">${grossToParForRow(r, data)}</b></td>
+        <td class="mono metric-col"><b class="score-emph-net">${netToParForRow(r, data)}</b></td>
         <td class="mono thru-col">${thruCell}</td>
       `;
     } else {
@@ -1691,6 +1742,7 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
     const entry = byTeam[teamId] || {};
     const gross = Array.isArray(entry?.gross) ? entry.gross : Array(18).fill(null);
     const net = Array.isArray(entry?.net) ? entry.net : gross.slice();
+    const handicapShots = Array.isArray(entry?.handicapShots) ? entry.handicapShots : Array(18).fill(0);
     let thru = 0;
     let grossToParTotal = 0;
     let netToParTotal = 0;
@@ -1718,6 +1770,7 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
       scores: {
         gross,
         net,
+        handicapShots,
         grossTotal,
         netTotal,
         grossToParTotal,

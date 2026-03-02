@@ -1,8 +1,23 @@
 const TOURNAMENT_KEY = "golf:lastTournamentId";
+const PLAYER_CODE_KEY = "golf:lastPlayerCode";
 
 function getTournamentId() {
   try {
     return String(localStorage.getItem(TOURNAMENT_KEY) || "").trim();
+  } catch (_) {
+    return "";
+  }
+}
+
+function normalizePlayerCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function getPlayerCode() {
+  try {
+    return normalizePlayerCode(localStorage.getItem(PLAYER_CODE_KEY) || "");
   } catch (_) {
     return "";
   }
@@ -16,24 +31,39 @@ function editHref(tournamentId) {
   return tournamentId ? `./edit.html?t=${encodeURIComponent(tournamentId)}` : "./edit.html";
 }
 
+function enterHref(playerCode) {
+  return playerCode ? `./enter.html?code=${encodeURIComponent(playerCode)}` : "./enter.html";
+}
+
 function applyScoreboardLinks() {
   const params = new URLSearchParams(location.search);
   const urlTid = String(params.get("t") || "").trim();
+  const urlCode = normalizePlayerCode(params.get("code") || params.get("c"));
   if (urlTid) {
     try {
       localStorage.setItem(TOURNAMENT_KEY, urlTid);
     } catch (_) {}
   }
+  if (urlCode) {
+    try {
+      localStorage.setItem(PLAYER_CODE_KEY, urlCode);
+    } catch (_) {}
+  }
 
   const tid = urlTid || getTournamentId();
+  const playerCode = urlCode || getPlayerCode();
   const href = scoreboardHref(tid);
   const edit = editHref(tid);
+  const enter = enterHref(playerCode);
 
   document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {
     link.setAttribute("href", href);
   });
   document.querySelectorAll("a[data-edit-link]").forEach((link) => {
     link.setAttribute("href", edit);
+  });
+  document.querySelectorAll("a[data-enter-link]").forEach((link) => {
+    link.setAttribute("href", enter);
   });
 }
 

@@ -4,8 +4,8 @@
   color-scheme: light;
   --bg: #eef3f9;
   --text: #14212f;
-  --WHITE:#ffffff;
-  --BLACK:#14212f;
+  --WHITE: #ffffff;
+  --BLACK: #14212f;
   --muted: #5b6a7d;
   --surface: #ffffff;
   --surface-strong: #ffffff;
@@ -27,8 +27,8 @@
     color-scheme: dark;
     --bg: #050607;
     --text: #f1f4f7;
-    --WHITE:#f1f4f7;
-    --BLACK:#f1f4f7;
+    --WHITE: #f1f4f7;
+    --BLACK: #f1f4f7;
     --muted: #98a1ab;
     --surface: #0d0f12;
     --surface-strong: #101318;
@@ -50,8 +50,8 @@
   color-scheme: dark;
   --bg: #050607;
   --text: #f1f4f7;
-  --WHITE:#f1f4f7;
-  --BLACK:#f1f4f7;
+  --WHITE: #f1f4f7;
+  --BLACK: #f1f4f7;
   --muted: #98a1ab;
   --surface: #0d0f12;
   --surface-strong: #101318;
@@ -163,6 +163,10 @@ header {
   cursor: pointer;
 }
 
+.mobile-header-link {
+  display: none;
+}
+
 .menu-toggle {
   display: none;
   width: 25px;
@@ -242,6 +246,63 @@ header {
   overflow-x: hidden;
 }
 
+.enter-who-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.enter-who-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.scoreboard-main-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.scoreboard-enter-card {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.main-action-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid var(--brand);
+  border-radius: 12px;
+  background: var(--brand);
+  color: var(--brand-contrast);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.main-action-link {
+  width: 100%;
+  padding: 10px 0;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.main-action-link:hover {
+  background: var(--brand-hover);
+  border-color: var(--brand-hover);
+  color: var(--brand-contrast);
+}
+
 .row {
   display: grid;
   grid-template-columns: 1fr;
@@ -294,7 +355,9 @@ textarea {
   color: var(--text);
   font-family: "JetBrains Mono", monospace;
   font-size: 14px;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 input[type="checkbox"],
@@ -328,7 +391,10 @@ button {
   font-weight: 700;
   padding: 10px 14px;
   cursor: pointer;
-  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
 button:hover {
@@ -392,7 +458,9 @@ hr {
   padding: 9px 11px;
   opacity: 0;
   transform: translateY(10px);
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
   pointer-events: none;
 }
 
@@ -406,7 +474,7 @@ hr {
 }
 
 .score-notifier.score-under.score-light {
-  background: rgba(39, 146, 63, 0.30);
+  background: rgba(39, 146, 63, 0.3);
   border-color: rgba(20, 98, 40, 0.55);
 }
 
@@ -437,6 +505,19 @@ hr {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.score-emph-gross {
+  font-weight: 300;
+}
+
+.score-emph-net {
+  font-weight: 800;
+}
+
+.score-notifier-line .score-emph-gross,
+.score-notifier-line .score-emph-net {
+  color: inherit;
 }
 
 .score-notifier.score-under.score-dark .score-notifier-line,
@@ -554,7 +635,7 @@ hr {
 
 .score-hole-cell {
   font-weight: 700;
-  padding:0px !important;
+  padding: 0px !important;
 }
 
 .score-hole-pill {
@@ -571,7 +652,7 @@ hr {
 }
 
 .score-hole-pill.score-under.score-light {
-  background: rgba(39, 146, 63, 0.30);
+  background: rgba(39, 146, 63, 0.3);
 }
 
 .score-hole-pill.score-under.score-dark {
@@ -657,7 +738,12 @@ hr {
   padding-left: 10px;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--team-accent, var(--border-strong)) 18%, transparent) 0%,
+    color-mix(
+        in srgb,
+        var(--team-accent, var(--border-strong)) 18%,
+        transparent
+      )
+      0%,
     transparent 60%
   );
   border-radius: 4px;
@@ -669,7 +755,12 @@ hr {
   padding-right: 6px;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--team-accent, var(--border-strong)) 14%, transparent) 0%,
+    color-mix(
+        in srgb,
+        var(--team-accent, var(--border-strong)) 14%,
+        transparent
+      )
+      0%,
     transparent 70%
   );
   border-radius: 4px;
@@ -742,7 +833,12 @@ hr {
   padding-left: 10px;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--team-accent, var(--border-strong)) 18%, transparent) 0%,
+    color-mix(
+        in srgb,
+        var(--team-accent, var(--border-strong)) 18%,
+        transparent
+      )
+      0%,
     transparent 60%
   );
   border-radius: 4px;
@@ -811,8 +907,6 @@ hr {
   background: var(--surface-strong);
 }
 
-
-
 .inline-scorecard-host {
   max-width: 100%;
   overflow: hidden;
@@ -873,17 +967,17 @@ hr {
 
 .inline-scoregrid .scorecard-team-table th:first-child,
 .inline-scoregrid .scorecard-team-table td:first-child {
-   min-width: 0px;
+  min-width: 0px;
 }
 
 .inline-scoregrid .scorecard-one-table th:nth-last-child(2),
 .inline-scoregrid .scorecard-one-table td:nth-last-child(2) {
-   min-width: 0px;
+  min-width: 0px;
 }
 
 .inline-scoregrid .scorecard-one-table th:last-child,
 .inline-scoregrid .scorecard-one-table td:last-child {
-   min-width: 0px;
+  min-width: 0px;
 }
 
 .scorecard-spacer-row td {
@@ -1033,6 +1127,30 @@ th.dots {
     padding-right: 52px;
   }
 
+  .enter-page .brand {
+    padding-right: 148px;
+  }
+
+  .mobile-header-link {
+    display: inline-flex;
+    position: absolute;
+    top: 10px;
+    right: 40px;
+    min-height: 25px;
+    border-radius: 5px !important;
+    padding: 1px 5px !important;
+    font-size: 12px !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .main-action-link {
+    width: 100%;
+    padding: 10px 0;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+
   .nav .actions {
     display: none;
     width: 100%;
@@ -1078,6 +1196,20 @@ th.dots {
     padding: 12px;
     border-radius: 14px;
     box-shadow: none;
+  }
+
+  .enter-who-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .enter-who-head > button {
+    width: 100%;
+  }
+
+  .scoreboard-enter-card .main-action-link {
+    width: 100%;
   }
 
   .enter-tabs button {
@@ -1233,7 +1365,7 @@ th.dots {
     padding: 0 8px;
   }
 
-.enter-ticker-title {
+  .enter-ticker-title {
     min-width: 138px;
     padding-right: 8px;
   }
