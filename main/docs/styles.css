@@ -1381,19 +1381,23 @@ th.dots {
 }
 
 .hole-map-nav {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 110px 1fr;
   gap: 10px;
   align-items: center;
-  flex-wrap: wrap;
 }
 
-.hole-map-nav label {
-  margin: 0;
+.hole-map-nav button {
+  width: 100%;
+  min-width: 0;
 }
 
 .hole-map-nav select {
-  width: 140px;
-  min-width: 120px;
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+  text-align-last: center;
+  font-weight: 700;
 }
 
 .hole-map-location {
@@ -1449,13 +1453,40 @@ th.dots {
   backdrop-filter: blur(7px);
 }
 
+.hole-map-footer-point-head,
+.hole-map-footer-point-value,
 .hole-map-footer-head,
 .hole-map-footer-values {
   width: min(100%, 1080px);
   margin: 0 auto;
+  text-align: center;
+}
+
+.hole-map-footer-point-head,
+.hole-map-footer-point-value {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.hole-map-footer-point-head {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin-bottom: 2px;
+}
+
+.hole-map-footer-point-value {
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-bottom: 6px;
+}
+
+.hole-map-footer-head,
+.hole-map-footer-values {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  text-align: center;
 }
 
 .hole-map-footer-head {
@@ -1492,18 +1523,13 @@ th.dots {
   }
 
   .hole-map-nav {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 96px 1fr;
     gap: 8px;
-    align-items: end;
+    align-items: center;
   }
 
-  .hole-map-nav label {
-    grid-column: 1 / -1;
-  }
-
-  .hole-map-nav select,
-  .hole-map-nav button {
+  .hole-map-nav button,
+  .hole-map-nav select {
     width: 100%;
     min-width: 0;
   }
@@ -1527,6 +1553,14 @@ th.dots {
 
   .hole-map-footer-head {
     font-size: 10px;
+  }
+
+  .hole-map-footer-point-head {
+    font-size: 10px;
+  }
+
+  .hole-map-footer-point-value {
+    font-size: 18px;
   }
 
   .hole-map-footer-values {

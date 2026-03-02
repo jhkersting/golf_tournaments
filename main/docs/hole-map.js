@@ -55,8 +55,10 @@ const els = {
   holeNext: document.getElementById("hole_next"),
   locBtn: document.getElementById("loc_btn"),
   locClear: document.getElementById("loc_clear"),
-  locStatus: document.getElementById("loc_status"),
   metricSummary: document.getElementById("metric_summary"),
+  metricToPointHead: document.getElementById("metric_to_point_head"),
+  metricToPointRow: document.getElementById("metric_to_point_row"),
+  metricToPoint: document.getElementById("metric_to_point"),
   metricFront: document.getElementById("metric_front"),
   metricCenter: document.getElementById("metric_center"),
   metricBack: document.getElementById("metric_back"),
@@ -622,7 +624,7 @@ function holePar(features) {
 }
 
 function updateLocationStatus(text) {
-  els.locStatus.textContent = text;
+  void text;
 }
 
 function secureContextMessage() {
@@ -983,6 +985,7 @@ async function maybeAutoStartTracking() {
 
 async function renderCurrentHole() {
   const hole = state.currentHole;
+  updateHoleNavControls();
   const features = state.holeMap.get(hole) || [];
   const par = holePar(features);
   const green = greenForHole(features);
@@ -1046,8 +1049,16 @@ async function renderCurrentHole() {
     Array.isArray(state.tapPoint) && Array.isArray(state.userLocation)
       ? distanceYards(state.userLocation, state.tapPoint)
       : null;
+  const showToPoint = usingTapPoint && Number.isFinite(userToTapYards);
 
-  els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}`;
+  if (els.metricSummary) {
+    els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}`;
+  }
+  if (els.metricToPointHead) els.metricToPointHead.style.display = showToPoint ? "" : "none";
+  if (els.metricToPointRow) els.metricToPointRow.style.display = showToPoint ? "" : "none";
+  if (els.metricToPoint) {
+    els.metricToPoint.textContent = showToPoint ? formatYards(userToTapYards) : "—";
+  }
   setMetricValue(els.metricFront, yardsFront, usingTapPoint ? userYardsFront : null);
   setMetricValue(els.metricCenter, yardsCenter, usingTapPoint ? userYardsCenter : null);
   setMetricValue(els.metricBack, yardsBack, usingTapPoint ? userYardsBack : null);
@@ -1070,7 +1081,9 @@ async function renderCurrentHole() {
   } else if (!state.locationError) {
     detailText = `${detailText} Tap map to set a yardage source.`.trim();
   }
-  els.yardageDetail.textContent = detailText;
+  if (els.yardageDetail) {
+    els.yardageDetail.textContent = detailText;
+  }
 
   if (!features.length) {
     state.lastProjection = null;
@@ -1201,46 +1214,6 @@ async function renderCurrentHole() {
     ctx.strokeStyle = strokeDefault;
     ctx.lineWidth = 2.4;
     ctx.stroke();
-
-    if (Number.isFinite(userToTapYards)) {
-      const bubbleText = `${Math.round(userToTapYards)}y to you`;
-      const fontSize = 16;
-      const padX = 10;
-      const padY = 7;
-      const bubbleGap = 14;
-      ctx.font = `700 ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
-      const textWidth = ctx.measureText(bubbleText).width;
-      const bubbleW = textWidth + padX * 2;
-      const bubbleH = fontSize + padY * 2;
-      let bubbleX = tx - bubbleW / 2;
-      bubbleX = Math.max(8, Math.min(width - bubbleW - 8, bubbleX));
-      const bubbleY = Math.max(8, ty - bubbleH - bubbleGap);
-
-      const bubbleStroke = darkTheme ? "rgba(240,246,255,0.98)" : "rgba(18,34,54,0.94)";
-      const bubbleFill = darkTheme ? "rgba(18,23,29,0.92)" : "rgba(253,254,255,0.95)";
-      const bubbleTextColor = darkTheme ? "#f3f8ff" : "#122236";
-      const pointerX = Math.max(bubbleX + 10, Math.min(bubbleX + bubbleW - 10, tx));
-
-      ctx.beginPath();
-      ctx.rect(bubbleX, bubbleY, bubbleW, bubbleH);
-      ctx.fillStyle = bubbleFill;
-      ctx.fill();
-      ctx.strokeStyle = bubbleStroke;
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(pointerX, bubbleY + bubbleH);
-      ctx.lineTo(tx, ty - 8);
-      ctx.strokeStyle = bubbleStroke;
-      ctx.lineWidth = 1.4;
-      ctx.stroke();
-
-      ctx.fillStyle = bubbleTextColor;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(bubbleText, bubbleX + bubbleW / 2, bubbleY + bubbleH / 2 + 0.5);
-    }
   }
 }
 
@@ -1249,7 +1222,9 @@ function setHole(holeNumber) {
   clearTapPreviewTimer();
   state.currentHole = holeNumber;
   state.tapPoint = null;
-  els.holeSelect.value = String(holeNumber);
+  if (els.holeSelect) {
+    els.holeSelect.value = String(holeNumber);
+  }
   renderCurrentHole();
 }
 
@@ -1261,11 +1236,30 @@ function nextHole(delta) {
   setHole(state.holes[next]);
 }
 
+function updateHoleNavControls() {
+  const holes = state.holes || [];
+  const hole = state.currentHole;
+  if (!holes.length || hole == null) {
+    if (els.holePrev) els.holePrev.textContent = "<-";
+    if (els.holeNext) els.holeNext.textContent = "->";
+    return;
+  }
+  const idx = holes.indexOf(hole);
+  if (idx === -1) return;
+  const prevHole = holes[(idx - 1 + holes.length) % holes.length];
+  const nextHoleNumber = holes[(idx + 1) % holes.length];
+  if (els.holePrev) els.holePrev.textContent = `<- ${prevHole}`;
+  if (els.holeNext) els.holeNext.textContent = `${nextHoleNumber} ->`;
+  if (els.holeSelect) els.holeSelect.value = String(hole);
+}
+
 function bindEvents() {
-  els.holeSelect.addEventListener("change", () => {
-    const value = Number(els.holeSelect.value);
-    if (Number.isFinite(value)) setHole(value);
-  });
+  if (els.holeSelect) {
+    els.holeSelect.addEventListener("change", () => {
+      const value = Number(els.holeSelect.value);
+      if (Number.isFinite(value)) setHole(value);
+    });
+  }
 
   els.holePrev.addEventListener("click", () => nextHole(-1));
   els.holeNext.addEventListener("click", () => nextHole(1));
@@ -1358,17 +1352,21 @@ async function loadData() {
   const fallback = Array.from(map.keys());
   state.holes = (fromIndex.length ? fromIndex : fallback).sort((a, b) => a - b);
 
-  els.holeSelect.innerHTML = "";
-  for (const hole of state.holes) {
-    const option = document.createElement("option");
-    option.value = String(hole);
-    option.textContent = `Hole ${hole}`;
-    els.holeSelect.appendChild(option);
+  if (els.holeSelect) {
+    els.holeSelect.innerHTML = "";
+    for (const hole of state.holes) {
+      const option = document.createElement("option");
+      option.value = String(hole);
+      option.textContent = String(hole);
+      els.holeSelect.appendChild(option);
+    }
   }
 
   if (state.holes.length) {
     state.currentHole = state.holes[0];
-    els.holeSelect.value = String(state.currentHole);
+    if (els.holeSelect) {
+      els.holeSelect.value = String(state.currentHole);
+    }
   }
 }
 
@@ -1391,7 +1389,9 @@ async function init() {
     state.locationError = `Could not load hole data: ${error.message}`;
     updateLocationStatus(state.locationError);
     els.holeEmpty.style.display = "";
-    els.yardageDetail.textContent = state.locationError;
+    if (els.yardageDetail) {
+      els.yardageDetail.textContent = state.locationError;
+    }
   }
 }
 
