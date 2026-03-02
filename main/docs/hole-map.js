@@ -719,17 +719,17 @@ function persistGeolocationGrant(granted) {
 }
 
 function updateTrackingButton() {
-  const hasSharedLocation =
-    state.locationPermissionGranted || Array.isArray(state.userLocation) || state.locationWatchId != null;
+  const locationInUse =
+    Array.isArray(state.userLocation) || state.locationWatchId != null || state.locationPending;
 
   if (els.locBtn) {
-    els.locBtn.style.display = hasSharedLocation ? "none" : "";
+    els.locBtn.style.display = locationInUse ? "none" : "";
     els.locBtn.disabled = Boolean(state.locationPending);
     els.locBtn.textContent = state.locationPending ? "Locating..." : "Use My Location";
   }
 
   if (els.locClear) {
-    els.locClear.style.display = hasSharedLocation ? "" : "none";
+    els.locClear.style.display = locationInUse ? "" : "none";
     els.locClear.disabled = Boolean(state.locationPending);
   }
 }

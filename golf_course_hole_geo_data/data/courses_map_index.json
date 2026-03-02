@@ -1,0 +1,89 @@
+{
+  "generated_at_utc": "2026-03-02T17:45:58.538498+00:00",
+  "data_root": "golf_course_hole_geo_data/data",
+  "course_count": 3,
+  "counts_by_map_level": {
+    "full": 2,
+    "simplified": 1,
+    "none": 0
+  },
+  "courses_by_slug": {
+    "sherrill-park-golf-course-1": {
+      "name": "Sherrill Park Golf Course - Course 1",
+      "map_level": "full",
+      "has_full_map": true,
+      "has_simplified_map": true
+    },
+    "sherrill-park-golf-course-2": {
+      "name": "Sherrill Park Golf Course - Course #2",
+      "map_level": "simplified",
+      "has_full_map": false,
+      "has_simplified_map": true
+    },
+    "tenison-park-golf-course": {
+      "name": "Tenison Park Golf Course",
+      "map_level": "full",
+      "has_full_map": true,
+      "has_simplified_map": false
+    }
+  },
+  "courses": [
+    {
+      "slug": "sherrill-park-golf-course-1",
+      "name": "Sherrill Park Golf Course - Course 1",
+      "path": "golf_course_hole_geo_data/data/sherrill-park-golf-course-1",
+      "map_level": "full",
+      "has_full_map": true,
+      "has_simplified_map": true,
+      "holes": {
+        "full_map_holes": 18,
+        "simplified_map_holes": 18
+      },
+      "files": {
+        "course_geojson": true,
+        "hole_features_geojson": true,
+        "hole_index_json": true,
+        "bluegolf_coordinates_json": true,
+        "bluegolf_course_data_json": true
+      }
+    },
+    {
+      "slug": "sherrill-park-golf-course-2",
+      "name": "Sherrill Park Golf Course - Course #2",
+      "path": "golf_course_hole_geo_data/data/sherrill-park-golf-course-2",
+      "map_level": "simplified",
+      "has_full_map": false,
+      "has_simplified_map": true,
+      "holes": {
+        "full_map_holes": null,
+        "simplified_map_holes": 18
+      },
+      "files": {
+        "course_geojson": false,
+        "hole_features_geojson": false,
+        "hole_index_json": false,
+        "bluegolf_coordinates_json": true,
+        "bluegolf_course_data_json": true
+      }
+    },
+    {
+      "slug": "tenison-park-golf-course",
+      "name": "Tenison Park Golf Course",
+      "path": "golf_course_hole_geo_data/data/tenison-park-golf-course",
+      "map_level": "full",
+      "has_full_map": true,
+      "has_simplified_map": false,
+      "holes": {
+        "full_map_holes": 18,
+        "simplified_map_holes": null
+      },
+      "files": {
+        "course_geojson": true,
+        "hole_features_geojson": true,
+        "hole_index_json": true,
+        "bluegolf_coordinates_json": false,
+        "bluegolf_course_data_json": false
+      }
+    }
+  ]
+}

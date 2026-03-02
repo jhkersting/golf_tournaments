@@ -2,6 +2,15 @@
 
 This folder stores scripts and output data for golf course and hole geodata that can later be consumed by the main site.
 
+All scrapers now refresh a shared index file at:
+
+`golf_course_hole_geo_data/data/courses_map_index.json`
+
+This index lists every course folder and marks map availability as:
+- `full`
+- `simplified`
+- `none`
+
 ## What this script does
 
 `fetch_golf_course_holes.py`:
@@ -82,3 +91,7 @@ Files:
 - `bluegolf_course_data.json` (course info + pars/stroke index parsed from detailed scorecard)
 - `bluegolf_saved_course_payload.json` (payload for backend `POST /courses`)
 - `bluegolf_backend_save_response.json` (present when `--save-course` succeeds)
+- `courses_map_index.json` (all course folders + map availability status)
+
+
+python3 golf_course_hole_geo_data/fetch_bluegolf_course_data.py   --course-slug sherrillpark2   --data-slug sherrill-park-golf-course-2   --save-course

@@ -123,6 +123,46 @@ function sumHoles(arr) {
   return (arr || []).reduce((a, v) => a + (v == null ? 0 : Number(v) || 0), 0);
 }
 
+function defaultCourse() {
+  return {
+    pars: Array(18).fill(4),
+    strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1)
+  };
+}
+
+function normalizeCourseShape(course) {
+  const pars = Array.isArray(course?.pars) && course.pars.length === 18
+    ? course.pars.map((v) => Number(v) || 4)
+    : null;
+  const strokeIndex = Array.isArray(course?.strokeIndex) && course.strokeIndex.length === 18
+    ? course.strokeIndex.map((v) => Number(v) || 0)
+    : null;
+  if (!pars || !strokeIndex) return null;
+  return {
+    ...(course?.name ? { name: String(course.name) } : {}),
+    pars,
+    strokeIndex
+  };
+}
+
+function courseListFromTournament(tournamentJson = TOURN) {
+  const fromList = Array.isArray(tournamentJson?.courses)
+    ? tournamentJson.courses.map((course) => normalizeCourseShape(course)).filter(Boolean)
+    : [];
+  if (fromList.length) return fromList;
+  const legacy = normalizeCourseShape(tournamentJson?.course);
+  if (legacy) return [legacy];
+  return [defaultCourse()];
+}
+
+function courseForRoundIndex(roundIndex, tournamentJson = TOURN) {
+  const courses = courseListFromTournament(tournamentJson);
+  const rounds = tournamentJson?.tournament?.rounds || [];
+  const idxRaw = Number(rounds?.[roundIndex]?.courseIndex);
+  const idx = Number.isInteger(idxRaw) && idxRaw >= 0 && idxRaw < courses.length ? idxRaw : 0;
+  return courses[idx] || courses[0] || defaultCourse();
+}
+
 function isPlayedScore(v) {
   return v != null && Number(v) > 0;
 }
@@ -238,8 +278,11 @@ function applyModeConstraints(viewRound) {
   syncModeButtons();
 }
 
-function getCoursePars() {
-  const pars = TOURN?.course?.pars;
+function getCoursePars(roundIndex = currentRound) {
+  const course = roundIndex === "all"
+    ? (courseListFromTournament(TOURN)[0] || defaultCourse())
+    : courseForRoundIndex(Number(roundIndex), TOURN);
+  const pars = course?.pars;
   if (Array.isArray(pars) && pars.length === 18 && pars.some((v) => Number(v) > 0)) {
     return pars.map((v) => Number(v) || 0);
   }
@@ -340,7 +383,6 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   const nextRounds = nextTournament?.score_data?.rounds || [];
   const prevRoundCfgs = prevTournament?.tournament?.rounds || [];
   const nextRoundCfgs = nextTournament?.tournament?.rounds || [];
-  const coursePars = nextTournament?.course?.pars || Array(18).fill(4);
 
   const playerNames = new Map();
   (nextTournament?.players || []).forEach((p) => {
@@ -359,6 +401,7 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
     const prevRound = prevRounds[roundIndex] || {};
     const nextRoundCfg = nextRoundCfgs[roundIndex] || {};
     const prevRoundCfg = prevRoundCfgs[roundIndex] || nextRoundCfg;
+    const coursePars = courseForRoundIndex(roundIndex, nextTournament).pars || Array(18).fill(4);
     const nextSource = scoreSourceForRound(nextRound, nextRoundCfg);
     if (!nextSource.entries.length) continue;
 
@@ -950,7 +993,7 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
   const anyData = teamPlayers.some((p) => hasAnyScore(p.gross) || hasAnyScore(p.net));
   if (!anyData) return null;
 
-  const par = getCoursePars();
+  const par = getCoursePars(roundIndex);
   const parTotal18 = segmentTotal(par, 0, 17);
   const wrap = document.createElement("div");
   wrap.className = "scorecard-one-wrap";
@@ -1329,7 +1372,7 @@ function buildTwoManBestBallTeamScorecard(roundIndex, teamRow, useHandicap) {
     groups.some((g) => hasAnyScore(g.gross) || hasAnyScore(g.net));
   if (!anyData) return null;
 
-  const par = getCoursePars();
+  const par = getCoursePars(roundIndex);
   const teamScores = {
     gross: teamGross,
     net: teamNet,
@@ -1395,7 +1438,9 @@ async function getScorecardScores(data, row) {
     return Array.isArray(scores?.gross) || Array.isArray(scores?.net);
   }
 
-  function normalizeScorecard(scores, par = getCoursePars()) {
+  const rIdx = Number(data.view.round);
+
+  function normalizeScorecard(scores, par = getCoursePars(rIdx)) {
     const gross = Array.isArray(scores?.gross) ? scores.gross : Array(18).fill(null);
     const net = Array.isArray(scores?.net) ? scores.net : gross.slice();
     return {
@@ -1419,12 +1464,10 @@ async function getScorecardScores(data, row) {
       : roundData?.player?.[row?.playerId];
     if (!source) return null;
     if (!hasHoleArrays(source)) return null;
-    return normalizeScorecard(source, getCoursePars());
+    return normalizeScorecard(source, getCoursePars(roundIdx));
   }
 
-  if (hasHoleArrays(row?.scores)) return normalizeScorecard(row.scores, getCoursePars());
-
-  const rIdx = Number(data.view.round);
+  if (hasHoleArrays(row?.scores)) return normalizeScorecard(row.scores, getCoursePars(rIdx));
   const fromRound = fromRoundData(rIdx);
   if (fromRound) return fromRound;
 
@@ -1445,7 +1488,7 @@ async function getScorecardScores(data, row) {
       netToParTotal: sc.toParNetTotal,
       thru: sc.thru
     },
-    sc.course?.pars || getCoursePars()
+    sc.course?.pars || getCoursePars(rIdx)
   );
 }
 
@@ -2009,18 +2052,18 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
 
 function statRowsFromRound(roundData, isTeamMode, roundIndex) {
   if (!roundData) return [];
+  const roundPars = courseForRoundIndex(roundIndex, TOURN).pars || Array(18).fill(4);
   let source;
   if (isTeamMode) {
     const primary = roundData.team || {};
     if (Object.keys(primary).length) {
       source = primary;
     } else {
-      const course = TOURN?.course || { pars: Array(18).fill(4) };
       const derivedRows = buildRoundTeamRows(
         TOURN,
         roundIndex,
         roundData,
-        course.pars || Array(18).fill(4),
+        roundPars,
         roundData?.leaderboard?.teams || []
       );
       source = Object.fromEntries(
@@ -2037,6 +2080,7 @@ function statRowsFromRound(roundData, isTeamMode, roundIndex) {
   for (const [id, entry] of Object.entries(source)) {
     rows.push({
       id,
+      par: roundPars,
       gross: Array.isArray(entry?.gross) ? entry.gross : Array(18).fill(null)
     });
   }
@@ -2049,7 +2093,7 @@ function renderStats(data) {
   const isTeamMode = mode === "team";
   const roundView = data?.view?.round;
   const rounds = TOURN?.score_data?.rounds || [];
-  const par = Array.isArray(data?.course?.pars) ? data.course.pars : getCoursePars();
+  const par = Array.isArray(data?.course?.pars) ? data.course.pars : getCoursePars(roundView);
   const statRows =
     roundView === "all"
       ? rounds.flatMap((rd, idx) => statRowsFromRound(rd, isTeamMode, idx))
@@ -2057,6 +2101,8 @@ function renderStats(data) {
 
   const holeTotals = Array(18).fill(0);
   const holeCounts = Array(18).fill(0);
+  const holeParTotals = Array(18).fill(0);
+  const holeParCounts = Array(18).fill(0);
   let holesPlayed = 0;
   let cardsWithScores = 0;
   let totalDiff = 0;
@@ -2068,15 +2114,20 @@ function renderStats(data) {
 
   for (const row of statRows) {
     if (hasAnyScore(row.gross)) cardsWithScores++;
+    const rowPar = Array.isArray(row?.par) && row.par.length === 18 ? row.par : par;
     for (let i = 0; i < 18; i++) {
       const v = row.gross?.[i];
       if (!isPlayedScore(v)) continue;
       const score = Number(v);
-      const p = Number(par[i] || 0);
+      const p = Number(rowPar[i] || 0);
       const diff = score - p;
 
       holeTotals[i] += score;
       holeCounts[i] += 1;
+      if (Number.isFinite(p) && p > 0) {
+        holeParTotals[i] += p;
+        holeParCounts[i] += 1;
+      }
       holesPlayed += 1;
       totalDiff += diff;
 
@@ -2126,13 +2177,23 @@ function renderStats(data) {
   const front = `
     ${headerRow("Front 9", 0, 8)}
     ${valueRow("Avg", 0, 8, (i) => (holeCounts[i] ? formatDecimal(holeTotals[i] / holeCounts[i]) : "—"))}
-    ${valueRow("±", 0, 8, (i) => (holeCounts[i] ? toParStrFromDecimal(holeTotals[i] / holeCounts[i] - Number(par[i] || 0)) : "—"))}
+    ${valueRow("±", 0, 8, (i) => (holeCounts[i]
+      ? toParStrFromDecimal(
+        (holeTotals[i] / holeCounts[i]) -
+        (holeParCounts[i] ? (holeParTotals[i] / holeParCounts[i]) : Number(par[i] || 0))
+      )
+      : "—"))}
     ${valueRow("N", 0, 8, (i) => String(holeCounts[i]))}
   `;
   const back = `
     ${headerRow("Back 9", 9, 17)}
     ${valueRow("Avg", 9, 17, (i) => (holeCounts[i] ? formatDecimal(holeTotals[i] / holeCounts[i]) : "—"))}
-    ${valueRow("±", 9, 17, (i) => (holeCounts[i] ? toParStrFromDecimal(holeTotals[i] / holeCounts[i] - Number(par[i] || 0)) : "—"))}
+    ${valueRow("±", 9, 17, (i) => (holeCounts[i]
+      ? toParStrFromDecimal(
+        (holeTotals[i] / holeCounts[i]) -
+        (holeParCounts[i] ? (holeParTotals[i] / holeParCounts[i]) : Number(par[i] || 0))
+      )
+      : "—"))}
     ${valueRow("N", 9, 17, (i) => String(holeCounts[i]))}
   `;
 
@@ -2140,19 +2201,17 @@ function renderStats(data) {
 }
 
 function buildScoreboardResponse(tournamentJson, viewRound) {
-  const course = tournamentJson.course || {
-    pars: Array(18).fill(4),
-    strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1)
-  };
+  const courses = courseListFromTournament(tournamentJson);
+  const allRoundsCourse = courses[0] || defaultCourse();
 
   if (viewRound === "all") {
     return {
       tournament: tournamentJson.tournament,
       view: { round: "all" },
       course: {
-        parTotal: course.pars.reduce((a, b) => a + Number(b || 0), 0),
-        pars: course.pars,
-        strokeIndex: course.strokeIndex
+        parTotal: allRoundsCourse.pars.reduce((a, b) => a + Number(b || 0), 0),
+        pars: allRoundsCourse.pars,
+        strokeIndex: allRoundsCourse.strokeIndex
       },
       teams: tournamentJson.score_data?.leaderboard_all?.teams || [],
       players: tournamentJson.score_data?.leaderboard_all?.players || []
@@ -2160,22 +2219,23 @@ function buildScoreboardResponse(tournamentJson, viewRound) {
   }
 
   const rIdx = Number(viewRound);
+  const roundCourse = courseForRoundIndex(rIdx, tournamentJson);
   const derived = tournamentJson.score_data?.rounds?.[rIdx];
   const derivedTeams = buildRoundTeamRows(
     tournamentJson,
     rIdx,
     derived || {},
-    course.pars,
+    roundCourse.pars,
     derived?.leaderboard?.teams || []
   );
-  const derivedPlayers = buildRoundPlayerRows(tournamentJson, rIdx, derived || {}, course.pars);
+  const derivedPlayers = buildRoundPlayerRows(tournamentJson, rIdx, derived || {}, roundCourse.pars);
   return {
     tournament: tournamentJson.tournament,
     view: { round: rIdx },
     course: {
-      parTotal: course.pars.reduce((a, b) => a + Number(b || 0), 0),
-      pars: course.pars,
-      strokeIndex: course.strokeIndex
+      parTotal: roundCourse.pars.reduce((a, b) => a + Number(b || 0), 0),
+      pars: roundCourse.pars,
+      strokeIndex: roundCourse.strokeIndex
     },
     teams: derivedTeams.map((row) => ({
       ...row,

@@ -181,6 +181,46 @@ function teeTimeDisplayForTeamRound(teamId, playersById, roundIndex) {
   return "";
 }
 
+function defaultCourse() {
+  return {
+    pars: Array(18).fill(4),
+    strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1)
+  };
+}
+
+function normalizeCourseShape(course) {
+  const pars = Array.isArray(course?.pars) && course.pars.length === 18
+    ? course.pars.map((v) => Number(v) || 4)
+    : null;
+  const strokeIndex = Array.isArray(course?.strokeIndex) && course.strokeIndex.length === 18
+    ? course.strokeIndex.map((v) => Number(v) || 0)
+    : null;
+  if (!pars || !strokeIndex) return null;
+  return {
+    ...(course?.name ? { name: String(course.name) } : {}),
+    pars,
+    strokeIndex
+  };
+}
+
+function courseListFromTournament(tjson) {
+  const fromList = Array.isArray(tjson?.courses)
+    ? tjson.courses.map((course) => normalizeCourseShape(course)).filter(Boolean)
+    : [];
+  if (fromList.length) return fromList;
+  const legacy = normalizeCourseShape(tjson?.course);
+  if (legacy) return [legacy];
+  return [defaultCourse()];
+}
+
+function courseForRound(tjson, roundIndex) {
+  const courses = courseListFromTournament(tjson);
+  const rounds = tjson?.tournament?.rounds || [];
+  const idxRaw = Number(rounds?.[roundIndex]?.courseIndex);
+  const idx = Number.isInteger(idxRaw) && idxRaw >= 0 && idxRaw < courses.length ? idxRaw : 0;
+  return courses[idx] || courses[0] || defaultCourse();
+}
+
 /**
  * Draft (unsent) edits so auto-refresh + rerenders never clobber typing.
  * Structure:
@@ -459,7 +499,6 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   const nextRounds = nextTournament?.score_data?.rounds || [];
   const prevRoundCfgs = prevTournament?.tournament?.rounds || [];
   const nextRoundCfgs = nextTournament?.tournament?.rounds || [];
-  const coursePars = nextTournament?.course?.pars || Array(18).fill(4);
 
   const playerNames = new Map();
   (nextTournament?.players || []).forEach((p) => {
@@ -478,6 +517,7 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
     const prevRound = prevRounds[roundIndex] || {};
     const nextRoundCfg = nextRoundCfgs[roundIndex] || {};
     const prevRoundCfg = prevRoundCfgs[roundIndex] || nextRoundCfg;
+    const coursePars = courseForRound(nextTournament, roundIndex).pars || Array(18).fill(4);
     const nextSource = scoreSourceForRound(nextRound, nextRoundCfg);
     if (!nextSource.entries.length) continue;
 
@@ -720,7 +760,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   const showIndividualGross = !isScrambleRound;
   const showIndividualNet =
     !!roundCfg.useHandicap && !isScrambleRound;
-  const pars = tjson?.course?.pars || Array(18).fill(4);
+  const pars = courseForRound(tjson, safeRound).pars || Array(18).fill(4);
 
   const playerLeaderboardRows = roundData?.leaderboard?.players || [];
   const playerRowById = Object.create(null);
@@ -1149,7 +1189,6 @@ async function main() {
   document.getElementById("change_code_btn")?.addEventListener("click", clearCodeAndReload);
 
   const rounds = tjson.tournament?.rounds || [];
-  const course = tjson.course || { pars: Array(18).fill(4), strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1) };
 
   const playersArr = tjson.players || [];
   const playersById = {};
@@ -1221,7 +1260,7 @@ async function main() {
     const isScrambleRound = String(roundCfg.format || "").toLowerCase() === "scramble";
     const useNet = !!roundCfg.useHandicap || isScrambleRound;
     const roundLabel = `R${tickerRoundIndex + 1}`;
-    const pars = tjson?.course?.pars || course.pars || Array(18).fill(4);
+    const pars = courseForRound(tjson, tickerRoundIndex).pars || Array(18).fill(4);
     const teamTeeFallback = isScrambleRound
       ? teeTimeDisplayForTeamRound(teamId, playersById, tickerRoundIndex)
       : "";
@@ -1265,7 +1304,8 @@ async function main() {
         score_data: tjson?.score_data || { rounds: [] },
         players: tjson?.players || [],
         teams: tjson?.teams || [],
-        course: tjson?.course || { pars: Array(18).fill(4) }
+        course: courseListFromTournament(tjson)[0] || defaultCourse(),
+        courses: courseListFromTournament(tjson)
       };
       const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
       const newEvents = collectNewScoreEvents(previousTournament, fresh);
@@ -1608,13 +1648,14 @@ async function main() {
       }
       conflictBox.style.display = "none";
       status.textContent = "";
+      const holeCourse = courseForRound(tjson, r);
 
       const header = el("div", { class: "hole-header" });
       header.appendChild(
         el(
           "div",
           {},
-          `<b>${holeLabel(currentHole)}</b> <span class="small">Par ${course.pars[currentHole]} • SI ${course.strokeIndex[currentHole]}</span>`
+          `<b>${holeLabel(currentHole)}</b> <span class="small">Par ${holeCourse.pars[currentHole]} • SI ${holeCourse.strokeIndex[currentHole]}</span>`
         )
       );
 

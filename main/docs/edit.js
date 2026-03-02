@@ -725,7 +725,10 @@ function normalizeTournamentCourses(data) {
 function roundCourseOptionsHtml(selectedRef = "tournament:0") {
   const selected = String(selectedRef || "tournament:0");
   const out = [];
-  tournamentCourses.forEach((course, idx) => {
+  const sourceCourses = tournamentCourses.length
+    ? tournamentCourses
+    : [normalizeCourseForUi(null)];
+  sourceCourses.forEach((course, idx) => {
     const ref = `tournament:${idx}`;
     const label = course?.name || `Course ${idx + 1}`;
     out.push(`<option value="${ref}" ${selected === ref ? "selected" : ""}>Tournament: ${escapeHtml(label)}</option>`);
@@ -797,6 +800,8 @@ function renderRounds(rounds) {
   rows.forEach((round) => {
     const currentFmtRaw = String(round?.format || "").toLowerCase();
     const currentFmt = currentFmtRaw === "two_man_best_ball" ? "two_man" : currentFmtRaw;
+    const fallbackCourseIdx = Number.isInteger(Number(round?.courseIndex)) ? Number(round.courseIndex) : 0;
+    const currentCourseRef = String(round?.courseRef || `tournament:${Math.max(0, fallbackCourseIdx)}`);
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td class="left"><input data-field="name" value="${escapeHtml(round?.name || "Round")}" /></td>
@@ -813,6 +818,11 @@ function renderRounds(rounds) {
       </td>
       <td><input data-field="weight" type="number" step="0.01" min="0.01" value="${Number(round?.weight || 1)}" /></td>
       <td><input data-field="topX" type="number" step="1" min="1" max="4" value="${Number(round?.teamAggregation?.topX || 4)}" /></td>
+      <td>
+        <select data-field="course">
+          ${roundCourseOptionsHtml(currentCourseRef)}
+        </select>
+      </td>
       <td><input data-field="remove" type="checkbox" /></td>
     `;
     roundRows.appendChild(tr);
@@ -905,10 +915,12 @@ function collectRounds() {
       const useHandicap = tr.querySelector("[data-field='handicap']")?.value === "true";
       const weight = Number(tr.querySelector("[data-field='weight']")?.value || 1);
       const topX = Number(tr.querySelector("[data-field='topX']")?.value || 4);
+      const courseRef = String(tr.querySelector("[data-field='course']")?.value || "tournament:0").trim();
       return {
         name,
         format,
         useHandicap,
+        courseRef: courseRef || "tournament:0",
         weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
         teamAggregation: { mode: "avg", topX: Math.max(1, Math.min(4, Math.floor(topX || 4))) }
       };
@@ -1016,6 +1028,7 @@ function addRoundRow() {
     name: `Round ${rounds.length + 1}`,
     format: "singles",
     useHandicap: false,
+    courseRef: "tournament:0",
     weight: 1,
     teamAggregation: { mode: "avg", topX: 4 }
   });
@@ -1072,10 +1085,11 @@ function updateHeaderLinks(tid) {
 
 function renderPage(data) {
   currentData = data;
+  tournamentCourses = normalizeTournamentCourses(data);
   setHeaderTournamentName(data?.tournament?.name);
   nameEl.value = data?.tournament?.name || "";
   datesEl.value = data?.tournament?.dates || "";
-  const course = normalizeCourseForUi(data?.course || null);
+  const course = tournamentCourses[0] || normalizeCourseForUi(data?.course || null);
   if (courseNameEl) courseNameEl.value = course.name;
   fillCourseRows(course.pars, course.strokeIndex);
   const rounds = data?.rounds || [];
@@ -1127,6 +1141,62 @@ async function loadTournament(tid, editCode) {
   }
 }
 
+async function resolveCoursesAndRoundsForSave(roundsDraft, primaryCourse) {
+  const baseCourses = tournamentCourses.length
+    ? tournamentCourses.map((course) => normalizeCourseForUi(course))
+    : [normalizeCourseForUi(primaryCourse)];
+  baseCourses[0] = normalizeCourseForUi(primaryCourse);
+
+  const courses = baseCourses.map((course) => ({
+    ...(course?.name ? { name: course.name } : {}),
+    pars: Array.isArray(course?.pars) ? course.pars.slice() : Array(18).fill(4),
+    strokeIndex: Array.isArray(course?.strokeIndex)
+      ? course.strokeIndex.slice()
+      : Array.from({ length: 18 }, (_, i) => i + 1)
+  }));
+
+  const refToIndex = new Map();
+  courses.forEach((_, idx) => refToIndex.set(`tournament:${idx}`, idx));
+
+  const rounds = [];
+  for (const round of roundsDraft) {
+    const ref = String(round?.courseRef || "tournament:0").trim() || "tournament:0";
+    let courseIndex = 0;
+
+    if (ref.startsWith("saved:")) {
+      const id = ref.slice("saved:".length).trim();
+      if (!id) throw new Error(`Unknown course selection "${ref}".`);
+      const key = `saved:${id}`;
+      if (!refToIndex.has(key)) {
+        const detail = await ensureSavedCourseDetails(id);
+        if (!detail || !isValidCourseShape(detail)) {
+          throw new Error(`Saved course "${id}" was not found.`);
+        }
+        refToIndex.set(key, courses.length);
+        courses.push({
+          ...(detail?.name ? { name: detail.name } : {}),
+          pars: detail.pars.slice(),
+          strokeIndex: detail.strokeIndex.slice()
+        });
+      }
+      courseIndex = refToIndex.get(key);
+    } else if (ref.startsWith("tournament:")) {
+      const idx = Number(ref.slice("tournament:".length));
+      courseIndex = Number.isInteger(idx) && idx >= 0 && idx < courses.length ? idx : 0;
+    }
+
+    rounds.push({
+      ...round,
+      courseIndex
+    });
+  }
+
+  return {
+    courses,
+    rounds: rounds.map(({ courseRef, ...rest }) => rest)
+  };
+}
+
 async function saveTournament() {
   if (!currentTid) return;
   if (!currentEditCode) {
@@ -1135,14 +1205,18 @@ async function saveTournament() {
   }
   saveStatus.textContent = "Saving…";
   try {
+    const primaryCourse = collectCourse();
+    const roundDraft = collectRounds();
+    const { courses, rounds } = await resolveCoursesAndRoundsForSave(roundDraft, primaryCourse);
     const payload = {
       editCode: currentEditCode,
       tournament: {
         name: String(nameEl.value || "").trim(),
         dates: String(datesEl.value || "").trim()
       },
-      course: collectCourse(),
-      rounds: collectRounds(),
+      course: courses[0],
+      courses,
+      rounds,
       players: collectPlayers(),
       scores: collectScoresForSave()
     };
@@ -1316,6 +1390,7 @@ async function uploadScoresCsvToTable() {
 }
 
 rebuildCourseRows();
+loadSavedCourses();
 if (par4Btn) {
   par4Btn.addEventListener("click", () => {
     for (let h = 1; h <= 18; h++) {

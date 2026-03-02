@@ -14,6 +14,8 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 
+from course_map_index import update_course_map_index
+
 DEFAULT_PORTAL = "https://www-tlstest.arcgis.com"
 DEFAULT_OUT_DIR = "golf_course_hole_geo_data/data"
 
@@ -275,9 +277,11 @@ def main() -> int:
         ),
     }
     write_json(out_root / "summary.json", summary)
+    index_path = update_course_map_index(Path(args.out_dir))
 
     print(f"Web map: {title}")
     print(f"Output directory: {out_root}")
+    print(f"Course map index: {index_path}")
     print(f"Feature layers fetched: {len(fetched_layers)}")
     print(f"Total features fetched: {len(combined_features)}")
     return 0

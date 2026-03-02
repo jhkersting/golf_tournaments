@@ -530,8 +530,12 @@ function cleanupScores(scores, validTeamIds, validPlayerIds, roundCount, validGr
 function toAdminPayload(state) {
   const teams = state?.teams || {};
   const players = state?.players || {};
-  const roundCount = (state?.rounds || []).length;
   const courses = normalizeCoursesForState(state);
+  const rounds = (state?.rounds || []).map((round) => ({
+    ...(round || {}),
+    courseIndex: normalizeRoundCourseIndex(round?.courseIndex, courses.length)
+  }));
+  const roundCount = rounds.length;
 
   const teamRows = Object.keys(teams)
     .map((teamId) => ({
@@ -567,9 +571,9 @@ function toAdminPayload(state) {
       tournamentId: state?.tournament?.tournamentId,
       name: state?.tournament?.name || "",
       dates: state?.tournament?.dates || "",
-      rounds: state?.rounds || []
+      rounds
     },
-    rounds: state?.rounds || [],
+    rounds,
     course: courses[0] || null,
     courses,
     scores: projectScoresForAdmin(state?.scores, roundCount),

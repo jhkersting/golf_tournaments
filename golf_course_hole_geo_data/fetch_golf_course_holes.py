@@ -17,6 +17,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from course_map_index import update_course_map_index
+
 DEFAULT_ENDPOINT = "https://overpass-api.de/api/interpreter"
 DEFAULT_USER_AGENT = "golf-tournaments-overpass-client/1.0"
 DEFAULT_GOLF_TAGS = [
@@ -594,9 +596,11 @@ def main() -> int:
         write_json(output_root / "course_with_holes.geojson", combined_geojson)
         write_json(output_root / "hole_index.json", hole_index)
         write_json(output_root / "metadata.json", metadata)
+        index_path = update_course_map_index(Path(args.out_dir))
 
         print(f"Course: {args.course}")
         print(f"Output directory: {output_root}")
+        print(f"Course map index: {index_path}")
         print(f"Course boundary features: {len(course_features)}")
         print(f"Hole-related features: {len(area_features)}")
         print(f"Area source: {area_source}")
