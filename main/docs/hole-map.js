@@ -6,6 +6,13 @@ const DATA_BASE_CANDIDATES = [
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LOCATION_ACCURACY_TARGET_M = 12;
 const LOCATION_TIMEOUT_MS = 15000;
+const LOCATION_FILTER_MAX_ACCURACY_M = 35;
+const LOCATION_HARD_REJECT_ACCURACY_M = 70;
+const LOCATION_SMOOTH_WINDOW_MS = 12000;
+const LOCATION_SMOOTH_MAX_FIXES = 8;
+const LOCATION_MIN_MOVEMENT_UPDATE_M = 2.5;
+const LOCATION_BASE_JUMP_TOLERANCE_M = 12;
+const LOCATION_MAX_REASONABLE_SPEED_MPS = 14;
 const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 
@@ -19,6 +26,8 @@ const state = {
   locationAccuracyM: null,
   locationError: "",
   locationWatchId: null,
+  locationFixes: [],
+  lastAcceptedLocationFix: null,
   locationPending: false,
   locationPermissionGranted: false,
   tapPoint: null,
@@ -72,6 +81,10 @@ function distanceYards(a, b) {
     Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(dLon / 2) ** 2;
   const meters = 2 * r * Math.asin(Math.sqrt(h));
   return meters * 1.0936133;
+}
+
+function distanceMeters(a, b) {
+  return distanceYards(a, b) / 1.0936133;
 }
 
 function collectPositions(geometry, out) {
@@ -457,6 +470,76 @@ function updateTrackingButton() {
   }
 }
 
+function parseLocationFix(position) {
+  const lon = Number(position?.coords?.longitude);
+  const lat = Number(position?.coords?.latitude);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+
+  const accuracyRaw = Number(position?.coords?.accuracy);
+  const speedRaw = Number(position?.coords?.speed);
+  const timestampRaw = Number(position?.timestamp);
+
+  return {
+    coords: [lon, lat],
+    accuracyM: Number.isFinite(accuracyRaw) ? accuracyRaw : Infinity,
+    speedMps: Number.isFinite(speedRaw) && speedRaw >= 0 ? speedRaw : null,
+    tsMs: Number.isFinite(timestampRaw) ? timestampRaw : Date.now(),
+  };
+}
+
+function pruneLocationFixes(nowMs) {
+  state.locationFixes = state.locationFixes
+    .filter((fix) => nowMs - fix.tsMs <= LOCATION_SMOOTH_WINDOW_MS)
+    .slice(-LOCATION_SMOOTH_MAX_FIXES);
+}
+
+function bestFixAccuracyM() {
+  if (!state.locationFixes.length) return Infinity;
+  return state.locationFixes.reduce(
+    (best, fix) => Math.min(best, Number.isFinite(fix.accuracyM) ? fix.accuracyM : Infinity),
+    Infinity
+  );
+}
+
+function smoothedLocationFromFixes(nowMs) {
+  if (!state.locationFixes.length) return null;
+
+  let sumLon = 0;
+  let sumLat = 0;
+  let sumWeight = 0;
+
+  for (const fix of state.locationFixes) {
+    const ageMs = Math.max(0, nowMs - fix.tsMs);
+    const acc = Math.max(3, fix.accuracyM);
+    const accWeight = 1 / (acc * acc);
+    const recencyWeight = Math.exp(-ageMs / (LOCATION_SMOOTH_WINDOW_MS * 0.6));
+    const weight = accWeight * recencyWeight;
+    sumLon += fix.coords[0] * weight;
+    sumLat += fix.coords[1] * weight;
+    sumWeight += weight;
+  }
+
+  if (sumWeight <= 0) return state.locationFixes[state.locationFixes.length - 1].coords;
+  return [sumLon / sumWeight, sumLat / sumWeight];
+}
+
+function isLocationOutlier(candidateFix) {
+  const prevFix = state.lastAcceptedLocationFix;
+  if (!prevFix) return false;
+
+  const dtSec = Math.max(0.5, (candidateFix.tsMs - prevFix.tsMs) / 1000);
+  const distM = distanceMeters(candidateFix.coords, prevFix.coords);
+  const speedBudgetMps = Number.isFinite(candidateFix.speedMps)
+    ? Math.min(candidateFix.speedMps, LOCATION_MAX_REASONABLE_SPEED_MPS)
+    : LOCATION_MAX_REASONABLE_SPEED_MPS;
+  const toleranceM =
+    LOCATION_BASE_JUMP_TOLERANCE_M +
+    speedBudgetMps * dtSec +
+    Math.max(candidateFix.accuracyM, prevFix.accuracyM);
+
+  return distM > toleranceM;
+}
+
 function svgPointFromEvent(event) {
   if (!els.holeSvg) return null;
   const rect = els.holeSvg.getBoundingClientRect();
@@ -498,6 +581,8 @@ function stopLocationTracking(clearLocation, statusText) {
   if (clearLocation) {
     state.userLocation = null;
     state.locationAccuracyM = null;
+    state.locationFixes = [];
+    state.lastAcceptedLocationFix = null;
     state.locationError = "";
     state.locationPermissionGranted = false;
     persistGeolocationGrant(false);
@@ -508,33 +593,65 @@ function stopLocationTracking(clearLocation, statusText) {
 }
 
 function applyLocationFix(position) {
-  const lon = Number(position?.coords?.longitude);
-  const lat = Number(position?.coords?.latitude);
-  const accuracy = Number(position?.coords?.accuracy);
-  state.locationAccuracyM = Number.isFinite(accuracy) ? accuracy : null;
-  state.locationError = "";
-  state.locationPermissionGranted = true;
-  persistGeolocationGrant(true);
-
-  if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
-    updateLocationStatus("Location received, but coordinates were invalid.");
+  const fix = parseLocationFix(position);
+  if (!fix) {
+    state.locationError = "Location received, but coordinates were invalid.";
+    updateLocationStatus(state.locationError);
     updateTrackingButton();
     renderCurrentHole();
     return;
   }
 
-  if (Number.isFinite(accuracy) && accuracy > LOCATION_ACCURACY_TARGET_M) {
+  state.locationAccuracyM = Number.isFinite(fix.accuracyM) ? fix.accuracyM : null;
+  state.locationError = "";
+  state.locationPermissionGranted = true;
+  persistGeolocationGrant(true);
+
+  if (!Number.isFinite(fix.accuracyM) || fix.accuracyM > LOCATION_HARD_REJECT_ACCURACY_M) {
     updateLocationStatus(
-      `GPS accuracy ${Math.round(accuracy)}m. Waiting for <=${LOCATION_ACCURACY_TARGET_M}m.`
+      `GPS accuracy too low (${Math.round(fix.accuracyM)}m). Waiting for a better fix.`
     );
     updateTrackingButton();
     renderCurrentHole();
     return;
   }
 
-  state.userLocation = [lon, lat];
-  const accText = Number.isFinite(accuracy) ? ` (${Math.round(accuracy)}m)` : "";
-  updateLocationStatus(`Tracking precise location${accText}.`);
+  if (isLocationOutlier(fix)) {
+    updateLocationStatus("Ignoring outlier GPS jump. Waiting for stable fix.");
+    updateTrackingButton();
+    renderCurrentHole();
+    return;
+  }
+
+  if (fix.accuracyM <= LOCATION_FILTER_MAX_ACCURACY_M) {
+    state.lastAcceptedLocationFix = fix;
+    state.locationFixes.push(fix);
+    pruneLocationFixes(fix.tsMs);
+  }
+
+  const bestAccuracy = bestFixAccuracyM();
+  if (!Number.isFinite(bestAccuracy) || bestAccuracy > LOCATION_ACCURACY_TARGET_M) {
+    updateLocationStatus(
+      `GPS accuracy ${Math.round(fix.accuracyM)}m (best ${Math.round(bestAccuracy)}m). Waiting for <=${LOCATION_ACCURACY_TARGET_M}m.`
+    );
+    updateTrackingButton();
+    renderCurrentHole();
+    return;
+  }
+
+  const smoothed = smoothedLocationFromFixes(fix.tsMs) || fix.coords;
+  if (!Array.isArray(state.userLocation)) {
+    state.userLocation = smoothed;
+  } else {
+    const deltaM = distanceMeters(state.userLocation, smoothed);
+    if (deltaM >= LOCATION_MIN_MOVEMENT_UPDATE_M || fix.accuracyM <= LOCATION_ACCURACY_TARGET_M) {
+      state.userLocation = smoothed;
+    }
+  }
+
+  updateLocationStatus(
+    `Tracking precise location (${Math.round(fix.accuracyM)}m, filtered).`
+  );
   updateTrackingButton();
   renderCurrentHole();
 }
@@ -582,6 +699,8 @@ function startLocationTracking() {
     state.locationWatchId = null;
   }
 
+  state.locationFixes = [];
+  state.lastAcceptedLocationFix = null;
   state.locationPending = true;
   state.locationError = "";
   updateLocationStatus(`Acquiring precise GPS (target <=${LOCATION_ACCURACY_TARGET_M}m)...`);
