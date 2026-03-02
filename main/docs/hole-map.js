@@ -24,6 +24,7 @@ const LOCATION_BASE_JUMP_TOLERANCE_M = 12;
 const LOCATION_MAX_REASONABLE_SPEED_MPS = 14;
 const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
+const MAP_PROXIMITY_ZOOM_MAX_BOOST = 0.45;
 const TAP_PREVIEW_DURATION_MS = 7000;
 
 const state = {
@@ -241,7 +242,16 @@ function lastLinePoint(feature) {
   return null;
 }
 
-function createAlignedProjector(features, extraPoints, alignmentStart, alignmentEnd, width, height, padding) {
+function createAlignedProjector(
+  features,
+  extraPoints,
+  alignmentStart,
+  alignmentEnd,
+  width,
+  height,
+  padding,
+  zoomMultiplier = 1
+) {
   const allPoints = [];
   for (const feature of features) collectPositions(feature?.geometry, allPoints);
   for (const point of extraPoints || []) {
@@ -297,7 +307,9 @@ function createAlignedProjector(features, extraPoints, alignmentStart, alignment
   const h = Math.max(1e-9, maxY - minY);
   const innerW = Math.max(1, width - padding * 2);
   const innerH = Math.max(1, height - padding * 2);
-  const scale = Math.min(innerW / w, innerH / h);
+  const baseScale = Math.min(innerW / w, innerH / h);
+  const safeZoom = Number.isFinite(zoomMultiplier) ? Math.max(1, zoomMultiplier) : 1;
+  const scale = baseScale * safeZoom;
   const drawW = w * scale;
   const drawH = h * scale;
   const offsetX = (width - drawW) / 2;
@@ -1041,6 +1053,14 @@ async function renderCurrentHole() {
   const mapShouldFocusHole =
     Number.isFinite(userToGreenCenterYards) && userToGreenCenterYards > MAP_FOCUS_MAX_USER_DISTANCE_YARDS;
   const mapPlayerPoint = mapShouldFocusHole ? null : basePoint;
+  const proximityZoomMultiplier = (() => {
+    if (!Number.isFinite(userToGreenCenterYards) || mapShouldFocusHole) return 1;
+    const nearFactor = Math.max(
+      0,
+      Math.min(1, (MAP_FOCUS_MAX_USER_DISTANCE_YARDS - userToGreenCenterYards) / MAP_FOCUS_MAX_USER_DISTANCE_YARDS)
+    );
+    return 1 + nearFactor * MAP_PROXIMITY_ZOOM_MAX_BOOST;
+  })();
   const tapToGreenCenterYards =
     Array.isArray(state.tapPoint) && Array.isArray(greenTargets.center)
       ? distanceYards(state.tapPoint, greenTargets.center)
@@ -1122,7 +1142,8 @@ async function renderCurrentHole() {
     alignmentEnd,
     width,
     height,
-    margin
+    margin,
+    proximityZoomMultiplier
   );
 
   if (!projection) {
