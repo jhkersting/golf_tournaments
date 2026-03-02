@@ -1767,7 +1767,7 @@ function ensureScoreCard() {
         <span class="small" style="font-weight:700;">Round:</span>
         <div id="map_round_tabs" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
       </div>
-      <div id="map_score_rows" style="display:flex; gap:8px; overflow:auto; padding:2px 1px; margin-top:10px;"></div>
+      <div id="map_score_rows" style="display:flex; flex-wrap:wrap; gap:8px; overflow:auto; padding:2px 1px; margin-top:10px;"></div>
       <div class="actions hole-actions" style="margin-top:10px;">
         <button id="map_submit_hole_btn" type="button">Submit hole</button>
       </div>
@@ -2144,6 +2144,7 @@ function renderScoreRows() {
       : "Showing your tee-time players";
   const summary = document.createElement("div");
   summary.className = "small";
+  summary.style.flexBasis = "100%";
   summary.style.width = "100%";
   summary.style.marginBottom = "2px";
   summary.textContent = actorTeeDisplay
