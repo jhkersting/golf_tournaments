@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="styles.css" />
   <title>Hole Map</title>
 </head>
-<body style="display: block;">
+<body class="hole-map-page" style="display: block;">
 <header>
   <div class="nav">
     <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
@@ -48,9 +48,6 @@
     <div class="hole-map-metrics">
       <div class="pill">Hole <span id="metric_hole">—</span></div>
       <div class="pill">Par <span id="metric_par">—</span></div>
-      <div class="pill">Yards Front <span id="metric_front">—</span></div>
-      <div class="pill">Yards Center <span id="metric_center">—</span></div>
-      <div class="pill">Yards Back <span id="metric_back">—</span></div>
       <div class="pill">Using <span id="metric_source">—</span></div>
     </div>
     <div class="small" id="yardage_detail">—</div>
@@ -61,6 +58,19 @@
       <svg id="hole_svg" class="hole-map-stage" viewBox="0 0 1200 760" role="img" aria-label="Hole layout"></svg>
       <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
     </div>
+  </div>
+</div>
+
+<div class="hole-map-footer" aria-live="polite">
+  <div class="hole-map-footer-head">
+    <span>front</span>
+    <span>CENTER</span>
+    <span>back</span>
+  </div>
+  <div class="hole-map-footer-values">
+    <span id="metric_front">—</span>
+    <span id="metric_center">—</span>
+    <span id="metric_back">—</span>
   </div>
 </div>
 

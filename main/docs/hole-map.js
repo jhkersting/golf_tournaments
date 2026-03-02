@@ -1,4 +1,8 @@
-const DATA_BASE = "/golf_course_hole_geo_data/data/sherrill-park-golf-course-1";
+const DATA_BASE_CANDIDATES = [
+  "../../golf_course_hole_geo_data/data/sherrill-park-golf-course-1",
+  "/golf_tournaments/golf_course_hole_geo_data/data/sherrill-park-golf-course-1",
+  "/golf_course_hole_geo_data/data/sherrill-park-golf-course-1",
+];
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LOCATION_REFRESH_MS = 2000;
 
@@ -14,6 +18,7 @@ const state = {
   locationIntervalMs: LOCATION_REFRESH_MS,
   locationTimerId: null,
   locationPending: false,
+  dataBase: null,
 };
 
 const els = {
@@ -380,8 +385,13 @@ function updateLocationStatus(text) {
   els.locStatus.textContent = text;
 }
 
+function secureContextMessage() {
+  if (window.isSecureContext) return "";
+  return "Location requires HTTPS or localhost. Open this page via https:// (not file:// or plain http://).";
+}
+
 function formatYards(value) {
-  return Number.isFinite(value) ? `${Math.round(value)} yds` : "—";
+  return Number.isFinite(value) ? String(Math.round(value)) : "—";
 }
 
 function clampIntervalMs(value) {
@@ -424,6 +434,14 @@ function stopLocationTracking(clearLocation, statusText) {
 }
 
 function pullLocationOnce() {
+  const secureMsg = secureContextMessage();
+  if (secureMsg) {
+    state.locationError = secureMsg;
+    stopLocationTracking(false, secureMsg);
+    renderCurrentHole();
+    return;
+  }
+
   if (!("geolocation" in navigator)) {
     state.locationError = "This browser does not support geolocation.";
     stopLocationTracking(false, state.locationError);
@@ -456,7 +474,9 @@ function pullLocationOnce() {
         2: "Location is unavailable.",
         3: "Location request timed out.",
       };
-      state.locationError = codeMap[error.code] || "Could not get current location.";
+      const base = codeMap[error.code] || "Could not get current location.";
+      const detail = error?.message ? ` ${error.message}` : "";
+      state.locationError = `${base}${detail}`.trim();
       if (error.code === 1) {
         stopLocationTracking(false, state.locationError);
       } else {
@@ -474,6 +494,14 @@ function pullLocationOnce() {
 }
 
 function startLocationTracking() {
+  const secureMsg = secureContextMessage();
+  if (secureMsg) {
+    state.locationError = secureMsg;
+    updateLocationStatus(secureMsg);
+    renderCurrentHole();
+    return;
+  }
+
   if (!("geolocation" in navigator)) {
     state.locationError = "This browser does not support geolocation.";
     updateLocationStatus(state.locationError);
@@ -730,11 +758,34 @@ async function fetchJson(path) {
   return response.json();
 }
 
+async function resolveDataBase() {
+  if (state.dataBase) return state.dataBase;
+
+  const attempts = [];
+  for (const candidate of DATA_BASE_CANDIDATES) {
+    const probe = `${candidate}/hole_index.json`;
+    attempts.push(probe);
+    try {
+      const response = await fetch(probe, { cache: "no-store" });
+      if (response.ok) {
+        state.dataBase = candidate;
+        return candidate;
+      }
+    } catch (_) {
+      // continue
+    }
+  }
+
+  throw new Error(`Could not locate hole data. Tried: ${attempts.join(" | ")}`);
+}
+
 async function loadData() {
+  const dataBase = await resolveDataBase();
+
   const [courseGeo, holeGeo, holeIndex] = await Promise.all([
-    fetchJson(`${DATA_BASE}/course.geojson`),
-    fetchJson(`${DATA_BASE}/hole_features.geojson`),
-    fetchJson(`${DATA_BASE}/hole_index.json`),
+    fetchJson(`${dataBase}/course.geojson`),
+    fetchJson(`${dataBase}/hole_features.geojson`),
+    fetchJson(`${dataBase}/hole_index.json`),
   ]);
 
   state.courseFeatures = Array.isArray(courseGeo?.features) ? courseGeo.features : [];
