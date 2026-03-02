@@ -1,0 +1,51 @@
+{
+  "courseSlug": "keetonparkgc",
+  "courseId": "bluegolf-keetonparkgc",
+  "name": "Keeton Park Golf Course",
+  "location": "Dallas, TX",
+  "sourceUrls": {
+    "overviewJson": "https://app.bluegolf.com/bluegolf/app/course/keetonparkgc/overview.json",
+    "detailedScorecard": "https://course.bluegolf.com/bluegolf/course/course/keetonparkgc/detailedscorecard.htm"
+  },
+  "pars": [
+    4,
+    3,
+    5,
+    4,
+    4,
+    5,
+    4,
+    3,
+    4,
+    4,
+    3,
+    4,
+    5,
+    3,
+    4,
+    4,
+    4,
+    5
+  ],
+  "strokeIndex": [
+    7,
+    15,
+    1,
+    5,
+    13,
+    3,
+    9,
+    17,
+    11,
+    14,
+    16,
+    10,
+    4,
+    18,
+    2,
+    8,
+    6,
+    12
+  ],
+  "fetchedAtUtc": "2026-03-02T18:49:40.668943+00:00"
+}

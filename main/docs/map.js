@@ -1,0 +1,2270 @@
+import {
+  api,
+  staticJson,
+  qs,
+  setHeaderTournamentName,
+  getRememberedPlayerCode,
+  rememberPlayerCode,
+  rememberTournamentId,
+} from "./app.js";
+
+const DATA_ROOT_CANDIDATES = [
+  "../../golf_course_hole_geo_data/data",
+  "/golf_tournaments/golf_course_hole_geo_data/data",
+  "/golf_course_hole_geo_data/data",
+];
+const MAP_INDEX_CANDIDATES = DATA_ROOT_CANDIDATES.map((root) => `${root}/courses_map_index.json`);
+const FORCED_DATA_SLUG = String(new URLSearchParams(window.location.search).get("dataSlug") || "").trim();
+const STREET_TILE_LIGHT_URL_TEMPLATE = "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png";
+const STREET_TILE_DARK_URL_TEMPLATE = "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png";
+const STREET_TILE_SUBDOMAINS = ["a", "b", "c", "d"];
+const SATELLITE_TILE_URL_TEMPLATE =
+  "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const MAP_MODE_FULL = "full";
+const MAP_MODE_SIMPLIFIED = "simplified";
+const TILE_SIZE = 256;
+const WEB_MERCATOR_MAX_LAT = 85.05112878;
+const WEB_MERCATOR_RADIUS = 6378137;
+const WEB_MERCATOR_WORLD_WIDTH = 2 * Math.PI * WEB_MERCATOR_RADIUS;
+const WEB_MERCATOR_ORIGIN_SHIFT = WEB_MERCATOR_WORLD_WIDTH / 2;
+const LOCATION_TIMEOUT_MS = 15000;
+const LOCATION_FILTER_MAX_ACCURACY_M = 35;
+const LOCATION_HARD_REJECT_ACCURACY_M = 70;
+const LOCATION_SMOOTH_WINDOW_MS = 12000;
+const LOCATION_SMOOTH_MAX_FIXES = 8;
+const LOCATION_MIN_MOVEMENT_UPDATE_M = 2.5;
+const LOCATION_BASE_JUMP_TOLERANCE_M = 12;
+const LOCATION_MAX_REASONABLE_SPEED_MPS = 14;
+const GEO_GRANTED_KEY = "hole-map:geo-granted";
+const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
+const MAP_PROXIMITY_ZOOM_MAX_BOOST = 0.45;
+const TAP_PREVIEW_DURATION_MS = 7000;
+const TAP_DOT_MOBILE_RADIUS_MULTIPLIER = 1.45;
+const SCORE_AUTO_REFRESH_MS = 30_000;
+
+const state = {
+  courseFeatures: [],
+  holeFeatures: [],
+  holes: [],
+  holeMap: new Map(),
+  bluegolfHoleMap: new Map(),
+  bluegolfCourse: null,
+  currentHole: null,
+  userLocation: null,
+  locationAccuracyM: null,
+  locationError: "",
+  locationWatchId: null,
+  locationFixes: [],
+  lastAcceptedLocationFix: null,
+  locationPending: false,
+  locationPermissionGranted: false,
+  tapPoint: null,
+  tapPreviewTimerId: null,
+  lastProjection: null,
+  lastCanvasLogicalSize: null,
+  dataBase: null,
+  dataSlug: "",
+  mapMode: MAP_MODE_SIMPLIFIED,
+  mapLabel: "",
+  renderNonce: 0,
+  tileImageCache: new Map(),
+};
+
+const entryState = {
+  code: "",
+  tid: "",
+  enter: null,
+  tournament: null,
+  rounds: [],
+  players: [],
+  playersById: Object.create(null),
+  selectedRoundIndex: 0,
+  currentHoleIndex: 0,
+  currentInputs: [],
+  submitting: false,
+  refreshTimer: 0,
+};
+
+const els = {
+  container: document.querySelector(".container"),
+  controlsCard: document.querySelector(".hole-map-controls"),
+  holeSelect: document.getElementById("hole_select"),
+  holePrev: document.getElementById("hole_prev"),
+  holeNext: document.getElementById("hole_next"),
+  locBtn: document.getElementById("loc_btn"),
+  locClear: document.getElementById("loc_clear"),
+  metricSummary: document.getElementById("metric_summary"),
+  metricToPointHead: document.getElementById("metric_to_point_head"),
+  metricToPointRow: document.getElementById("metric_to_point_row"),
+  metricToPoint: document.getElementById("metric_to_point"),
+  metricFront: document.getElementById("metric_front"),
+  metricCenter: document.getElementById("metric_center"),
+  metricBack: document.getElementById("metric_back"),
+  yardageDetail: document.getElementById("yardage_detail"),
+  holeCanvas: document.getElementById("hole_canvas"),
+  holeEmpty: document.getElementById("hole_empty"),
+  holeFooter: document.querySelector(".hole-map-footer"),
+  scoreCard: null,
+  roundTabs: null,
+  scoreRows: null,
+  scoreStatus: null,
+  mapInfo: null,
+};
+
+function parseHoleRef(value) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const match = raw.match(/\d{1,2}/);
+  if (!match) return null;
+  const hole = Number(match[0]);
+  return Number.isFinite(hole) ? hole : null;
+}
+
+function toRad(value) {
+  return (value * Math.PI) / 180;
+}
+
+function toDeg(value) {
+  return (value * 180) / Math.PI;
+}
+
+function lonLatToMercator([lon, lat]) {
+  const safeLat = Math.max(-WEB_MERCATOR_MAX_LAT, Math.min(WEB_MERCATOR_MAX_LAT, Number(lat)));
+  const x = WEB_MERCATOR_RADIUS * toRad(Number(lon));
+  const y =
+    WEB_MERCATOR_RADIUS * Math.log(Math.tan(Math.PI / 4 + toRad(safeLat) / 2));
+  return [x, y];
+}
+
+function mercatorToLonLat([x, y]) {
+  const lon = toDeg(Number(x) / WEB_MERCATOR_RADIUS);
+  const lat = toDeg(2 * Math.atan(Math.exp(Number(y) / WEB_MERCATOR_RADIUS)) - Math.PI / 2);
+  return [lon, lat];
+}
+
+function distanceYards(a, b) {
+  const [lon1, lat1] = a;
+  const [lon2, lat2] = b;
+  const r = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const lat1Rad = toRad(lat1);
+  const lat2Rad = toRad(lat2);
+
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(dLon / 2) ** 2;
+  const meters = 2 * r * Math.asin(Math.sqrt(h));
+  return meters * 1.0936133;
+}
+
+function distanceMeters(a, b) {
+  return distanceYards(a, b) / 1.0936133;
+}
+
+function readLonLatFromRow(row, prefix) {
+  const lat = Number(row?.[`${prefix}_lat`]);
+  const lon = Number(row?.[`${prefix}_lon`]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return [lon, lat];
+}
+
+function collectPositions(geometry, out) {
+  if (!geometry || !geometry.type) return;
+  const type = geometry.type;
+  const coords = geometry.coordinates;
+  if (!coords) return;
+
+  if (type === "Point") {
+    if (Array.isArray(coords) && coords.length === 2) out.push(coords);
+    return;
+  }
+
+  if (type === "MultiPoint" || type === "LineString") {
+    for (const point of coords) {
+      if (Array.isArray(point) && point.length === 2) out.push(point);
+    }
+    return;
+  }
+
+  if (type === "MultiLineString" || type === "Polygon") {
+    for (const line of coords) {
+      if (!Array.isArray(line)) continue;
+      for (const point of line) {
+        if (Array.isArray(point) && point.length === 2) out.push(point);
+      }
+    }
+    return;
+  }
+
+  if (type === "MultiPolygon") {
+    for (const poly of coords) {
+      if (!Array.isArray(poly)) continue;
+      for (const ring of poly) {
+        if (!Array.isArray(ring)) continue;
+        for (const point of ring) {
+          if (Array.isArray(point) && point.length === 2) out.push(point);
+        }
+      }
+    }
+  }
+}
+
+function centroidFromPoints(points) {
+  if (!points.length) return null;
+  let sumLon = 0;
+  let sumLat = 0;
+  for (const [lon, lat] of points) {
+    sumLon += Number(lon);
+    sumLat += Number(lat);
+  }
+  return [sumLon / points.length, sumLat / points.length];
+}
+
+function featureCentroid(feature) {
+  const points = [];
+  collectPositions(feature?.geometry, points);
+  return centroidFromPoints(points);
+}
+
+function ringArea(ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return 0;
+  let area = 0;
+  for (let i = 0; i < ring.length; i += 1) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % ring.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(area / 2);
+}
+
+function featureArea(feature) {
+  const geom = feature?.geometry;
+  if (!geom) return 0;
+
+  if (geom.type === "Polygon") {
+    return Array.isArray(geom.coordinates)
+      ? geom.coordinates.reduce((sum, ring) => sum + ringArea(ring), 0)
+      : 0;
+  }
+
+  if (geom.type === "MultiPolygon") {
+    if (!Array.isArray(geom.coordinates)) return 0;
+    let total = 0;
+    for (const poly of geom.coordinates) {
+      if (!Array.isArray(poly)) continue;
+      total += poly.reduce((sum, ring) => sum + ringArea(ring), 0);
+    }
+    return total;
+  }
+
+  return 0;
+}
+
+function firstLinePoint(feature) {
+  const geom = feature?.geometry;
+  if (!geom) return null;
+  if (geom.type === "LineString") {
+    return Array.isArray(geom.coordinates?.[0]) ? geom.coordinates[0] : null;
+  }
+  if (geom.type === "MultiLineString") {
+    const firstLine = geom.coordinates?.[0];
+    return Array.isArray(firstLine?.[0]) ? firstLine[0] : null;
+  }
+  return null;
+}
+
+function lastLinePoint(feature) {
+  const geom = feature?.geometry;
+  if (!geom) return null;
+  if (geom.type === "LineString") {
+    const coords = geom.coordinates || [];
+    const p = coords[coords.length - 1];
+    return Array.isArray(p) ? p : null;
+  }
+  if (geom.type === "MultiLineString") {
+    const lines = geom.coordinates || [];
+    const line = lines[lines.length - 1] || [];
+    const p = line[line.length - 1];
+    return Array.isArray(p) ? p : null;
+  }
+  return null;
+}
+
+function createAlignedProjector(
+  features,
+  extraPoints,
+  alignmentStart,
+  alignmentEnd,
+  width,
+  height,
+  padding,
+  zoomMultiplier = 1
+) {
+  const allPoints = [];
+  for (const feature of features) collectPositions(feature?.geometry, allPoints);
+  for (const point of extraPoints || []) {
+    if (Array.isArray(point) && point.length === 2) allPoints.push(point);
+  }
+  if (!allPoints.length) return null;
+
+  const allPointsMercator = allPoints.map((point) => lonLatToMercator(point));
+
+  let sumX = 0;
+  let sumY = 0;
+  for (const [x, y] of allPointsMercator) {
+    sumX += x;
+    sumY += y;
+  }
+  const centerX = sumX / allPointsMercator.length;
+  const centerY = sumY / allPointsMercator.length;
+
+  const toLocal = ([lon, lat]) => {
+    const [mx, my] = lonLatToMercator([lon, lat]);
+    return [mx - centerX, my - centerY];
+  };
+
+  let rotationRad = 0;
+  if (Array.isArray(alignmentStart) && Array.isArray(alignmentEnd)) {
+    const [sx, sy] = toLocal(alignmentStart);
+    const [ex, ey] = toLocal(alignmentEnd);
+    const dx = ex - sx;
+    const dy = ey - sy;
+    if (Math.hypot(dx, dy) > 1e-10) {
+      rotationRad = Math.PI / 2 - Math.atan2(dy, dx);
+    }
+  }
+
+  const cosA = Math.cos(rotationRad);
+  const sinA = Math.sin(rotationRad);
+  const rotate = ([x, y]) => [x * cosA - y * sinA, x * sinA + y * cosA];
+
+  const rotated = allPoints.map((point) => rotate(toLocal(point)));
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of rotated) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+
+  const w = Math.max(1e-9, maxX - minX);
+  const h = Math.max(1e-9, maxY - minY);
+  const innerW = Math.max(1, width - padding * 2);
+  const innerH = Math.max(1, height - padding * 2);
+  const baseScale = Math.min(innerW / w, innerH / h);
+  const safeZoom = Number.isFinite(zoomMultiplier) ? Math.max(1, zoomMultiplier) : 1;
+  const scale = baseScale * safeZoom;
+  const drawW = w * scale;
+  const drawH = h * scale;
+  const offsetX = (width - drawW) / 2;
+  const offsetY = (height - drawH) / 2;
+
+  const projectMercator = ([mx, my]) => {
+    const lx = Number(mx) - centerX;
+    const ly = Number(my) - centerY;
+    const [rx, ry] = rotate([lx, ly]);
+    const x = offsetX + (rx - minX) * scale;
+    const y = height - (offsetY + (ry - minY) * scale);
+    return [x, y];
+  };
+
+  const project = (point) => {
+    const [mx, my] = lonLatToMercator(point);
+    return projectMercator([mx, my]);
+  };
+
+  const unproject = (screenPoint) => {
+    if (!Array.isArray(screenPoint) || screenPoint.length < 2) return null;
+    const [x, y] = screenPoint;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+    const rx = (x - offsetX) / scale + minX;
+    const ry = (height - y - offsetY) / scale + minY;
+    const lx = rx * cosA + ry * sinA;
+    const ly = -rx * sinA + ry * cosA;
+    const mx = lx + centerX;
+    const my = ly + centerY;
+    const [lon, lat] = mercatorToLonLat([mx, my]);
+
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+    return [lon, lat];
+  };
+
+  const rotationDeg = (rotationRad * 180) / Math.PI;
+  return { project, projectMercator, unproject, rotationRad, rotationDeg };
+}
+
+function mercatorToWorldPixels([mx, my], zoom) {
+  const scale = (TILE_SIZE * (2 ** zoom)) / WEB_MERCATOR_WORLD_WIDTH;
+  const x = (mx + WEB_MERCATOR_ORIGIN_SHIFT) * scale;
+  const y = (WEB_MERCATOR_ORIGIN_SHIFT - my) * scale;
+  return [x, y];
+}
+
+function worldPixelsToMercator([x, y], zoom) {
+  const invScale = WEB_MERCATOR_WORLD_WIDTH / (TILE_SIZE * (2 ** zoom));
+  const mx = Number(x) * invScale - WEB_MERCATOR_ORIGIN_SHIFT;
+  const my = WEB_MERCATOR_ORIGIN_SHIFT - Number(y) * invScale;
+  return [mx, my];
+}
+
+function normalizeTileX(x, zoom) {
+  const count = 2 ** zoom;
+  return ((x % count) + count) % count;
+}
+
+function tileUrl(template, z, x, y) {
+  const subdomain = STREET_TILE_SUBDOMAINS[Math.abs(x + y) % STREET_TILE_SUBDOMAINS.length];
+  return template
+    .replace("{s}", subdomain)
+    .replace("{z}", String(z))
+    .replace("{x}", String(x))
+    .replace("{y}", String(y));
+}
+
+function loadTileImage(url) {
+  if (state.tileImageCache.has(url)) return state.tileImageCache.get(url);
+  const promise = new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Tile failed: ${url}`));
+    image.src = url;
+  });
+  state.tileImageCache.set(url, promise);
+  return promise;
+}
+
+function buildTileFrame(projection, width, height, overscan) {
+  if (!projection?.unproject) return null;
+  const corners = [
+    [0, 0],
+    [width, 0],
+    [width, height],
+    [0, height],
+  ]
+    .map((pt) => projection.unproject(pt))
+    .filter((pt) => Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+  if (corners.length < 2) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const lonLat of corners) {
+    const [mx, my] = lonLatToMercator(lonLat);
+    if (mx < minX) minX = mx;
+    if (mx > maxX) maxX = mx;
+    if (my < minY) minY = my;
+    if (my > maxY) maxY = my;
+  }
+
+  const padX = Math.max(2, (maxX - minX) * 0.03);
+  const padY = Math.max(2, (maxY - minY) * 0.03);
+  minX -= padX;
+  maxX += padX;
+  minY -= padY;
+  maxY += padY;
+
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  const halfX = ((maxX - minX) / 2) * overscan;
+  const halfY = ((maxY - minY) / 2) * overscan;
+
+  return {
+    minX: centerX - halfX,
+    maxX: centerX + halfX,
+    minY: centerY - halfY,
+    maxY: centerY + halfY,
+  };
+}
+
+function chooseTileZoom(frame, width, height) {
+  const targetW = Math.max(1, width);
+  const targetH = Math.max(1, height);
+  const mppX = (frame.maxX - frame.minX) / targetW;
+  const mppY = (frame.maxY - frame.minY) / targetH;
+  const mpp = Math.max(mppX, mppY, 0.01);
+  const raw = Math.log2(WEB_MERCATOR_WORLD_WIDTH / (TILE_SIZE * mpp));
+  return Math.max(2, Math.min(20, Math.round(raw)));
+}
+
+function isDarkThemeActive() {
+  const rootTheme = document.documentElement.getAttribute("data-theme") || "";
+  const bodyTheme = document.body?.getAttribute("data-theme") || "";
+  const lowRoot = rootTheme.toLowerCase();
+  const lowBody = bodyTheme.toLowerCase();
+  if (lowRoot.includes("dark") || lowBody.includes("dark")) return true;
+  if (lowRoot.includes("light") || lowBody.includes("light")) return false;
+  return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
+}
+
+function drawGeometryPath(ctx, geometry, project) {
+  if (!geometry?.type) return false;
+  let drew = false;
+  const moveLine = (coords, close) => {
+    if (!Array.isArray(coords) || !coords.length) return;
+    for (let i = 0; i < coords.length; i += 1) {
+      const [x, y] = project(coords[i]);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      drew = true;
+    }
+    if (close) ctx.closePath();
+  };
+
+  if (geometry.type === "LineString") {
+    moveLine(geometry.coordinates || [], false);
+  } else if (geometry.type === "MultiLineString") {
+    for (const line of geometry.coordinates || []) moveLine(line, false);
+  } else if (geometry.type === "Polygon") {
+    for (const ring of geometry.coordinates || []) moveLine(ring, true);
+  } else if (geometry.type === "MultiPolygon") {
+    for (const poly of geometry.coordinates || []) {
+      for (const ring of poly || []) moveLine(ring, true);
+    }
+  }
+  return drew;
+}
+
+async function drawStreetTileBackground(ctx, projection, width, height, nonce, pixelRatio) {
+  const overscan = 1.58;
+  const frame = buildTileFrame(projection, width, height, overscan);
+  if (!frame) return;
+
+  const zoom = chooseTileZoom(frame, width * overscan, height * overscan);
+  const template = state.mapMode === MAP_MODE_SIMPLIFIED
+    ? SATELLITE_TILE_URL_TEMPLATE
+    : (isDarkThemeActive() ? STREET_TILE_DARK_URL_TEMPLATE : STREET_TILE_LIGHT_URL_TEMPLATE);
+
+  const [leftPx, topPx] = mercatorToWorldPixels([frame.minX, frame.maxY], zoom);
+  const [rightPx, bottomPx] = mercatorToWorldPixels([frame.maxX, frame.minY], zoom);
+
+  const minTileX = Math.floor(leftPx / TILE_SIZE);
+  const maxTileX = Math.floor((rightPx - 1) / TILE_SIZE);
+  const minTileY = Math.floor(topPx / TILE_SIZE);
+  const maxTileY = Math.floor((bottomPx - 1) / TILE_SIZE);
+  const tileRows = 2 ** zoom;
+
+  const tileJobs = [];
+  for (let ty = minTileY; ty <= maxTileY; ty += 1) {
+    if (ty < 0 || ty >= tileRows) continue;
+    for (let tx = minTileX; tx <= maxTileX; tx += 1) {
+      const wrappedX = normalizeTileX(tx, zoom);
+      const url = tileUrl(template, zoom, wrappedX, ty);
+      tileJobs.push(
+        loadTileImage(url)
+          .then((image) => ({ image, tx, ty }))
+          .catch(() => null)
+      );
+    }
+  }
+
+  const loaded = await Promise.all(tileJobs);
+  if (nonce !== state.renderNonce) return;
+  if (!projection?.projectMercator) return;
+
+  const anchorWorld = [leftPx, topPx];
+  const anchorMerc = worldPixelsToMercator(anchorWorld, zoom);
+  const unitXMerc = worldPixelsToMercator([leftPx + 1, topPx], zoom);
+  const unitYMerc = worldPixelsToMercator([leftPx, topPx + 1], zoom);
+
+  const origin = projection.projectMercator(anchorMerc);
+  const pxX = projection.projectMercator(unitXMerc);
+  const pxY = projection.projectMercator(unitYMerc);
+  if (!origin || !pxX || !pxY) return;
+
+  const a = pxX[0] - origin[0];
+  const b = pxX[1] - origin[1];
+  const c = pxY[0] - origin[0];
+  const d = pxY[1] - origin[1];
+  const e = origin[0];
+  const f = origin[1];
+  const deviceScale =
+    Number.isFinite(pixelRatio) && Number(pixelRatio) > 0
+      ? Number(pixelRatio)
+      : 1;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+  ctx.setTransform(
+    a * deviceScale,
+    b * deviceScale,
+    c * deviceScale,
+    d * deviceScale,
+    e * deviceScale,
+    f * deviceScale
+  );
+  for (const tile of loaded) {
+    if (!tile?.image) continue;
+    const dx = tile.tx * TILE_SIZE - leftPx;
+    const dy = tile.ty * TILE_SIZE - topPx;
+    ctx.drawImage(tile.image, dx, dy, TILE_SIZE, TILE_SIZE);
+  }
+  ctx.restore();
+}
+
+function greenForHole(features) {
+  const greens = features.filter((f) => String(f?.properties?.golf || "") === "green");
+  if (!greens.length) return null;
+  greens.sort((a, b) => featureArea(b) - featureArea(a));
+  return greens[0];
+}
+
+function holeLineForHole(features) {
+  return features.find((f) => String(f?.properties?.golf || "") === "hole") || null;
+}
+
+function backTeeForHole(features, greenCenter, holeLine) {
+  const tees = features
+    .filter((f) => String(f?.properties?.golf || "") === "tee")
+    .map((feature) => ({ center: featureCentroid(feature) }))
+    .filter((item) => Array.isArray(item.center));
+
+  if (tees.length && Array.isArray(greenCenter)) {
+    tees.sort((a, b) => distanceYards(b.center, greenCenter) - distanceYards(a.center, greenCenter));
+    return tees[0].center;
+  }
+  if (tees.length) return tees[0].center;
+
+  const fromHole = firstLinePoint(holeLine);
+  return Array.isArray(fromHole) ? fromHole : null;
+}
+
+function greenFrontBackPoints(greenFeature, backTee, holeLine) {
+  const center = featureCentroid(greenFeature);
+  if (!greenFeature) return { front: null, center: null, back: null };
+
+  const pts = [];
+  collectPositions(greenFeature.geometry, pts);
+  if (!pts.length) {
+    return { front: center, center, back: center };
+  }
+
+  let teeRef = Array.isArray(backTee) ? backTee : firstLinePoint(holeLine);
+  if (!Array.isArray(teeRef)) teeRef = center;
+  if (!Array.isArray(teeRef)) return { front: center, center, back: center };
+
+  let front = pts[0];
+  let back = pts[0];
+  let minDist = Infinity;
+  let maxDist = -Infinity;
+  for (const point of pts) {
+    const d = distanceYards(teeRef, point);
+    if (d < minDist) {
+      minDist = d;
+      front = point;
+    }
+    if (d > maxDist) {
+      maxDist = d;
+      back = point;
+    }
+  }
+
+  return {
+    front: front || center,
+    center,
+    back: back || center,
+  };
+}
+
+function holePar(features) {
+  for (const feature of features) {
+    if (String(feature?.properties?.golf || "") !== "hole") continue;
+    const value = Number(feature?.properties?.par);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function updateLocationStatus(text) {
+  void text;
+}
+
+function secureContextMessage() {
+  if (window.isSecureContext) return "";
+  return "Location requires HTTPS or localhost. Open this page via https:// (not file:// or plain http://).";
+}
+
+function formatYards(value) {
+  return Number.isFinite(value) ? String(Math.round(value)) : "—";
+}
+
+function setMetricValue(el, primaryValue, secondaryValue) {
+  if (!el) return;
+  const primary = formatYards(primaryValue);
+  if (!Number.isFinite(secondaryValue)) {
+    el.textContent = primary;
+    return;
+  }
+  const secondary = formatYards(secondaryValue);
+  el.innerHTML = `${primary} <span class="hole-map-footer-sub">(${secondary})</span>`;
+}
+
+function clearTapPreviewTimer() {
+  if (state.tapPreviewTimerId == null) return;
+  clearTimeout(state.tapPreviewTimerId);
+  state.tapPreviewTimerId = null;
+}
+
+function syncFooterViewportLock() {
+  const footer = els.holeFooter;
+  if (!footer) return;
+
+  const vv = window.visualViewport;
+  if (!vv) {
+    footer.style.left = "";
+    footer.style.top = "";
+    footer.style.bottom = "";
+    footer.style.width = "";
+    footer.style.transform = "";
+    return;
+  }
+
+  const scale = Math.max(1, Number(vv.scale) || 1);
+  const invScale = 1 / scale;
+  const lockedWidth = vv.width * scale;
+  const scaledFooterHeight = footer.offsetHeight * invScale;
+  const top = vv.offsetTop + vv.height - scaledFooterHeight;
+
+  footer.style.left = `${vv.offsetLeft}px`;
+  footer.style.top = `${Math.max(0, top)}px`;
+  footer.style.bottom = "auto";
+  footer.style.width = `${lockedWidth}px`;
+  footer.style.transformOrigin = "left top";
+  footer.style.transform = `scale(${invScale})`;
+}
+
+function getCanvasConfig() {
+  if (window.matchMedia("(max-width: 560px)").matches) {
+    return { width: 1200, height: 2200, margin: 60 };
+  }
+  return { width: 1200, height: 760, margin: 52 };
+}
+
+function readGeolocationGrant() {
+  try {
+    return localStorage.getItem(GEO_GRANTED_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function persistGeolocationGrant(granted) {
+  try {
+    localStorage.setItem(GEO_GRANTED_KEY, granted ? "1" : "0");
+  } catch (_) {
+    // ignore
+  }
+}
+
+function updateTrackingButton() {
+  const locationInUse =
+    Array.isArray(state.userLocation) || state.locationWatchId != null || state.locationPending;
+
+  if (els.locBtn) {
+    els.locBtn.style.display = locationInUse ? "none" : "";
+    els.locBtn.disabled = Boolean(state.locationPending);
+    els.locBtn.textContent = state.locationPending ? "Locating..." : "Use My Location";
+  }
+
+  if (els.locClear) {
+    els.locClear.style.display = locationInUse ? "" : "none";
+    els.locClear.disabled = Boolean(state.locationPending);
+  }
+}
+
+function parseLocationFix(position) {
+  const lon = Number(position?.coords?.longitude);
+  const lat = Number(position?.coords?.latitude);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+
+  const accuracyRaw = Number(position?.coords?.accuracy);
+  const speedRaw = Number(position?.coords?.speed);
+  const timestampRaw = Number(position?.timestamp);
+
+  return {
+    coords: [lon, lat],
+    accuracyM: Number.isFinite(accuracyRaw) ? accuracyRaw : Infinity,
+    speedMps: Number.isFinite(speedRaw) && speedRaw >= 0 ? speedRaw : null,
+    tsMs: Number.isFinite(timestampRaw) ? timestampRaw : Date.now(),
+  };
+}
+
+function pruneLocationFixes(nowMs) {
+  state.locationFixes = state.locationFixes
+    .filter((fix) => nowMs - fix.tsMs <= LOCATION_SMOOTH_WINDOW_MS)
+    .slice(-LOCATION_SMOOTH_MAX_FIXES);
+}
+
+function smoothedLocationFromFixes(nowMs) {
+  if (!state.locationFixes.length) return null;
+
+  let sumLon = 0;
+  let sumLat = 0;
+  let sumWeight = 0;
+
+  for (const fix of state.locationFixes) {
+    const ageMs = Math.max(0, nowMs - fix.tsMs);
+    const acc = Math.max(3, fix.accuracyM);
+    const accWeight = 1 / (acc * acc);
+    const recencyWeight = Math.exp(-ageMs / (LOCATION_SMOOTH_WINDOW_MS * 0.6));
+    const weight = accWeight * recencyWeight;
+    sumLon += fix.coords[0] * weight;
+    sumLat += fix.coords[1] * weight;
+    sumWeight += weight;
+  }
+
+  if (sumWeight <= 0) return state.locationFixes[state.locationFixes.length - 1].coords;
+  return [sumLon / sumWeight, sumLat / sumWeight];
+}
+
+function isLocationOutlier(candidateFix) {
+  const prevFix = state.lastAcceptedLocationFix;
+  if (!prevFix) return false;
+
+  const dtSec = Math.max(0.5, (candidateFix.tsMs - prevFix.tsMs) / 1000);
+  const distM = distanceMeters(candidateFix.coords, prevFix.coords);
+  const speedBudgetMps = Number.isFinite(candidateFix.speedMps)
+    ? Math.min(candidateFix.speedMps, LOCATION_MAX_REASONABLE_SPEED_MPS)
+    : LOCATION_MAX_REASONABLE_SPEED_MPS;
+  const toleranceM =
+    LOCATION_BASE_JUMP_TOLERANCE_M +
+    speedBudgetMps * dtSec +
+    Math.max(candidateFix.accuracyM, prevFix.accuracyM);
+
+  return distM > toleranceM;
+}
+
+function canvasPointFromEvent(event) {
+  if (!els.holeCanvas) return null;
+  const rect = els.holeCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+
+  const point = event?.changedTouches?.[0] || event?.touches?.[0] || event;
+  const clientX = Number(point?.clientX);
+  const clientY = Number(point?.clientY);
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+
+  const logicalWidth = Number(state.lastCanvasLogicalSize?.width) || els.holeCanvas.width;
+  const logicalHeight = Number(state.lastCanvasLogicalSize?.height) || els.holeCanvas.height;
+  const x = ((clientX - rect.left) / rect.width) * logicalWidth;
+  const y = ((clientY - rect.top) / rect.height) * logicalHeight;
+  return [x, y];
+}
+
+function handleHoleTap(event) {
+  if (!state.lastProjection?.unproject) return;
+  const canvasPoint = canvasPointFromEvent(event);
+  if (!canvasPoint) return;
+  const mapPoint = state.lastProjection.unproject(canvasPoint);
+  if (!Array.isArray(mapPoint)) return;
+  clearTapPreviewTimer();
+  state.tapPoint = mapPoint;
+  state.tapPreviewTimerId = window.setTimeout(() => {
+    state.tapPreviewTimerId = null;
+    if (!Array.isArray(state.tapPoint)) return;
+    state.tapPoint = null;
+    renderCurrentHole();
+  }, TAP_PREVIEW_DURATION_MS);
+  renderCurrentHole();
+}
+
+function stopLocationTracking(clearLocation, statusText) {
+  if (state.locationWatchId != null && "geolocation" in navigator) {
+    navigator.geolocation.clearWatch(state.locationWatchId);
+    state.locationWatchId = null;
+  }
+  state.locationPending = false;
+
+  if (clearLocation) {
+    state.userLocation = null;
+    state.locationAccuracyM = null;
+    state.locationFixes = [];
+    state.lastAcceptedLocationFix = null;
+    state.locationError = "";
+    state.locationPermissionGranted = false;
+    persistGeolocationGrant(false);
+  }
+
+  if (statusText) updateLocationStatus(statusText);
+  updateTrackingButton();
+}
+
+function applyLocationFix(position) {
+  const fix = parseLocationFix(position);
+  if (!fix) {
+    state.locationError = "Location received, but coordinates were invalid.";
+    updateLocationStatus(state.locationError);
+    updateTrackingButton();
+    renderCurrentHole();
+    return;
+  }
+
+  state.locationAccuracyM = Number.isFinite(fix.accuracyM) ? fix.accuracyM : null;
+  state.locationError = "";
+  state.locationPermissionGranted = true;
+  persistGeolocationGrant(true);
+
+  if (!Number.isFinite(fix.accuracyM) || fix.accuracyM > LOCATION_HARD_REJECT_ACCURACY_M) {
+    updateLocationStatus(
+      `GPS accuracy too low (${Math.round(fix.accuracyM)}m). Waiting for a better fix.`
+    );
+    updateTrackingButton();
+    renderCurrentHole();
+    return;
+  }
+
+  if (isLocationOutlier(fix)) {
+    updateLocationStatus("Ignoring outlier GPS jump. Waiting for stable fix.");
+    updateTrackingButton();
+    renderCurrentHole();
+    return;
+  }
+
+  if (fix.accuracyM <= LOCATION_FILTER_MAX_ACCURACY_M) {
+    state.lastAcceptedLocationFix = fix;
+    state.locationFixes.push(fix);
+    pruneLocationFixes(fix.tsMs);
+  }
+
+  const smoothed = smoothedLocationFromFixes(fix.tsMs) || fix.coords;
+  if (!Array.isArray(state.userLocation)) {
+    state.userLocation = smoothed;
+  } else {
+    const deltaM = distanceMeters(state.userLocation, smoothed);
+    if (deltaM >= LOCATION_MIN_MOVEMENT_UPDATE_M) {
+      state.userLocation = smoothed;
+    }
+  }
+
+  updateLocationStatus(
+    `Tracking precise location (${Math.round(fix.accuracyM)}m, filtered).`
+  );
+  updateTrackingButton();
+  renderCurrentHole();
+}
+
+function handleLocationFailure(error) {
+  const codeMap = {
+    1: "Location permission was denied.",
+    2: "Location is unavailable.",
+    3: "Location request timed out.",
+  };
+  const base = codeMap[error?.code] || "Could not get current location.";
+  const detail = error?.message ? ` ${error.message}` : "";
+  state.locationError = `${base}${detail}`.trim();
+
+  if (error?.code === 1) {
+    state.locationPermissionGranted = false;
+    persistGeolocationGrant(false);
+    stopLocationTracking(false, state.locationError);
+  } else {
+    updateLocationStatus(state.locationError);
+    updateTrackingButton();
+  }
+
+  renderCurrentHole();
+}
+
+function startLocationTracking() {
+  const secureMsg = secureContextMessage();
+  if (secureMsg) {
+    state.locationError = secureMsg;
+    updateLocationStatus(secureMsg);
+    renderCurrentHole();
+    return;
+  }
+
+  if (!("geolocation" in navigator)) {
+    state.locationError = "This browser does not support geolocation.";
+    updateLocationStatus(state.locationError);
+    renderCurrentHole();
+    return;
+  }
+
+  if (state.locationWatchId != null) {
+    navigator.geolocation.clearWatch(state.locationWatchId);
+    state.locationWatchId = null;
+  }
+
+  state.locationFixes = [];
+  state.lastAcceptedLocationFix = null;
+  state.locationPending = true;
+  state.locationError = "";
+  updateLocationStatus("Acquiring precise GPS...");
+  try {
+    state.locationWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        state.locationPending = false;
+        applyLocationFix(position);
+      },
+      (error) => {
+        state.locationPending = false;
+        handleLocationFailure(error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: LOCATION_TIMEOUT_MS,
+        maximumAge: 0,
+      }
+    );
+  } catch (error) {
+    state.locationPending = false;
+    state.locationError = `Could not start location watch. ${error?.message || ""}`.trim();
+    updateLocationStatus(state.locationError);
+  }
+  updateTrackingButton();
+}
+
+async function maybeAutoStartTracking() {
+  const secureMsg = secureContextMessage();
+  if (secureMsg) return;
+  if (!("geolocation" in navigator)) return;
+
+  const savedGranted = readGeolocationGrant();
+
+  if (navigator.permissions?.query) {
+    try {
+      const perm = await navigator.permissions.query({ name: "geolocation" });
+
+      if (perm.state === "granted") {
+        state.locationPermissionGranted = true;
+        persistGeolocationGrant(true);
+        startLocationTracking();
+      } else if (savedGranted) {
+        // Older browser state may still prompt, but this preserves continuous behavior after prior grant.
+        startLocationTracking();
+      }
+
+      if (typeof perm.onchange !== "undefined") {
+        perm.onchange = () => {
+          if (perm.state === "granted") {
+            state.locationPermissionGranted = true;
+            persistGeolocationGrant(true);
+            startLocationTracking();
+            return;
+          }
+          if (perm.state === "denied") {
+            state.locationPermissionGranted = false;
+            persistGeolocationGrant(false);
+            stopLocationTracking(false, "Location permission was denied.");
+            renderCurrentHole();
+          }
+        };
+      }
+
+      updateTrackingButton();
+      return;
+    } catch (_) {
+      // Fall through to local hint.
+    }
+  }
+
+  if (savedGranted) startLocationTracking();
+  updateTrackingButton();
+}
+
+async function renderCurrentHole() {
+  const hole = state.currentHole;
+  updateHoleNavControls();
+  const usingFullMode = state.mapMode === MAP_MODE_FULL;
+  const features = usingFullMode ? (state.holeMap.get(hole) || []) : [];
+  const holeData = usingFullMode ? null : (state.bluegolfHoleMap.get(hole) || null);
+  let par = null;
+  let backTee = null;
+  let alignmentStart = null;
+  let alignmentEnd = null;
+  const greenTargets = {
+    front: null,
+    center: null,
+    back: null,
+  };
+
+  if (usingFullMode) {
+    par = holePar(features);
+    const green = greenForHole(features);
+    const holeLine = holeLineForHole(features);
+    const greenCenter = featureCentroid(green);
+    backTee = backTeeForHole(features, greenCenter, holeLine);
+    const computedTargets = greenFrontBackPoints(green, backTee, holeLine);
+    greenTargets.front = computedTargets.front;
+    greenTargets.center = computedTargets.center;
+    greenTargets.back = computedTargets.back;
+    alignmentStart = backTee || firstLinePoint(holeLine) || featureCentroid(green) || null;
+    alignmentEnd = greenTargets.center || lastLinePoint(holeLine) || featureCentroid(green) || null;
+  } else {
+    const parsedPar = Number(state.bluegolfCourse?.pars?.[Number(hole) - 1]);
+    par = Number.isFinite(parsedPar) ? parsedPar : null;
+    backTee = readLonLatFromRow(holeData, "tee");
+    greenTargets.front = readLonLatFromRow(holeData, "green_front");
+    greenTargets.center = readLonLatFromRow(holeData, "green_center");
+    greenTargets.back = readLonLatFromRow(holeData, "green_back");
+    if (!Array.isArray(greenTargets.front)) greenTargets.front = greenTargets.center || greenTargets.back;
+    if (!Array.isArray(greenTargets.back)) greenTargets.back = greenTargets.center || greenTargets.front;
+    alignmentStart = backTee || greenTargets.front || greenTargets.center || null;
+    alignmentEnd = greenTargets.center || greenTargets.back || greenTargets.front || null;
+  }
+
+  let baseSourceLabel = "Not Set";
+  let basePoint = null;
+
+  if (Array.isArray(state.userLocation)) {
+    baseSourceLabel = "My Location";
+    basePoint = state.userLocation;
+  } else if (Array.isArray(backTee)) {
+    baseSourceLabel = "Back Tee Default";
+    basePoint = backTee;
+  }
+
+  const usingTapPoint = Array.isArray(state.tapPoint);
+  const sourceLabel = usingTapPoint ? "Tap Point" : baseSourceLabel;
+  const metricPoint = usingTapPoint ? state.tapPoint : basePoint;
+
+  const yardsFront =
+    Array.isArray(metricPoint) && Array.isArray(greenTargets.front)
+      ? distanceYards(metricPoint, greenTargets.front)
+      : null;
+  const yardsCenter =
+    Array.isArray(metricPoint) && Array.isArray(greenTargets.center)
+      ? distanceYards(metricPoint, greenTargets.center)
+      : null;
+  const yardsBack =
+    Array.isArray(metricPoint) && Array.isArray(greenTargets.back)
+      ? distanceYards(metricPoint, greenTargets.back)
+      : null;
+  const userYardsFront =
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.front)
+      ? distanceYards(state.userLocation, greenTargets.front)
+      : null;
+  const userYardsCenter =
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)
+      ? distanceYards(state.userLocation, greenTargets.center)
+      : null;
+  const userYardsBack =
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.back)
+      ? distanceYards(state.userLocation, greenTargets.back)
+      : null;
+
+  const userToGreenCenterYards =
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)
+      ? distanceYards(state.userLocation, greenTargets.center)
+      : null;
+  const mapShouldFocusHole =
+    Number.isFinite(userToGreenCenterYards) && userToGreenCenterYards > MAP_FOCUS_MAX_USER_DISTANCE_YARDS;
+  const mapPlayerPoint = mapShouldFocusHole ? null : basePoint;
+  const proximityZoomMultiplier = (() => {
+    if (!Number.isFinite(userToGreenCenterYards) || mapShouldFocusHole) return 1;
+    const nearFactor = Math.max(
+      0,
+      Math.min(1, (MAP_FOCUS_MAX_USER_DISTANCE_YARDS - userToGreenCenterYards) / MAP_FOCUS_MAX_USER_DISTANCE_YARDS)
+    );
+    return 1 + nearFactor * MAP_PROXIMITY_ZOOM_MAX_BOOST;
+  })();
+  const tapToGreenCenterYards =
+    Array.isArray(state.tapPoint) && Array.isArray(greenTargets.center)
+      ? distanceYards(state.tapPoint, greenTargets.center)
+      : null;
+  const userToTapYards =
+    Array.isArray(state.tapPoint) && Array.isArray(state.userLocation)
+      ? distanceYards(state.userLocation, state.tapPoint)
+      : null;
+  const showToPoint = usingTapPoint && Number.isFinite(userToTapYards);
+
+  if (els.metricSummary) {
+    const label = state.mapLabel ? ` (${state.mapLabel})` : "";
+    els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}${label}`;
+  }
+  if (els.metricToPointHead) els.metricToPointHead.style.display = showToPoint ? "" : "none";
+  if (els.metricToPointRow) els.metricToPointRow.style.display = showToPoint ? "" : "none";
+  if (els.metricToPoint) {
+    els.metricToPoint.textContent = showToPoint ? formatYards(userToTapYards) : "—";
+  }
+  setMetricValue(els.metricFront, yardsFront, usingTapPoint ? userYardsFront : null);
+  setMetricValue(els.metricCenter, yardsCenter, usingTapPoint ? userYardsCenter : null);
+  setMetricValue(els.metricBack, yardsBack, usingTapPoint ? userYardsBack : null);
+
+  let detailText = "";
+  if (state.locationError) {
+    detailText = state.locationError;
+  } else if (sourceLabel === "My Location") {
+    detailText = "Live yardages from your location.";
+  } else if (sourceLabel === "Back Tee Default") {
+    detailText = "Showing back-tee yardages by default.";
+  } else if (sourceLabel === "Tap Point") {
+    detailText = "Showing front, center, and back yardages from your tapped spot.";
+  } else {
+    detailText = "No location or tee reference available for this hole.";
+  }
+
+  if (Number.isFinite(tapToGreenCenterYards)) {
+    detailText = `Tap: ${Math.round(tapToGreenCenterYards)}y to center green.`;
+  } else if (!state.locationError) {
+    detailText = `${detailText} Tap map to set a yardage source.`.trim();
+  }
+  if (els.yardageDetail) {
+    els.yardageDetail.textContent = detailText;
+  }
+
+  const hasHoleFeatures = usingFullMode ? features.length > 0 : !!holeData;
+  if (!hasHoleFeatures || !greenTargets.center) {
+    state.lastProjection = null;
+    els.holeEmpty.style.display = "";
+    return;
+  }
+  els.holeEmpty.style.display = "none";
+
+  const extraPoints = [
+    backTee,
+    greenTargets.front,
+    greenTargets.center,
+    greenTargets.back,
+    mapPlayerPoint,
+  ];
+
+  const { width, height, margin } = getCanvasConfig();
+  if (!els.holeCanvas) return;
+  const pixelRatio = Math.max(1, Math.min(3, Number(window.devicePixelRatio) || 1));
+  state.lastCanvasLogicalSize = { width, height };
+  els.holeCanvas.width = Math.round(width * pixelRatio);
+  els.holeCanvas.height = Math.round(height * pixelRatio);
+  const ctx = els.holeCanvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  const projection = createAlignedProjector(
+    usingFullMode ? features : [],
+    extraPoints,
+    alignmentStart,
+    alignmentEnd,
+    width,
+    height,
+    margin,
+    proximityZoomMultiplier
+  );
+
+  if (!projection) {
+    state.lastProjection = null;
+    els.holeEmpty.style.display = "";
+    return;
+  }
+
+  state.lastProjection = projection;
+  const { project } = projection;
+  const renderNonce = ++state.renderNonce;
+  const darkTheme = isDarkThemeActive();
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = darkTheme ? "#202225" : "#e9ebef";
+  ctx.fillRect(0, 0, width, height);
+  await drawStreetTileBackground(ctx, projection, width, height, renderNonce, pixelRatio);
+  if (renderNonce !== state.renderNonce) return;
+
+  const strokeDefault = darkTheme ? "rgba(243,248,255,0.95)" : "rgba(18,34,54,0.95)";
+  if (usingFullMode) {
+    const drawRank = { fairway: 1, green: 2, bunker: 3, tee: 4, hole: 5 };
+    const strokeOther = darkTheme ? "rgba(235,240,248,0.76)" : "rgba(18,34,54,0.72)";
+    const featureFillByType = {
+      fairway: darkTheme ? "rgba(92, 148, 77, 0.34)" : "rgba(104, 168, 90, 0.34)",
+      green: darkTheme ? "rgba(112, 184, 96, 0.42)" : "rgba(108, 191, 88, 0.43)",
+      bunker: darkTheme ? "rgba(177, 155, 112, 0.42)" : "rgba(203, 178, 119, 0.56)",
+      tee: darkTheme ? "rgba(106, 167, 89, 0.4)" : "rgba(112, 178, 94, 0.46)",
+    };
+
+    const sorted = [...features].sort((a, b) => {
+      const ga = String(a?.properties?.golf || "");
+      const gb = String(b?.properties?.golf || "");
+      return (drawRank[ga] || 99) - (drawRank[gb] || 99);
+    });
+
+    for (const feature of sorted) {
+      const golf = String(feature?.properties?.golf || "other");
+      if (golf === "hole") continue;
+      const geomType = String(feature?.geometry?.type || "");
+      const isArea = geomType === "Polygon" || geomType === "MultiPolygon";
+      const fillStyle = isArea ? featureFillByType[golf] : null;
+      ctx.beginPath();
+      const drew = drawGeometryPath(ctx, feature.geometry, project);
+      if (!drew) continue;
+      if (fillStyle) {
+        ctx.fillStyle = fillStyle;
+        ctx.fill();
+      }
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.miterLimit = 2;
+      if (fillStyle) {
+        continue;
+      }
+      ctx.strokeStyle = strokeOther;
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+    }
+  }
+
+  if (Array.isArray(backTee)) {
+    const [tx, ty] = project(backTee);
+    ctx.beginPath();
+    ctx.arc(tx, ty, 7, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+    ctx.strokeStyle = "#567037";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  if (Array.isArray(mapPlayerPoint)) {
+    const [px, py] = project(mapPlayerPoint);
+    ctx.beginPath();
+    ctx.arc(px, py, 8, 0, Math.PI * 2);
+    ctx.fillStyle = "#2c7ef6";
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  if (Array.isArray(state.tapPoint)) {
+    const [tx, ty] = project(state.tapPoint);
+    const tapDotRadius = window.matchMedia("(max-width: 560px)").matches
+      ? 7 * TAP_DOT_MOBILE_RADIUS_MULTIPLIER
+      : 7;
+    ctx.beginPath();
+    ctx.arc(tx, ty, tapDotRadius, 0, Math.PI * 2);
+    ctx.fillStyle = darkTheme ? "#2a2d31" : "#e9ecf0";
+    ctx.fill();
+    ctx.strokeStyle = strokeDefault;
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+  }
+
+  syncFooterViewportLock();
+}
+
+let onPrevHoleRequested = null;
+let onNextHoleRequested = null;
+
+function holeIndexFromNumber(holeNumber) {
+  const parsed = Number(holeNumber);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(17, Math.round(parsed) - 1));
+}
+
+function holeNumberFromIndex(holeIndex) {
+  const idx = Math.max(0, Math.min(17, Number(holeIndex) || 0));
+  return idx + 1;
+}
+
+function setHole(holeNumber, { syncEntry = true } = {}) {
+  if (!state.holes.includes(holeNumber)) return;
+  clearTapPreviewTimer();
+  state.currentHole = holeNumber;
+  state.tapPoint = null;
+  if (syncEntry) {
+    entryState.currentHoleIndex = holeIndexFromNumber(holeNumber);
+    renderScoreRows();
+  }
+  if (els.holeSelect) {
+    els.holeSelect.value = String(holeNumber);
+  }
+  renderCurrentHole();
+}
+
+function setHoleByIndex(holeIndex, { syncEntry = true } = {}) {
+  const desired = holeNumberFromIndex(holeIndex);
+  if (state.holes.includes(desired)) {
+    setHole(desired, { syncEntry });
+    return;
+  }
+  const nearest = [...state.holes].sort(
+    (a, b) => Math.abs(a - desired) - Math.abs(b - desired)
+  )[0];
+  if (nearest != null) {
+    setHole(nearest, { syncEntry });
+  }
+}
+
+function nextHole(delta, { syncEntry = true } = {}) {
+  if (!state.holes.length || state.currentHole == null) return;
+  const idx = state.holes.indexOf(state.currentHole);
+  if (idx === -1) return;
+  const next = (idx + delta + state.holes.length) % state.holes.length;
+  setHole(state.holes[next], { syncEntry });
+}
+
+function updateHoleNavControls() {
+  const holes = state.holes || [];
+  const hole = state.currentHole;
+  if (!holes.length || hole == null) {
+    if (els.holePrev) els.holePrev.textContent = "<-";
+    if (els.holeNext) els.holeNext.textContent = "->";
+    return;
+  }
+  const idx = holes.indexOf(hole);
+  if (idx === -1) return;
+  const prevHole = holes[(idx - 1 + holes.length) % holes.length];
+  const nextHoleNumber = holes[(idx + 1) % holes.length];
+  if (els.holePrev) els.holePrev.textContent = `<- ${prevHole}`;
+  if (els.holeNext) els.holeNext.textContent = `${nextHoleNumber} ->`;
+  if (els.holeSelect) els.holeSelect.value = String(hole);
+}
+
+function bindEvents() {
+  if (els.holeSelect) {
+    els.holeSelect.addEventListener("change", () => {
+      const value = Number(els.holeSelect.value);
+      if (Number.isFinite(value)) setHole(value);
+    });
+  }
+
+  if (els.holePrev) {
+    els.holePrev.addEventListener("click", async () => {
+      if (typeof onPrevHoleRequested === "function") {
+        const handled = await onPrevHoleRequested();
+        if (handled) return;
+      }
+      nextHole(-1);
+    });
+  }
+  if (els.holeNext) {
+    els.holeNext.addEventListener("click", async () => {
+      if (typeof onNextHoleRequested === "function") {
+        const handled = await onNextHoleRequested();
+        if (handled) return;
+      }
+      nextHole(1);
+    });
+  }
+
+  if (els.locBtn) {
+    els.locBtn.addEventListener("click", () => {
+      startLocationTracking();
+    });
+  }
+
+  if (els.locClear) {
+    els.locClear.addEventListener("click", () => {
+      stopLocationTracking(true, "Location cleared.");
+      renderCurrentHole();
+    });
+  }
+
+  if (els.holeCanvas) {
+    els.holeCanvas.addEventListener("click", handleHoleTap);
+  }
+
+  window.addEventListener("keydown", (event) => {
+    if (event.target && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
+    if (event.key === "ArrowLeft") {
+      if (typeof onPrevHoleRequested === "function") {
+        void Promise.resolve(onPrevHoleRequested()).then((handled) => {
+          if (!handled) nextHole(-1);
+        });
+        return;
+      }
+      nextHole(-1);
+    }
+    if (event.key === "ArrowRight") {
+      if (typeof onNextHoleRequested === "function") {
+        void Promise.resolve(onNextHoleRequested()).then((handled) => {
+          if (!handled) nextHole(1);
+        });
+        return;
+      }
+      nextHole(1);
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    clearTapPreviewTimer();
+    stopLocationTracking(false, "");
+    if (entryState.refreshTimer) clearInterval(entryState.refreshTimer);
+  });
+
+  window.addEventListener("resize", () => {
+    renderCurrentHole();
+    syncFooterViewportLock();
+  });
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", syncFooterViewportLock);
+    window.visualViewport.addEventListener("scroll", syncFooterViewportLock);
+  }
+}
+
+async function fetchJson(path) {
+  const response = await fetch(path, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Failed to load ${path}: ${response.status}`);
+  return response.json();
+}
+
+function normalizePlayerCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizeKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeTeamId(teamId) {
+  return teamId == null ? "" : String(teamId).trim();
+}
+
+function normalizeGroup(groupValue) {
+  return String(groupValue || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 16);
+}
+
+function groupForPlayerRound(player, roundIndex) {
+  if (Array.isArray(player?.groups)) {
+    const v = normalizeGroup(player.groups[roundIndex]);
+    if (v) return v;
+  }
+  if (roundIndex === 0) return normalizeGroup(player?.group);
+  return "";
+}
+
+function twoManGroupId(teamId, label) {
+  const team = String(teamId || "").trim();
+  const g = normalizeGroup(label);
+  if (!team || !g) return "";
+  return `${team}::${g}`;
+}
+
+function teeTimeForPlayerRound(player, roundIndex) {
+  if (!player || roundIndex < 0) return "";
+  if (Array.isArray(player.teeTimes)) {
+    const v = String(player.teeTimes[roundIndex] || "").trim().toLowerCase();
+    if (v) return v;
+  }
+  if (roundIndex === 0) {
+    const fallback = String(player.teeTime || "").trim().toLowerCase();
+    if (fallback) return fallback;
+  }
+  return "";
+}
+
+function hasAnyScore(arr) {
+  if (!Array.isArray(arr)) return false;
+  for (const v of arr) {
+    if (v != null && Number(v) > 0) return true;
+  }
+  return false;
+}
+
+function rowHasAnyData(row) {
+  if (!row) return false;
+  if (Number(row.thru || 0) > 0) return true;
+  if (Number(row.strokes || 0) > 0) return true;
+  if (Number(row.gross || 0) > 0) return true;
+  if (Number(row.net || 0) > 0) return true;
+  if (hasAnyScore(row?.scores?.gross)) return true;
+  if (hasAnyScore(row?.scores?.net)) return true;
+  return false;
+}
+
+function roundHasAnyData(roundData) {
+  if (!roundData) return false;
+  for (const row of roundData?.leaderboard?.teams || []) {
+    if (rowHasAnyData(row)) return true;
+  }
+  for (const row of roundData?.leaderboard?.players || []) {
+    if (rowHasAnyData(row)) return true;
+  }
+  for (const team of Object.values(roundData?.team || {})) {
+    if (hasAnyScore(team?.gross) || hasAnyScore(team?.net)) return true;
+  }
+  for (const player of Object.values(roundData?.player || {})) {
+    if (hasAnyScore(player?.gross) || hasAnyScore(player?.net)) return true;
+  }
+  return false;
+}
+
+function isEmptyScore(v) {
+  return v == null || Number(v) === 0;
+}
+
+function normalizeScoreArray(arr) {
+  return (Array.isArray(arr) ? arr : Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : Number(v)));
+}
+
+function nextHoleIndexForGroup(savedByTarget, targetIds) {
+  for (let i = 0; i < 18; i += 1) {
+    for (const id of targetIds || []) {
+      const arr = savedByTarget[id] || Array(18).fill(null);
+      if (isEmptyScore(arr[i])) return i;
+    }
+  }
+  return 17;
+}
+
+function courseListFromTournamentRaw(tjson) {
+  if (Array.isArray(tjson?.courses) && tjson.courses.length) return tjson.courses;
+  if (tjson?.course && typeof tjson.course === "object") return [tjson.course];
+  return [];
+}
+
+function courseForRoundRaw(tjson, roundIndex) {
+  const courses = courseListFromTournamentRaw(tjson);
+  if (!courses.length) return null;
+  const rounds = tjson?.tournament?.rounds || [];
+  const idxRaw = Number(rounds?.[roundIndex]?.courseIndex);
+  const idx = Number.isInteger(idxRaw) && idxRaw >= 0 && idxRaw < courses.length ? idxRaw : 0;
+  return courses[idx] || courses[0] || null;
+}
+
+function mapModeLabel(mode) {
+  return mode === MAP_MODE_FULL ? "Full map" : "Simplified map";
+}
+
+function setScoreStatus(message, isError = false) {
+  if (!els.scoreStatus) return;
+  els.scoreStatus.textContent = message || "";
+  els.scoreStatus.style.color = isError ? "var(--bad)" : "";
+}
+
+function ensureScoreCard() {
+  if (!els.container || !els.controlsCard) return;
+  if (!els.scoreCard) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.id = "map_score_card";
+    card.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <h2 style="margin:0;">Enter Scores</h2>
+        <div class="small" id="map_course_info">Loading…</div>
+      </div>
+      <div id="map_round_tabs" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;"></div>
+      <div id="map_score_rows" style="display:flex; gap:8px; overflow:auto; padding:2px 1px; margin-top:10px;"></div>
+      <div class="actions hole-actions" style="margin-top:10px;">
+        <button id="map_submit_hole_btn" type="button">Submit hole</button>
+      </div>
+      <div class="small" id="map_score_status" style="margin-top:8px;"></div>
+    `;
+    els.controlsCard.insertAdjacentElement("afterend", card);
+    els.scoreCard = card;
+    els.roundTabs = card.querySelector("#map_round_tabs");
+    els.scoreRows = card.querySelector("#map_score_rows");
+    els.scoreStatus = card.querySelector("#map_score_status");
+    els.mapInfo = card.querySelector("#map_course_info");
+    const submitBtn = card.querySelector("#map_submit_hole_btn");
+    submitBtn?.addEventListener("click", async () => {
+      await submitCurrentHole({ allowEmpty: false, advanceToSuggested: true });
+    });
+  }
+}
+
+function showCodePrompt() {
+  ensureScoreCard();
+  if (!els.scoreRows || !els.roundTabs || !els.mapInfo) return;
+  els.mapInfo.textContent = "Player code required";
+  els.roundTabs.innerHTML = "";
+  els.scoreRows.innerHTML = `
+    <div style="min-width:280px;">
+      <label for="map_player_code_input">Player code</label>
+      <input id="map_player_code_input" placeholder="XXXX" autocomplete="one-time-code" />
+      <div class="actions" style="margin-top:10px;">
+        <button id="map_player_code_go" type="button">Continue</button>
+      </div>
+    </div>
+  `;
+  setScoreStatus("");
+  const input = document.getElementById("map_player_code_input");
+  const go = document.getElementById("map_player_code_go");
+  input?.addEventListener("input", () => {
+    input.value = normalizePlayerCode(input.value);
+  });
+  const onContinue = () => {
+    const nextCode = normalizePlayerCode(input?.value);
+    if (!nextCode) return;
+    rememberPlayerCode(nextCode);
+    const url = new URL(window.location.href);
+    url.searchParams.set("code", nextCode);
+    window.location.href = url.toString();
+  };
+  input?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") onContinue();
+  });
+  go?.addEventListener("click", onContinue);
+}
+
+async function fetchCourseMapIndex() {
+  const attempts = [];
+  for (const candidate of MAP_INDEX_CANDIDATES) {
+    attempts.push(candidate);
+    try {
+      const json = await fetchJson(candidate);
+      if (json && typeof json === "object") return json;
+    } catch (_) {
+      // try next path
+    }
+  }
+  throw new Error(`Could not load course map index: ${attempts.join(" | ")}`);
+}
+
+function resolveCourseMapMeta(course, mapIndex) {
+  if (!course || !mapIndex) return null;
+  const bySlug = mapIndex?.courses_by_slug || {};
+  const courses = Array.isArray(mapIndex?.courses) ? mapIndex.courses : [];
+
+  const slugCandidates = [
+    course?.mapSlug,
+    course?.dataSlug,
+    course?.slug,
+    course?.courseSlug,
+    course?.course_slug,
+    course?.id,
+  ]
+    .map((v) => String(v || "").trim())
+    .filter(Boolean);
+  for (const slug of slugCandidates) {
+    if (bySlug[slug]) return { slug, ...bySlug[slug] };
+  }
+
+  const targetNameKey = normalizeKey(course?.name || course?.courseName || course?.title);
+  if (targetNameKey) {
+    const exact = courses.find((item) => normalizeKey(item?.name) === targetNameKey);
+    if (exact?.slug) return { slug: exact.slug, ...exact };
+  }
+
+  return null;
+}
+
+function mapModeFromMeta(meta) {
+  if (meta?.has_full_map) return MAP_MODE_FULL;
+  if (meta?.has_simplified_map) return MAP_MODE_SIMPLIFIED;
+  if (String(meta?.map_level || "").toLowerCase() === MAP_MODE_FULL) return MAP_MODE_FULL;
+  if (String(meta?.map_level || "").toLowerCase() === MAP_MODE_SIMPLIFIED) return MAP_MODE_SIMPLIFIED;
+  return "";
+}
+
+function dataCandidatesForSlug(slug) {
+  return DATA_ROOT_CANDIDATES.map((root) => `${root}/${slug}`);
+}
+
+async function resolveDataBase(slug, mode) {
+  if (!slug) throw new Error("Missing course data slug");
+  const attempts = [];
+  const probeFile = mode === MAP_MODE_FULL ? "hole_index.json" : "bluegolf_tee_green_coordinates.json";
+  for (const candidate of dataCandidatesForSlug(slug)) {
+    const probe = `${candidate}/${probeFile}`;
+    attempts.push(probe);
+    try {
+      const response = await fetch(probe, { cache: "no-store" });
+      if (response.ok) {
+        state.dataBase = candidate;
+        return candidate;
+      }
+    } catch (_) {
+      // continue
+    }
+  }
+  throw new Error(`Could not locate hole map data. Tried: ${attempts.join(" | ")}`);
+}
+
+function resetMapData() {
+  state.courseFeatures = [];
+  state.holeFeatures = [];
+  state.holeMap = new Map();
+  state.bluegolfHoleMap = new Map();
+  state.bluegolfCourse = null;
+  state.holes = [];
+  state.currentHole = null;
+  if (els.holeSelect) els.holeSelect.innerHTML = "";
+}
+
+function populateHoleSelect() {
+  if (!els.holeSelect) return;
+  els.holeSelect.innerHTML = "";
+  for (const hole of state.holes) {
+    const option = document.createElement("option");
+    option.value = String(hole);
+    option.textContent = String(hole);
+    els.holeSelect.appendChild(option);
+  }
+}
+
+async function loadMapDataForCourse(slug, mode) {
+  const dataBase = await resolveDataBase(slug, mode);
+  resetMapData();
+  state.mapMode = mode;
+  state.dataSlug = slug;
+
+  if (mode === MAP_MODE_FULL) {
+    const [courseGeo, holeGeo, holeIndex] = await Promise.all([
+      fetchJson(`${dataBase}/course.geojson`),
+      fetchJson(`${dataBase}/hole_features.geojson`),
+      fetchJson(`${dataBase}/hole_index.json`),
+    ]);
+
+    state.courseFeatures = Array.isArray(courseGeo?.features) ? courseGeo.features : [];
+    state.holeFeatures = Array.isArray(holeGeo?.features) ? holeGeo.features : [];
+
+    const map = new Map();
+    for (const feature of state.holeFeatures) {
+      const props = feature?.properties || {};
+      const holeRef = parseHoleRef(props.hole_ref ?? props.ref);
+      if (holeRef == null) continue;
+      if (!map.has(holeRef)) map.set(holeRef, []);
+      map.get(holeRef).push(feature);
+    }
+    state.holeMap = map;
+    const fromIndex = Object.keys(holeIndex?.holes || {})
+      .map((h) => Number(h))
+      .filter((h) => Number.isFinite(h));
+    const fallback = Array.from(map.keys());
+    state.holes = (fromIndex.length ? fromIndex : fallback).sort((a, b) => a - b);
+  } else {
+    const [bluegolfRows, bluegolfCourse] = await Promise.all([
+      fetchJson(`${dataBase}/bluegolf_tee_green_coordinates.json`),
+      fetchJson(`${dataBase}/bluegolf_course_data.json`).catch(() => null),
+    ]);
+    state.bluegolfCourse = bluegolfCourse && typeof bluegolfCourse === "object" ? bluegolfCourse : null;
+
+    const map = new Map();
+    for (const row of Array.isArray(bluegolfRows) ? bluegolfRows : []) {
+      const hole = Number(row?.hole);
+      if (!Number.isFinite(hole)) continue;
+      map.set(hole, row);
+    }
+    state.bluegolfHoleMap = map;
+    state.holes = Array.from(map.keys()).sort((a, b) => a - b);
+  }
+
+  populateHoleSelect();
+}
+
+function roundModeForIndex(roundIndex) {
+  const roundCfg = entryState.rounds?.[roundIndex] || {};
+  const fmt = String(roundCfg?.format || "singles").toLowerCase();
+  if (fmt === "scramble") return "team";
+  if (fmt === "two_man" || fmt === "two_man_best_ball") return "group";
+  return "player";
+}
+
+function allowedPlayerIdsForRound(roundIndex) {
+  const actorId = entryState.enter?.player?.playerId;
+  const actor = entryState.playersById?.[actorId] || entryState.enter?.player || {};
+  const actorTee = teeTimeForPlayerRound(actor, roundIndex);
+  const ids = [];
+  for (const p of entryState.players || []) {
+    const pid = p?.playerId;
+    if (!pid) continue;
+    if (!actorTee) {
+      if (pid === actorId) ids.push(pid);
+      continue;
+    }
+    if (teeTimeForPlayerRound(p, roundIndex) === actorTee) ids.push(pid);
+  }
+  if (actorId && !ids.includes(actorId)) ids.unshift(actorId);
+  return Array.from(new Set(ids));
+}
+
+function roundTargets(roundIndex) {
+  const mode = roundModeForIndex(roundIndex);
+  const scoreRound = entryState.tournament?.score_data?.rounds?.[roundIndex] || {};
+  if (mode === "team") {
+    const teamId = normalizeTeamId(entryState.enter?.team?.teamId);
+    if (!teamId) return { mode, targets: [] };
+    return {
+      mode,
+      targets: [{ id: teamId, label: entryState.enter?.team?.teamName || teamId }],
+      savedByTarget: {
+        [teamId]: normalizeScoreArray(scoreRound?.team?.[teamId]?.gross),
+      },
+    };
+  }
+
+  if (mode === "group") {
+    const actor = entryState.playersById?.[entryState.enter?.player?.playerId] || entryState.enter?.player || {};
+    const teamId = normalizeTeamId(actor?.teamId || entryState.enter?.team?.teamId);
+    const actorGroup = groupForPlayerRound(actor, roundIndex);
+    const groupId = twoManGroupId(teamId, actorGroup);
+    if (!groupId) return { mode, targets: [], savedByTarget: {} };
+    const names = (entryState.players || [])
+      .filter((player) => normalizeTeamId(player?.teamId) === teamId && groupForPlayerRound(player, roundIndex) === actorGroup)
+      .map((player) => player?.name)
+      .filter(Boolean);
+    const savedByTarget = {};
+    for (const [sdTeamId, teamEntry] of Object.entries(scoreRound?.team || {})) {
+      for (const [label, groupEntry] of Object.entries(teamEntry?.groups || {})) {
+        const gid = String(groupEntry?.groupId || twoManGroupId(sdTeamId, label)).trim();
+        if (!gid) continue;
+        savedByTarget[gid] = normalizeScoreArray(groupEntry?.gross);
+      }
+    }
+    return {
+      mode,
+      targets: [{ id: groupId, label: `Group ${actorGroup || "—"}${names.length ? ` (${names.join(", ")})` : ""}` }],
+      savedByTarget,
+    };
+  }
+
+  const ids = allowedPlayerIdsForRound(roundIndex);
+  const savedByTarget = {};
+  for (const pid of Object.keys(scoreRound?.player || {})) {
+    savedByTarget[pid] = normalizeScoreArray(scoreRound?.player?.[pid]?.gross);
+  }
+  return {
+    mode,
+    targets: ids
+      .map((id) => ({ id, label: entryState.playersById?.[id]?.name || id }))
+      .filter((target) => !!target.id),
+    savedByTarget,
+  };
+}
+
+function activeRoundIndexFromTournament() {
+  const rounds = entryState.rounds || [];
+  const scoreRounds = entryState.tournament?.score_data?.rounds || [];
+  for (let i = rounds.length - 1; i >= 0; i -= 1) {
+    if (roundHasAnyData(scoreRounds[i])) return i;
+  }
+  return 0;
+}
+
+const draftByRound = Object.create(null);
+
+function ensureRoundDraft(roundIndex) {
+  if (!draftByRound[roundIndex]) {
+    draftByRound[roundIndex] = { hole: Object.create(null) };
+  }
+  return draftByRound[roundIndex];
+}
+
+function getHoleDraft(roundIndex, holeIndex, targetId) {
+  return draftByRound[roundIndex]?.hole?.[holeIndex]?.[targetId];
+}
+
+function setHoleDraft(roundIndex, holeIndex, targetId, value) {
+  const rd = ensureRoundDraft(roundIndex);
+  if (!rd.hole[holeIndex]) rd.hole[holeIndex] = Object.create(null);
+  rd.hole[holeIndex][targetId] = value;
+}
+
+function clearHoleDraftTargets(roundIndex, holeIndex, targetIds) {
+  const holeDraft = draftByRound[roundIndex]?.hole?.[holeIndex];
+  if (!holeDraft) return;
+  for (const targetId of targetIds) delete holeDraft[targetId];
+  if (Object.keys(holeDraft).length === 0) delete draftByRound[roundIndex].hole[holeIndex];
+}
+
+function renderRoundTabs() {
+  if (!els.roundTabs) return;
+  els.roundTabs.innerHTML = "";
+  const rounds = entryState.rounds || [];
+  rounds.forEach((round, idx) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = idx === entryState.selectedRoundIndex ? "" : "secondary";
+    button.textContent = String(idx + 1);
+    button.addEventListener("click", async () => {
+      if (idx === entryState.selectedRoundIndex) return;
+      try {
+        await selectRound(idx, { jumpToSuggestedHole: true });
+      } catch (error) {
+        setScoreStatus(`Error loading round ${idx + 1}: ${error?.message || String(error)}`, true);
+      }
+    });
+    els.roundTabs.appendChild(button);
+  });
+}
+
+function renderScoreRows() {
+  if (!els.scoreRows) return;
+  els.scoreRows.innerHTML = "";
+  entryState.currentInputs = [];
+  const roundIndex = entryState.selectedRoundIndex;
+  const holeIndex = entryState.currentHoleIndex;
+  const { targets, savedByTarget } = roundTargets(roundIndex);
+  if (!targets.length) {
+    els.scoreRows.innerHTML = `<div class="small">No score targets for this round.</div>`;
+    return;
+  }
+
+  for (const target of targets) {
+    const existing = (savedByTarget[target.id] || Array(18).fill(null))[holeIndex];
+    const draft = getHoleDraft(roundIndex, holeIndex, target.id);
+    const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
+    const row = document.createElement("div");
+    row.className = "hole-row";
+    row.style.minWidth = "180px";
+    row.style.maxWidth = "220px";
+    row.innerHTML = `
+      <div><b>${target.label}</b></div>
+      <div class="small" style="margin-top:4px;">Existing: ${existing == null ? "—" : existing}</div>
+    `;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.max = "20";
+    input.step = "1";
+    input.value = initial;
+    input.className = "hole-input";
+    input.style.marginTop = "8px";
+    input.addEventListener("input", () => {
+      setHoleDraft(roundIndex, holeIndex, target.id, input.value);
+    });
+    row.appendChild(input);
+    els.scoreRows.appendChild(row);
+    entryState.currentInputs.push({ targetId: target.id, input });
+  }
+}
+
+async function refreshTournamentJson() {
+  const fresh = await staticJson(
+    `/tournaments/${encodeURIComponent(entryState.tid)}.json?v=${Date.now()}`,
+    { cacheKey: `t:${entryState.tid}` }
+  );
+  entryState.tournament = fresh;
+  entryState.rounds = fresh?.tournament?.rounds || [];
+  return fresh;
+}
+
+async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = false } = {}) {
+  if (entryState.submitting) return { ok: false };
+  const roundIndex = entryState.selectedRoundIndex;
+  const holeIndex = entryState.currentHoleIndex;
+  const entries = [];
+  for (const { targetId, input } of entryState.currentInputs || []) {
+    const raw = String(input?.value ?? "").trim();
+    if (!raw) continue;
+    const strokes = Number(raw);
+    if (!Number.isFinite(strokes) || strokes <= 0) continue;
+    entries.push({ targetId, strokes });
+  }
+
+  if (!entries.length) {
+    if (allowEmpty) return { ok: true, submitted: false };
+    setScoreStatus("Enter at least one score for this hole.", true);
+    return { ok: false };
+  }
+
+  entryState.submitting = true;
+  setScoreStatus("Submitting…");
+  try {
+    await api(`/tournaments/${encodeURIComponent(entryState.tid)}/scores`, {
+      method: "POST",
+      body: {
+        code: entryState.code,
+        roundIndex,
+        mode: "hole",
+        holeIndex,
+        entries,
+        override: false,
+      },
+    });
+    clearHoleDraftTargets(
+      roundIndex,
+      holeIndex,
+      entries.map((entry) => entry.targetId)
+    );
+    await refreshTournamentJson();
+    if (advanceToSuggested) {
+      const { targets, savedByTarget } = roundTargets(roundIndex);
+      entryState.currentHoleIndex = nextHoleIndexForGroup(
+        savedByTarget,
+        targets.map((target) => target.id)
+      );
+      setHoleByIndex(entryState.currentHoleIndex, { syncEntry: false });
+    }
+    setScoreStatus("Saved.");
+    renderScoreRows();
+    return { ok: true, submitted: true };
+  } catch (error) {
+    if (error?.status === 409) {
+      setScoreStatus("Conflict: scores already posted. Use Enter Scores page to override.", true);
+      return { ok: false, conflict: true };
+    }
+    setScoreStatus(`Error: ${error?.message || String(error)}`, true);
+    return { ok: false };
+  } finally {
+    entryState.submitting = false;
+  }
+}
+
+async function loadMapForSelectedRound() {
+  const roundIndex = entryState.selectedRoundIndex;
+  const course = courseForRoundRaw(entryState.tournament, roundIndex);
+  let mapMeta = resolveCourseMapMeta(course, entryState.mapIndex);
+  if (!mapMeta && FORCED_DATA_SLUG) {
+    const bySlug = entryState.mapIndex?.courses_by_slug || {};
+    if (bySlug[FORCED_DATA_SLUG]) {
+      mapMeta = { slug: FORCED_DATA_SLUG, ...bySlug[FORCED_DATA_SLUG] };
+    } else {
+      mapMeta = { slug: FORCED_DATA_SLUG, name: FORCED_DATA_SLUG, has_simplified_map: true };
+    }
+  }
+  if (!mapMeta) {
+    resetMapData();
+    state.mapLabel = "No map";
+    if (els.mapInfo) {
+      els.mapInfo.textContent = `No map found for ${course?.name || "selected course"}.`;
+    }
+    if (els.holeEmpty) {
+      els.holeEmpty.style.display = "";
+      els.holeEmpty.textContent = "No hole map is available for this course.";
+    }
+    return;
+  }
+
+  const mode = mapModeFromMeta(mapMeta);
+  if (!mode) {
+    resetMapData();
+    state.mapLabel = "No map";
+    if (els.mapInfo) {
+      els.mapInfo.textContent = `${mapMeta?.name || mapMeta?.slug || "Course"} has no map files.`;
+    }
+    if (els.holeEmpty) {
+      els.holeEmpty.style.display = "";
+      els.holeEmpty.textContent = "No hole map is available for this course.";
+    }
+    return;
+  }
+
+  state.mapLabel = mapModeLabel(mode);
+  if (els.mapInfo) {
+    els.mapInfo.textContent = `${mapMeta?.name || mapMeta?.slug} • ${state.mapLabel}`;
+  }
+  await loadMapDataForCourse(mapMeta.slug, mode);
+  setHoleByIndex(entryState.currentHoleIndex, { syncEntry: false });
+  renderCurrentHole();
+}
+
+async function selectRound(roundIndex, { jumpToSuggestedHole = false } = {}) {
+  const rounds = entryState.rounds || [];
+  if (!rounds.length) return;
+  const safeRound = Math.max(0, Math.min(rounds.length - 1, Number(roundIndex) || 0));
+  entryState.selectedRoundIndex = safeRound;
+  if (jumpToSuggestedHole) {
+    const { targets, savedByTarget } = roundTargets(safeRound);
+    entryState.currentHoleIndex = nextHoleIndexForGroup(
+      savedByTarget,
+      targets.map((target) => target.id)
+    );
+  }
+  renderRoundTabs();
+  renderScoreRows();
+  await loadMapForSelectedRound();
+}
+
+async function initializeEntryContext() {
+  const codeFromQuery = normalizePlayerCode(qs("code") || qs("c"));
+  if (codeFromQuery) rememberPlayerCode(codeFromQuery);
+  entryState.code = codeFromQuery || normalizePlayerCode(getRememberedPlayerCode()) || "";
+  if (!entryState.code) {
+    showCodePrompt();
+    throw new Error("Player code required");
+  }
+
+  const enter = await staticJson(`/enter/${encodeURIComponent(entryState.code)}.json`, {
+    cacheKey: `enter:${entryState.code}`,
+  });
+  const tid = String(enter?.tournamentId || "").trim();
+  if (!tid) {
+    showCodePrompt();
+    throw new Error("Invalid player code");
+  }
+
+  entryState.enter = enter;
+  entryState.tid = tid;
+  rememberPlayerCode(entryState.code);
+  rememberTournamentId(tid);
+
+  document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {
+    link.setAttribute("href", `./scoreboard.html?t=${encodeURIComponent(tid)}`);
+  });
+
+  const tournament = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, {
+    cacheKey: `t:${tid}`,
+  });
+  entryState.tournament = tournament;
+  entryState.rounds = tournament?.tournament?.rounds || [];
+  entryState.players = tournament?.players || [];
+  entryState.playersById = Object.create(null);
+  for (const player of entryState.players) {
+    if (player?.playerId) entryState.playersById[player.playerId] = player;
+  }
+
+  setHeaderTournamentName(tournament?.tournament?.name);
+  entryState.mapIndex = await fetchCourseMapIndex();
+}
+
+function startAutoRefresh() {
+  if (entryState.refreshTimer) clearInterval(entryState.refreshTimer);
+  entryState.refreshTimer = window.setInterval(async () => {
+    try {
+      await refreshTournamentJson();
+      renderScoreRows();
+    } catch (_) {
+      // keep stale data if refresh fails
+    }
+  }, SCORE_AUTO_REFRESH_MS);
+}
+
+async function init() {
+  ensureScoreCard();
+  bindEvents();
+  state.locationPermissionGranted = readGeolocationGrant();
+  updateTrackingButton();
+  updateLocationStatus(
+    state.locationPermissionGranted
+      ? "Reusing saved location permission..."
+      : "Location not shared yet."
+  );
+
+  onNextHoleRequested = async () => {
+    const submitted = await submitCurrentHole({ allowEmpty: true, advanceToSuggested: false });
+    if (!submitted.ok) return true;
+    nextHole(1);
+    return true;
+  };
+
+  try {
+    await initializeEntryContext();
+    const rounds = entryState.rounds || [];
+    if (!rounds.length) {
+      throw new Error("Tournament has no rounds.");
+    }
+    entryState.selectedRoundIndex = activeRoundIndexFromTournament();
+    const { targets, savedByTarget } = roundTargets(entryState.selectedRoundIndex);
+    entryState.currentHoleIndex = nextHoleIndexForGroup(
+      savedByTarget,
+      targets.map((target) => target.id)
+    );
+    await selectRound(entryState.selectedRoundIndex, { jumpToSuggestedHole: false });
+    renderCurrentHole();
+    syncFooterViewportLock();
+    await maybeAutoStartTracking();
+    startAutoRefresh();
+  } catch (error) {
+    console.error(error);
+    if (String(error?.message || "") !== "Player code required" && String(error?.message || "") !== "Invalid player code") {
+      state.locationError = `Could not load map view: ${error.message}`;
+      updateLocationStatus(state.locationError);
+      setScoreStatus(state.locationError, true);
+      if (els.holeEmpty) {
+        els.holeEmpty.style.display = "";
+      }
+    }
+  }
+}
+
+init();

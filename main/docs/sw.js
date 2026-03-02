@@ -1,4 +1,4 @@
-const SW_VERSION = "2026-03-02-v5";
+const SW_VERSION = "2026-03-02-v6";
 const STATIC_CACHE = `golf-static-${SW_VERSION}`;
 const DATA_CACHE = `golf-data-${SW_VERSION}`;
 const SCOPE_PATH = new URL(self.registration.scope).pathname;
@@ -21,6 +21,7 @@ const STATIC_ASSETS = [
   "./edit.js",
   "./enter.js",
   "./scoreboard.js",
+  "./map.js",
   "./hole-map.js",
   "./hole-map-simplified.js",
   "./manifest.webmanifest",

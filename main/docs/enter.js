@@ -1808,16 +1808,20 @@ async function main() {
         holeManuallySet = true;
         renderHoleForm();
       };
-      btnNext.onclick = () => {
-        currentHole = Math.min(17, currentHole + 1);
-        holeManuallySet = true;
-        renderHoleForm();
+      btnNext.onclick = async () => {
+        const result = await doSubmit(false, { quietIfEmpty: true, advanceMode: "sequential" });
+        if (result?.skipped) {
+          currentHole = Math.min(17, currentHole + 1);
+          holeManuallySet = true;
+          renderHoleForm();
+        }
       };
 
-      async function doSubmit(withOverride = false) {
+      async function doSubmit(withOverride = false, { quietIfEmpty = false, advanceMode = "next-unplayed" } = {}) {
         status.textContent = "Submitting…";
         pendingHoleConflict = null;
         conflictBox.style.display = "none";
+        const submittedHoleIndex = currentHole;
 
         const entries = [];
         for (const { targetId, input } of inputs) {
@@ -1826,8 +1830,12 @@ async function main() {
           entries.push({ targetId, strokes: Number(v) });
         }
         if (!entries.length) {
-          status.textContent = "Enter at least one score for this hole.";
-          return;
+          if (!quietIfEmpty) {
+            status.textContent = "Enter at least one score for this hole.";
+          } else {
+            status.textContent = "";
+          }
+          return { skipped: true };
         }
 
         try {
@@ -1837,7 +1845,7 @@ async function main() {
               code,
               roundIndex: r,
               mode: "hole",
-              holeIndex: currentHole,
+              holeIndex: submittedHoleIndex,
               entries,
               override: withOverride,
             },
@@ -1849,7 +1857,7 @@ async function main() {
           // clear drafts ONLY for the targets you actually submitted (for this hole)
           clearHoleDraftTargets(
             r,
-            currentHole,
+            submittedHoleIndex,
             entries.map((e) => e.targetId)
           );
 
@@ -1857,18 +1865,25 @@ async function main() {
           await refreshTournamentJson();
           renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
 
-          // advance to next unplayed hole for group
-          const nowSaved = getSavedForRound();
-          currentHole = nextHoleIndexForGroup(nowSaved.savedByTarget, nowSaved.targetIds);
+          if (advanceMode === "sequential") {
+            currentHole = Math.min(17, submittedHoleIndex + 1);
+            holeManuallySet = true;
+          } else {
+            // advance to next unplayed hole for group
+            const nowSaved = getSavedForRound();
+            currentHole = nextHoleIndexForGroup(nowSaved.savedByTarget, nowSaved.targetIds);
+          }
 
           renderHoleForm();
           renderBulkTable();
+          return { ok: true };
         } catch (err) {
           if (err?.status === 409 && err?.data) {
             showConflict(err.data);
-            return;
+            return { conflict: true };
           }
           status.textContent = `Error: ${err?.message || String(err)}`;
+          return { error: true };
         }
       }
 

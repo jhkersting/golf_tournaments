@@ -17,6 +17,55 @@ function validateCourse(course){
   return null;
 }
 
+function defaultCourse(){
+  return {
+    pars: Array(18).fill(4),
+    strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1)
+  };
+}
+
+function normalizeCourseForState(course){
+  const out = {
+    pars: course.pars.map(Number),
+    strokeIndex: course.strokeIndex.map(Number)
+  };
+  const name = String(course?.name || "").trim();
+  if (name) out.name = name.slice(0, 120);
+  return out;
+}
+
+function normalizeRoundCourseIndex(value, courseCount){
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n >= courseCount) return 0;
+  return n;
+}
+
+function normalizeCoursesFromBody(body){
+  const rawCourses = Array.isArray(body?.courses) ? body.courses : [];
+  if (rawCourses.length > 0){
+    const out = [];
+    for (let idx = 0; idx < rawCourses.length; idx++){
+      const err = validateCourse(rawCourses[idx]);
+      if (err) {
+        const e = new Error(`courses[${idx}]: ${err}`);
+        e.statusCode = 400;
+        throw e;
+      }
+      out.push(normalizeCourseForState(rawCourses[idx]));
+    }
+    return out;
+  }
+
+  const singleCourse = body?.course || defaultCourse();
+  const err = validateCourse(singleCourse);
+  if (err) {
+    const e = new Error(err);
+    e.statusCode = 400;
+    throw e;
+  }
+  return [normalizeCourseForState(singleCourse)];
+}
+
 function normalizeAgg(agg){
   let topX = Number(agg?.topX ?? 4);
   if (!Number.isFinite(topX) || topX <= 0) topX = 4;
@@ -59,10 +108,7 @@ export async function handler(event){
     const name = String(body.name || "").trim() || "Tournament";
     const dates = String(body.dates || "").trim() || "";
     const rounds = Array.isArray(body.rounds) ? body.rounds : [];
-    const course = body.course || { pars: Array(18).fill(4), strokeIndex: Array.from({length:18},(_,i)=>i+1) };
-
-    const courseErr = validateCourse(course);
-    if (courseErr) return json(400, { error: courseErr });
+    const courses = normalizeCoursesFromBody(body);
 
     // Normalize rounds. If no weights are provided, default all rounds to equal weight.
     const baseRounds = rounds.map(r => ({
@@ -70,6 +116,7 @@ export async function handler(event){
       format: normalizeRoundFormat(r?.format),
       weight: normalizeRoundWeight(r?.weight),
       useHandicap: !!r?.useHandicap,
+      courseIndex: normalizeRoundCourseIndex(r?.courseIndex, courses.length),
       teamAggregation: normalizeAgg(r?.teamAggregation)
     }));
     const allMissingWeight = baseRounds.length > 0 && baseRounds.every(r => r.weight == null);
@@ -81,13 +128,6 @@ export async function handler(event){
     const tid = uid("t");
     const editCode = makeEditCode(8);
 
-    const courseName = String(course?.name || "").trim();
-    const normalizedCourse = {
-      pars: course.pars.map(Number),
-      strokeIndex: course.strokeIndex.map(Number)
-    };
-    if (courseName) normalizedCourse.name = courseName.slice(0, 120);
-
     const state = {
       tournament: {
         tournamentId: tid,
@@ -97,11 +137,12 @@ export async function handler(event){
         editCodeHash: hashEditCode(editCode)
       },
       rounds: normRounds,
-      course: normalizedCourse,
+      course: courses[0],
+      courses,
       teams: {},
       players: {},
       codeIndex: {},
-      scores: { rounds: normRounds.map(()=>({ teams:{}, players:{} })) },
+      scores: { rounds: normRounds.map(()=>({ teams:{}, players:{}, groups:{} })) },
       updatedAt: Date.now(),
       version: 1
     };

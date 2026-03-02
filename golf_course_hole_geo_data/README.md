@@ -94,4 +94,4 @@ Files:
 - `courses_map_index.json` (all course folders + map availability status)
 
 
-python3 golf_course_hole_geo_data/fetch_bluegolf_course_data.py   --course-slug sherrillpark2   --data-slug sherrill-park-golf-course-2   --save-course
+python3 golf_course_hole_geo_data/fetch_bluegolf_course_data.py   --course-slug keetonparkgc   --data-slug keeton-park-gc   --save-course

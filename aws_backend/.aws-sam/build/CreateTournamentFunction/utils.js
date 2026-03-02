@@ -250,6 +250,58 @@ function isTeamBestBallFormat(format){
   return fmt === "team_best_ball" || fmt === "team_bestball";
 }
 
+function defaultCourseObject(){
+  return {
+    pars: Array(18).fill(4),
+    strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1)
+  };
+}
+
+function normalizeCourseObject(course){
+  const pars = Array.isArray(course?.pars) ? course.pars.map(Number) : [];
+  const strokeIndex = Array.isArray(course?.strokeIndex) ? course.strokeIndex.map(Number) : [];
+  if (pars.length !== 18 || strokeIndex.length !== 18) return null;
+  if (!pars.every((v) => Number.isFinite(v))) return null;
+  const uniqSi = new Set(strokeIndex);
+  if (uniqSi.size !== 18) return null;
+  if (!strokeIndex.every((v) => Number.isInteger(v) && v >= 1 && v <= 18)) return null;
+  const out = { pars, strokeIndex };
+  const name = String(course?.name || "").trim();
+  if (name) out.name = name.slice(0, 120);
+  return out;
+}
+
+function normalizeRoundCourseIndex(value, courseCount){
+  const n = Number(value);
+  const count = Math.max(1, Number(courseCount) || 1);
+  if (!Number.isInteger(n) || n < 0 || n >= count) return 0;
+  return n;
+}
+
+function normalizeCoursesFromState(state){
+  const fromList = Array.isArray(state?.courses)
+    ? state.courses.map((course) => normalizeCourseObject(course)).filter(Boolean)
+    : [];
+  if (fromList.length) return fromList;
+  const legacy = normalizeCourseObject(state?.course);
+  if (legacy) return [legacy];
+  return [defaultCourseObject()];
+}
+
+function normalizeRoundsWithCourses(roundsIn, courseCount){
+  const rounds = Array.isArray(roundsIn) ? roundsIn : [];
+  return rounds.map((round) => ({
+    ...(round || {}),
+    courseIndex: normalizeRoundCourseIndex(round?.courseIndex, courseCount)
+  }));
+}
+
+function courseForRound(rounds, courses, roundIndex){
+  const defaultCourse = courses[0] || defaultCourseObject();
+  const idx = normalizeRoundCourseIndex(rounds?.[roundIndex]?.courseIndex, courses.length);
+  return courses[idx] || defaultCourse;
+}
+
 function normalizeTwoManGroupLabel(value){
   const raw = String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
   return raw.slice(0, 16);
@@ -423,8 +475,9 @@ export async function appendEvent(tid, payload){
 export function materializePublicFromState(state){
   // Build a single tournament JSON with score_data and leaderboards.
   const t = state.tournament;
-  const rounds = state.rounds || [];
-  const course = state.course || { pars: Array(18).fill(4), strokeIndex: Array.from({length:18},(_,i)=>i+1) };
+  const courses = normalizeCoursesFromState(state);
+  const rounds = normalizeRoundsWithCourses(state.rounds || [], courses.length);
+  const course = courses[0] || defaultCourseObject();
   const teams = state.teams || {};
   const players = state.players || {};
   const scores = state.scores || { rounds: [] };
@@ -438,6 +491,7 @@ export function materializePublicFromState(state){
   // Precompute per-round derived
   for (let r=0;r<rounds.length;r++){
     const round = rounds[r] || {};
+    const roundCourse = courseForRound(rounds, courses, r);
     const isScramble = round.format === "scramble";
     const isTwoMan = isTwoManFormat(round.format);
     const isTeamBestBall = isTeamBestBallFormat(round.format);
@@ -458,11 +512,11 @@ export function materializePublicFromState(state){
       for (const pid of Object.keys(players)){
         const gross = (roundScores.players?.[pid]?.holes || Array(18).fill(null)).map(v => (v === 0 ? null : v));
         const hcp = Number(players[pid]?.handicap || 0);
-        const shots = useHandicap ? strokesPerHole(hcp, course.strokeIndex) : Array(18).fill(0);
+        const shots = useHandicap ? strokesPerHole(hcp, roundCourse.strokeIndex) : Array(18).fill(0);
         const net = gross.map((v,i)=> v==null ? null : (Number(v) - Number(shots[i]||0)));
-        const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(course.pars[i]||0)));
-        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(course.pars[i]||0)));
-        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(course.pars[i]||0)),0);
+        const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i]||0)));
+        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i]||0)));
+        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(roundCourse.pars[i]||0)),0);
         const grossTotal = sumPlayed(gross);
         const netTotal = sumPlayed(net);
         const thru = thruFromHoles(gross);
@@ -493,11 +547,11 @@ export function materializePublicFromState(state){
         const gross = (roundScores.teams?.[tid2]?.holes || Array(18).fill(null)).map(v => (v === 0 ? null : v));
         const teamPlayers = playersByTeam.get(tid2) || [];
         const teamHcp = useHandicap ? scrambleTeamHandicap(teamPlayers) : 0;
-        const shots = useHandicap ? strokesPerHole(teamHcp, course.strokeIndex) : Array(18).fill(0);
+        const shots = useHandicap ? strokesPerHole(teamHcp, roundCourse.strokeIndex) : Array(18).fill(0);
         const net = gross.map((v,i)=> v==null ? null : (Number(v) - Number(shots[i]||0)));
-        const grossToPar = gross.map((v,i)=> v==null?null:(Number(v)-Number(course.pars[i]||0)));
-        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(course.pars[i]||0)));
-        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(course.pars[i]||0)),0);
+        const grossToPar = gross.map((v,i)=> v==null?null:(Number(v)-Number(roundCourse.pars[i]||0)));
+        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i]||0)));
+        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(roundCourse.pars[i]||0)),0);
         const grossTotal = sumPlayed(gross);
         const netTotal = sumPlayed(net);
         const thru = thruFromHoles(gross);
@@ -558,13 +612,13 @@ export function materializePublicFromState(state){
           const grossRaw = (roundScores.groups?.[groupId]?.holes || Array(18).fill(null)).map(v => (v === 0 ? null : v));
           const gPlayers = groups[key] || [];
           const gHcp = useHandicap ? scrambleTeamHandicap(gPlayers) : 0;
-          const shots = useHandicap ? strokesPerHole(gHcp, course.strokeIndex) : Array(18).fill(0);
+          const shots = useHandicap ? strokesPerHole(gHcp, roundCourse.strokeIndex) : Array(18).fill(0);
           const netRaw = grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(shots[i] || 0)));
           groupGross[key] = grossRaw;
           groupNet[key] = netRaw;
           groupShots[key] = shots;
 
-          const parPlayedGroup = grossRaw.reduce((acc, v, i) => acc + (v == null ? 0 : Number(course.pars[i] || 0)), 0);
+          const parPlayedGroup = grossRaw.reduce((acc, v, i) => acc + (v == null ? 0 : Number(roundCourse.pars[i] || 0)), 0);
           const grossTotalGroup = sumPlayed(grossRaw);
           const netTotalGroup = sumPlayed(netRaw);
           const grossToParTotalGroup = grossTotalGroup - parPlayedGroup;
@@ -575,8 +629,8 @@ export function materializePublicFromState(state){
             outRound.player[p.playerId] = {
               gross: grossRaw.slice(),
               net: netRaw.slice(),
-              grossToPar: grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(course.pars[i] || 0))),
-              netToPar: netRaw.map((v, i) => (v == null ? null : Number(v) - Number(course.pars[i] || 0))),
+              grossToPar: grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(roundCourse.pars[i] || 0))),
+              netToPar: netRaw.map((v, i) => (v == null ? null : Number(v) - Number(roundCourse.pars[i] || 0))),
               handicapShots: shots.slice(),
               grossTotal: grossTotalGroup,
               netTotal: netTotalGroup,
@@ -606,9 +660,9 @@ export function materializePublicFromState(state){
           if (allNet) net[i] = netSum;
         }
 
-        const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(course.pars[i] || 0)));
-        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(course.pars[i] || 0)));
-        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(course.pars[i] || 0)),0);
+        const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i] || 0)));
+        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i] || 0)));
+        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(roundCourse.pars[i] || 0)),0);
         const grossTotal = sumPlayed(gross);
         const netTotal = sumPlayed(net);
         const thru = thruFromHoles(gross);
@@ -672,7 +726,7 @@ export function materializePublicFromState(state){
           if (grossAgg != null) gross[i] = grossAgg;
           if (netAgg != null) net[i] = netAgg;
 
-          const parBase = Number(course.pars[i] || 0) * take.length;
+          const parBase = Number(roundCourse.pars[i] || 0) * take.length;
           if (grossAgg != null) grossToPar[i] = grossAgg - parBase;
           if (netAgg != null) netToPar[i] = netAgg - parBase;
         }
@@ -822,6 +876,7 @@ export function materializePublicFromState(state){
 
   for (let r=0;r<rounds.length;r++){
     const round = rounds[r] || {};
+    const roundCourse = courseForRound(rounds, courses, r);
     const weight = normalizedWeights[r] ?? 1;
     const isScramble = round.format === "scramble";
     const isTwoMan = isTwoManFormat(round.format);
@@ -881,7 +936,7 @@ export function materializePublicFromState(state){
           if (!Number.isFinite(thru) || thru <= 0) return null;
 
           const parPlayed = gross.reduce((acc, v, i) => {
-            return acc + (v == null ? 0 : Number(course.pars[i] || 0));
+            return acc + (v == null ? 0 : Number(roundCourse.pars[i] || 0));
           }, 0);
           const strokes = useHandicap ? sumPlayed(net) : sumPlayed(gross);
           return { strokes, par: parPlayed };
@@ -961,6 +1016,7 @@ export function materializePublicFromState(state){
   return {
     tournament: { tournamentId: t.tournamentId, name: t.name, dates: t.dates, rounds },
     course,
+    courses,
     teams: publicTeams,
     players: Object.keys(players).map(id => ({
       ...(function(){
@@ -1002,8 +1058,11 @@ export async function writePublicObjectsFromState(state){
 
   // Write enter JSON per player code (contains only this player + team + rounds + course + saved holes)
   const teamsMap = state.teams || {};
-  const rounds = state.rounds || [];
-  const course = state.course || { pars: Array(18).fill(4), strokeIndex: Array.from({length:18},(_,i)=>i+1) };
+  const rounds = tournamentJson?.tournament?.rounds || [];
+  const courses = Array.isArray(tournamentJson?.courses) && tournamentJson.courses.length
+    ? tournamentJson.courses
+    : [tournamentJson?.course || defaultCourseObject()];
+  const course = courses[0] || defaultCourseObject();
   const scores = state.scores || { rounds: [] };
 
   for (const pid of Object.keys(state.players || {})){
@@ -1044,6 +1103,7 @@ export async function writePublicObjectsFromState(state){
       tournament: { name: state.tournament.name, dates: state.tournament.dates },
       rounds,
       course,
+      courses,
       player: {
         playerId: pid,
         name: p.name,
