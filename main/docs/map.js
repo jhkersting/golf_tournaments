@@ -75,6 +75,9 @@ const state = {
   renderNonce: 0,
   tileImageCache: new Map(),
   userZoomMultiplier: 1,
+  userPanX: 0,
+  userPanY: 0,
+  lastProjectionInput: null,
 };
 
 const entryState = {
@@ -122,6 +125,13 @@ let pinchZoomActive = false;
 let pinchZoomStartDistance = 0;
 let pinchZoomStartValue = 1;
 let pinchZoomLastEndedAtMs = 0;
+let pinchZoomStartPanX = 0;
+let pinchZoomStartPanY = 0;
+let pinchZoomStartCenter = null;
+let pinchZoomAnchorMapPoint = null;
+let panTouchActive = false;
+let panTouchLastPoint = null;
+let mapGestureLastMovedAtMs = 0;
 const SCORE_NOTIFIER_SHOW_MS = 2300;
 const SCORE_NOTIFIER_GAP_MS = 200;
 const TICKER_SPEED_PX_PER_SEC = 52;
@@ -381,7 +391,9 @@ function createAlignedProjector(
   width,
   height,
   padding,
-  zoomMultiplier = 1
+  zoomMultiplier = 1,
+  panOffsetX = 0,
+  panOffsetY = 0
 ) {
   const allPoints = [];
   for (const feature of features) collectPositions(feature?.geometry, allPoints);
@@ -450,8 +462,8 @@ function createAlignedProjector(
     const lx = Number(mx) - centerX;
     const ly = Number(my) - centerY;
     const [rx, ry] = rotate([lx, ly]);
-    const x = offsetX + (rx - minX) * scale;
-    const y = height - (offsetY + (ry - minY) * scale);
+    const x = offsetX + (rx - minX) * scale + panOffsetX;
+    const y = height - (offsetY + (ry - minY) * scale) + panOffsetY;
     return [x, y];
   };
 
@@ -465,8 +477,8 @@ function createAlignedProjector(
     const [x, y] = screenPoint;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
-    const rx = (x - offsetX) / scale + minX;
-    const ry = (height - y - offsetY) / scale + minY;
+    const rx = (x - panOffsetX - offsetX) / scale + minX;
+    const ry = (height - (y - panOffsetY) - offsetY) / scale + minY;
     const lx = rx * cosA + ry * sinA;
     const ly = -rx * sinA + ry * cosA;
     const mx = lx + centerX;
@@ -880,10 +892,32 @@ function clampUserZoom(value) {
   return Math.max(USER_ZOOM_MIN, Math.min(USER_ZOOM_MAX, parsed));
 }
 
+function projectionForGesture(userZoom, panX, panY) {
+  const input = state.lastProjectionInput;
+  if (!input) return null;
+  const finalZoom = Number(input.autoZoomMultiplier || 1) * clampUserZoom(userZoom);
+  return createAlignedProjector(
+    input.features,
+    input.extraPoints,
+    input.alignmentStart,
+    input.alignmentEnd,
+    input.width,
+    input.height,
+    input.margin,
+    finalZoom,
+    panX,
+    panY
+  );
+}
+
 function setUserZoom(value, { rerender = true } = {}) {
   const next = clampUserZoom(value);
   if (Math.abs(next - state.userZoomMultiplier) < 1e-6) return;
   state.userZoomMultiplier = next;
+  if (next <= USER_ZOOM_MIN + 1e-6) {
+    state.userPanX = 0;
+    state.userPanY = 0;
+  }
   if (rerender) renderCurrentHole();
 }
 
@@ -1136,13 +1170,16 @@ function isLocationOutlier(candidateFix) {
 }
 
 function canvasPointFromEvent(event) {
+  const point = event?.changedTouches?.[0] || event?.touches?.[0] || event;
+  return canvasPointFromClient(point?.clientX, point?.clientY);
+}
+
+function canvasPointFromClient(rawClientX, rawClientY) {
   if (!els.holeCanvas) return null;
   const rect = els.holeCanvas.getBoundingClientRect();
   if (!rect.width || !rect.height) return null;
-
-  const point = event?.changedTouches?.[0] || event?.touches?.[0] || event;
-  const clientX = Number(point?.clientX);
-  const clientY = Number(point?.clientY);
+  const clientX = Number(rawClientX);
+  const clientY = Number(rawClientY);
   if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
 
   const logicalWidth = Number(state.lastCanvasLogicalSize?.width) || els.holeCanvas.width;
@@ -1164,29 +1201,101 @@ function touchDistance(touchA, touchB) {
 function beginPinchZoom(touchA, touchB) {
   const distance = touchDistance(touchA, touchB);
   if (!Number.isFinite(distance) || distance < 8) return false;
+  const center = canvasPointFromClient(
+    (Number(touchA?.clientX) + Number(touchB?.clientX)) / 2,
+    (Number(touchA?.clientY) + Number(touchB?.clientY)) / 2
+  );
   pinchZoomActive = true;
   pinchZoomStartDistance = distance;
   pinchZoomStartValue = clampUserZoom(state.userZoomMultiplier);
+  pinchZoomStartPanX = Number(state.userPanX) || 0;
+  pinchZoomStartPanY = Number(state.userPanY) || 0;
+  pinchZoomStartCenter = center;
+  pinchZoomAnchorMapPoint =
+    Array.isArray(center) && state.lastProjection?.unproject
+      ? state.lastProjection.unproject(center)
+      : null;
+  panTouchActive = false;
+  panTouchLastPoint = null;
   return true;
 }
 
 function handleCanvasTouchStart(event) {
-  if ((event?.touches?.length || 0) < 2) return;
-  if (beginPinchZoom(event.touches[0], event.touches[1])) {
-    event.preventDefault();
+  const touches = event?.touches || [];
+  if (touches.length >= 2) {
+    if (beginPinchZoom(touches[0], touches[1])) {
+      event.preventDefault();
+    }
+    return;
   }
+  if (touches.length === 1 && clampUserZoom(state.userZoomMultiplier) > USER_ZOOM_MIN + 1e-6) {
+    panTouchActive = true;
+    panTouchLastPoint = canvasPointFromClient(touches[0]?.clientX, touches[0]?.clientY);
+  } else {
+    panTouchActive = false;
+    panTouchLastPoint = null;
+  }
+}
+
+function handlePanTouchMove(event) {
+  const touches = event?.touches || [];
+  if (!panTouchActive || touches.length !== 1) return false;
+  const current = canvasPointFromClient(touches[0]?.clientX, touches[0]?.clientY);
+  if (!Array.isArray(current) || !Array.isArray(panTouchLastPoint)) return false;
+  const dx = current[0] - panTouchLastPoint[0];
+  const dy = current[1] - panTouchLastPoint[1];
+  panTouchLastPoint = current;
+  if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) return true;
+  state.userPanX = (Number(state.userPanX) || 0) + dx;
+  state.userPanY = (Number(state.userPanY) || 0) + dy;
+  mapGestureLastMovedAtMs = Date.now();
+  renderCurrentHole();
+  return true;
 }
 
 function handleCanvasTouchMove(event) {
   const touches = event?.touches || [];
-  if (touches.length < 2) return;
-  if (!pinchZoomActive && !beginPinchZoom(touches[0], touches[1])) return;
+  if (touches.length >= 2) {
+    if (!pinchZoomActive && !beginPinchZoom(touches[0], touches[1])) return;
+    const distance = touchDistance(touches[0], touches[1]);
+    if (!Number.isFinite(distance) || distance <= 0 || pinchZoomStartDistance <= 0) return;
+    const center = canvasPointFromClient(
+      (Number(touches[0]?.clientX) + Number(touches[1]?.clientX)) / 2,
+      (Number(touches[0]?.clientY) + Number(touches[1]?.clientY)) / 2
+    );
+    const ratio = distance / pinchZoomStartDistance;
+    const nextZoom = clampUserZoom(pinchZoomStartValue * ratio);
+    let panX = pinchZoomStartPanX;
+    let panY = pinchZoomStartPanY;
+    if (Array.isArray(center) && Array.isArray(pinchZoomStartCenter)) {
+      panX += center[0] - pinchZoomStartCenter[0];
+      panY += center[1] - pinchZoomStartCenter[1];
+    }
 
-  const distance = touchDistance(touches[0], touches[1]);
-  if (!Number.isFinite(distance) || distance <= 0 || pinchZoomStartDistance <= 0) return;
-  event.preventDefault();
-  const ratio = distance / pinchZoomStartDistance;
-  setUserZoom(pinchZoomStartValue * ratio);
+    if (Array.isArray(center) && Array.isArray(pinchZoomAnchorMapPoint)) {
+      const candidate = projectionForGesture(nextZoom, panX, panY);
+      if (candidate?.project) {
+        const projected = candidate.project(pinchZoomAnchorMapPoint);
+        if (Array.isArray(projected)) {
+          panX += center[0] - projected[0];
+          panY += center[1] - projected[1];
+        }
+      }
+    }
+
+    state.userZoomMultiplier = nextZoom;
+    state.userPanX = panX;
+    state.userPanY = panY;
+    mapGestureLastMovedAtMs = Date.now();
+    event.preventDefault();
+    renderCurrentHole();
+    return;
+  }
+
+  if (handlePanTouchMove(event)) {
+    event.preventDefault();
+    return;
+  }
 }
 
 function finishPinchZoom() {
@@ -1194,6 +1303,10 @@ function finishPinchZoom() {
   pinchZoomActive = false;
   pinchZoomStartDistance = 0;
   pinchZoomStartValue = clampUserZoom(state.userZoomMultiplier);
+  pinchZoomStartPanX = Number(state.userPanX) || 0;
+  pinchZoomStartPanY = Number(state.userPanY) || 0;
+  pinchZoomStartCenter = null;
+  pinchZoomAnchorMapPoint = null;
   pinchZoomLastEndedAtMs = Date.now();
 }
 
@@ -1201,17 +1314,30 @@ function handleCanvasTouchEnd(event) {
   const touches = event?.touches || [];
   if (touches.length >= 2) {
     beginPinchZoom(touches[0], touches[1]);
+    panTouchActive = false;
+    panTouchLastPoint = null;
     return;
   }
+  if (touches.length === 1 && clampUserZoom(state.userZoomMultiplier) > USER_ZOOM_MIN + 1e-6) {
+    panTouchActive = true;
+    panTouchLastPoint = canvasPointFromClient(touches[0]?.clientX, touches[0]?.clientY);
+    return;
+  }
+  panTouchActive = false;
+  panTouchLastPoint = null;
   finishPinchZoom();
 }
 
 function handleCanvasTouchCancel() {
+  panTouchActive = false;
+  panTouchLastPoint = null;
   finishPinchZoom();
 }
 
 function handleHoleTap(event) {
   if (pinchZoomActive) return;
+  if (panTouchActive) return;
+  if (Date.now() - mapGestureLastMovedAtMs < 250) return;
   if (Date.now() - pinchZoomLastEndedAtMs < 300) return;
   if (!state.lastProjection?.unproject) return;
   const canvasPoint = canvasPointFromEvent(event);
@@ -1607,6 +1733,7 @@ async function renderCurrentHole() {
   const hasHoleFeatures = usingFullMode ? features.length > 0 : !!holeData;
   if (!hasHoleFeatures || !greenTargets.center) {
     state.lastProjection = null;
+    state.lastProjectionInput = null;
     els.holeEmpty.style.display = "";
     return;
   }
@@ -1678,20 +1805,33 @@ async function renderCurrentHole() {
   ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-
-  const projection = createAlignedProjector(
-    usingFullMode ? features : [],
+  state.lastProjectionInput = {
+    features: usingFullMode ? features : [],
     extraPoints,
     alignmentStart,
     alignmentEnd,
     width,
     height,
     margin,
-    finalZoomMultiplier
+    autoZoomMultiplier: proximityZoomMultiplier,
+  };
+
+  const projection = createAlignedProjector(
+    state.lastProjectionInput.features,
+    extraPoints,
+    alignmentStart,
+    alignmentEnd,
+    width,
+    height,
+    margin,
+    finalZoomMultiplier,
+    state.userPanX,
+    state.userPanY
   );
 
   if (!projection) {
     state.lastProjection = null;
+    state.lastProjectionInput = null;
     els.holeEmpty.style.display = "";
     return;
   }
@@ -1832,6 +1972,8 @@ function setHole(holeNumber, { syncEntry = true } = {}) {
   clearTapPreviewTimer();
   state.currentHole = holeNumber;
   state.tapPoint = null;
+  state.userPanX = 0;
+  state.userPanY = 0;
   if (syncEntry) {
     entryState.currentHoleIndex = holeIndexFromNumber(holeNumber);
     renderScoreRows();
@@ -2058,14 +2200,28 @@ function twoManGroupId(teamId, label) {
   return `${team}::${g}`;
 }
 
+function normalizeTwoManFormat(format) {
+  const fmt = String(format || "").trim().toLowerCase();
+  if (fmt === "two_man") return "two_man_scramble";
+  if (fmt === "two_man_scramble" || fmt === "two_man_shamble" || fmt === "two_man_best_ball") return fmt;
+  return "";
+}
+
+function normalizeTeeValue(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function teeTimeForPlayerRound(player, roundIndex) {
   if (!player || roundIndex < 0) return "";
   if (Array.isArray(player.teeTimes)) {
-    const v = String(player.teeTimes[roundIndex] || "").trim().toLowerCase();
+    const v = normalizeTeeValue(player.teeTimes[roundIndex]);
     if (v) return v;
   }
   if (roundIndex === 0) {
-    const fallback = String(player.teeTime || "").trim().toLowerCase();
+    const fallback = normalizeTeeValue(player.teeTime);
     if (fallback) return fallback;
   }
   return "";
@@ -2629,7 +2785,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   const isSingleRoundTournament = rounds.length === 1;
   const roundFormat = String(roundCfg.format || "").toLowerCase();
   const isScrambleRound = roundFormat === "scramble";
-  const isTwoManRound = roundFormat === "two_man" || roundFormat === "two_man_best_ball";
+  const isTwoManRound = !!normalizeTwoManFormat(roundFormat);
   const showIndividualGross = !isScrambleRound;
   const showIndividualNet = !!roundCfg.useHandicap && !isScrambleRound;
   const pars = courseParsForRound(tjson, safeRound);
@@ -3177,7 +3333,7 @@ function roundModeForIndex(roundIndex) {
   const roundCfg = entryState.rounds?.[roundIndex] || {};
   const fmt = String(roundCfg?.format || "singles").toLowerCase();
   if (fmt === "scramble") return "team";
-  if (fmt === "two_man" || fmt === "two_man_best_ball") return "group";
+  if (normalizeTwoManFormat(fmt) === "two_man_scramble") return "group";
   return "player";
 }
 
@@ -3348,7 +3504,7 @@ function renderScoreRows() {
   const modeText = mode === "team"
     ? "Scramble round"
     : mode === "group"
-      ? "Two-man round"
+      ? "Two-man scramble"
       : "Showing your tee-time players";
   const summary = document.createElement("div");
   summary.className = "small";

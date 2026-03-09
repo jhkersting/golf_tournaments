@@ -52,6 +52,13 @@ function groupId(teamId, groupLabel){
   return `${team}::${label}`;
 }
 
+function normalizeTwoManFormat(format){
+  const fmt = String(format || "").trim().toLowerCase();
+  if (fmt === "two_man") return "two_man_scramble";
+  if (fmt === "two_man_scramble" || fmt === "two_man_shamble" || fmt === "two_man_best_ball") return fmt;
+  return "";
+}
+
 export async function handler(event){
   try{
     const tid = event.pathParameters?.tid;
@@ -115,8 +122,8 @@ export async function handler(event){
         const round = rounds[roundIndex] || {};
         const format = String(round.format || "").toLowerCase();
         const isScramble = format === "scramble";
-        const isTwoMan = format === "two_man" || format === "two_man_best_ball";
-        const targetType = isScramble ? "team" : isTwoMan ? "group" : "player";
+        const twoManFormat = normalizeTwoManFormat(format);
+        const targetType = isScramble ? "team" : twoManFormat === "two_man_scramble" ? "group" : "player";
         const players = current.players || {};
         const actorTee = teeValueForRound(actorPlayer, roundIndex);
         const allowedPlayerIds = new Set([actorPlayerId]);
@@ -127,7 +134,7 @@ export async function handler(event){
           }
         }
         const allowedGroupIds = new Set();
-        if (isTwoMan){
+        if (targetType === "group"){
           for (const pid of allowedPlayerIds){
             const p = players[pid];
             const gid = groupId(p?.teamId, playerGroupForRound(p, roundIndex));
@@ -137,7 +144,7 @@ export async function handler(event){
 
         function assertPlayerTargetAllowed(pid){
           if (isScramble) return;
-          if (isTwoMan) return;
+          if (targetType === "group") return;
           if (allowedPlayerIds.has(pid)) return;
           const err = new Error("You can only enter scores for players on your tee time in this round");
           err.statusCode = 403;
@@ -145,7 +152,7 @@ export async function handler(event){
         }
 
         function assertGroupTargetAllowed(gid){
-          if (!isTwoMan) return;
+          if (targetType !== "group") return;
           if (allowedGroupIds.has(gid)) return;
           const err = new Error("You can only enter scores for groups on your tee time in this round");
           err.statusCode = 403;

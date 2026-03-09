@@ -175,7 +175,7 @@ function normalizedGroups(raw, roundCount, fallback = null) {
 function isTwoManTournament(rounds) {
   return Array.isArray(rounds) && rounds.some((r) => {
     const fmt = String(r?.format || "").toLowerCase();
-    return fmt === "two_man" || fmt === "two_man_best_ball";
+    return fmt === "two_man" || fmt === "two_man_scramble" || fmt === "two_man_shamble" || fmt === "two_man_best_ball";
   });
 }
 

@@ -117,6 +117,21 @@ function twoManGroupId(teamId, label) {
   return `${team}::${g}`;
 }
 
+function normalizeTwoManFormat(format) {
+  const fmt = String(format || "").trim().toLowerCase();
+  if (fmt === "two_man") return "two_man_scramble";
+  if (fmt === "two_man_scramble" || fmt === "two_man_shamble" || fmt === "two_man_best_ball") return fmt;
+  return "";
+}
+
+function formatLabel(format) {
+  const normalized = normalizeTwoManFormat(format) || String(format || "").trim().toLowerCase();
+  if (normalized === "two_man_scramble") return "two man scramble";
+  if (normalized === "two_man_shamble") return "two man shamble";
+  if (normalized === "two_man_best_ball") return "two man best ball";
+  return normalized || "singles";
+}
+
 function parseTwoManGroupId(groupId) {
   const s = String(groupId || "").trim();
   const idx = s.indexOf("::");
@@ -772,7 +787,7 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
   const isSingleRoundTournament = rounds.length === 1;
   const roundFormat = String(roundCfg.format || "").toLowerCase();
   const isScrambleRound = roundFormat === "scramble";
-  const isTwoManRound = roundFormat === "two_man" || roundFormat === "two_man_best_ball";
+  const isTwoManRound = !!normalizeTwoManFormat(roundFormat);
   const showIndividualGross = !isScrambleRound;
   const showIndividualNet =
     !!roundCfg.useHandicap && !isScrambleRound;
@@ -1161,10 +1176,9 @@ async function main() {
   // Tournament public JSON (single file)
   const tjson = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, { cacheKey: `t:${tid}` });
   setHeaderTournamentName(tjson?.tournament?.name);
-  const hasTwoManBestBallTournament = (tjson?.tournament?.rounds || []).some(
+  const hasTwoManTournament = (tjson?.tournament?.rounds || []).some(
     (round) => {
-      const fmt = String(round?.format || "").toLowerCase();
-      return fmt === "two_man" || fmt === "two_man_best_ball";
+      return !!normalizeTwoManFormat(round?.format);
     }
   );
   const teeRoundCount = (tjson?.tournament?.rounds || []).length;
@@ -1341,15 +1355,16 @@ async function main() {
   for (let r = 0; r < rounds.length; r++) {
     const round = rounds[r] || {};
     const fmt = String(round.format || "singles").toLowerCase();
-    const fmtLabel = (fmt === "two_man" || fmt === "two_man_best_ball") ? "two man" : fmt;
+    const twoManFormat = normalizeTwoManFormat(fmt);
+    const fmtLabel = formatLabel(fmt);
     const isScramble = fmt === "scramble";
-    const isTwoManBestBall = fmt === "two_man" || fmt === "two_man_best_ball";
+    const isTwoManGroupRound = twoManFormat === "two_man_scramble";
     const canGroup = !isScramble;
     const allowedRoundPlayerIds = canGroup ? allowedPlayerIdsForRound(r) : [];
     const allowedRoundPlayerSet = new Set(allowedRoundPlayerIds);
     const allowedRoundGroups = [];
     const allowedRoundGroupById = {};
-    if (isTwoManBestBall) {
+    if (isTwoManGroupRound) {
       const seen = new Set();
       for (const pid of allowedRoundPlayerIds) {
         const p = playersById[pid];
@@ -1422,8 +1437,8 @@ async function main() {
       ? loadGroup(
         tid,
         r,
-        isTwoManBestBall ? allowedRoundGroupById : playersById,
-        isTwoManBestBall
+        isTwoManGroupRound ? allowedRoundGroupById : playersById,
+        isTwoManGroupRound
           ? allowedRoundGroups.map((g) => g.groupId)
           : allowedRoundPlayerIds.length
             ? allowedRoundPlayerIds
@@ -1431,7 +1446,7 @@ async function main() {
       )
       : [];
     if (canGroup) {
-      if (isTwoManBestBall) {
+      if (isTwoManGroupRound) {
         const allowedGroupSet = new Set(allowedRoundGroups.map((g) => g.groupId));
         groupIds = groupIds.filter((id) => allowedGroupSet.has(id));
         if (!groupIds.length) {
@@ -1474,12 +1489,12 @@ async function main() {
     if (canGroup) {
       const pickerTop = el("div", { style: "display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:6px;" });
       pickerTop.appendChild(el("b", {}, "Playing with:"));
-      if ((isTwoManBestBall ? allowedRoundGroups.length : allowedRoundPlayerIds.length) <= 1) {
+      if ((isTwoManGroupRound ? allowedRoundGroups.length : allowedRoundPlayerIds.length) <= 1) {
         pickerTop.appendChild(
           el(
             "span",
             { class: "small" },
-            isTwoManBestBall ? "Only your group is on this tee time." : "Only your code can enter this tee time."
+            isTwoManGroupRound ? "Only your pair is on this tee time." : "Only your code can enter this tee time."
           )
         );
       }
@@ -1498,7 +1513,7 @@ async function main() {
 
       const btnMeTeam = el("button", { class: "secondary", type: "button" }, "My team");
       btnMeTeam.onclick = () => {
-        if (isTwoManBestBall) {
+        if (isTwoManGroupRound) {
           const myGroup = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], r));
           groupIds = myGroup ? [myGroup] : [];
         } else {
@@ -1510,11 +1525,11 @@ async function main() {
         renderBulkTable();
       };
 
-      btnMeTeam.textContent = isTwoManBestBall ? "My group" : "My tee time";
+      btnMeTeam.textContent = isTwoManGroupRound ? "My pair" : "My tee time";
 
       const btnAll = el("button", { class: "secondary", type: "button" }, "All on tee time");
       btnAll.onclick = () => {
-        groupIds = isTwoManBestBall
+        groupIds = isTwoManGroupRound
           ? allowedRoundGroups.map((g) => g.groupId)
           : allowedRoundPlayerIds.slice();
         saveGroup(tid, r, groupIds);
@@ -1527,13 +1542,13 @@ async function main() {
       pickerTop.appendChild(btnAll);
       groupPicker.appendChild(pickerTop);
 
-      const listItems = isTwoManBestBall
+      const listItems = isTwoManGroupRound
         ? allowedRoundGroups.map((g) => ({ id: g.groupId, text: `${g.displayName} (${g.names.join(", ") || "—"})` }))
         : allowedRoundPlayerIds
           .map((id) => {
             const p = playersById[id];
             if (!p) return null;
-            const groupLabel = hasTwoManBestBallTournament ? groupLabelForPlayer({ ...p, group: groupForPlayerRound(p, r) }) : "";
+            const groupLabel = hasTwoManTournament ? groupLabelForPlayer({ ...p, group: groupForPlayerRound(p, r) }) : "";
             const groupText = groupLabel ? ` ${groupLabel}` : "";
             return { id, text: `${p.name}${groupText}${p.teamId ? ` (${p.teamId})` : ""}` };
           })
@@ -1552,7 +1567,7 @@ async function main() {
           } else {
             groupIds = groupIds.filter((x) => x !== id);
           }
-          if (!isTwoManBestBall && !groupIds.includes(myId) && myId && allowedRoundPlayerSet.has(myId)) {
+          if (!isTwoManGroupRound && !groupIds.includes(myId) && myId && allowedRoundPlayerSet.has(myId)) {
             groupIds.unshift(myId);
           }
           saveGroup(tid, r, groupIds);
@@ -1577,7 +1592,7 @@ async function main() {
         const teamEntry = sd.team?.[teamId];
         const gross = (teamEntry?.gross || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
         return { type: "team", savedByTarget: { [teamId]: gross }, targetIds: [teamId] };
-      } else if (isTwoManBestBall) {
+      } else if (isTwoManGroupRound) {
         const savedByTarget = {};
         for (const [teamId, teamEntry] of Object.entries(sd.team || {})) {
           const groups = teamEntry?.groups || {};
@@ -1797,7 +1812,7 @@ async function main() {
             el(
               "div",
               { style: "min-width:0;" },
-              `<b>${p.name}</b> <span class="small">${hasTwoManBestBallTournament && groupForPlayerRound(p, r) ? `(Group ${groupForPlayerRound(p, r)}) ` : ""}${p.handicap != null ? `(hcp ${p.handicap})` : ""}</span><br/><span class="small">Existing: ${existing == null ? "—" : existing
+              `<b>${p.name}</b> <span class="small">${hasTwoManTournament && groupForPlayerRound(p, r) ? `(Group ${groupForPlayerRound(p, r)}) ` : ""}${p.handicap != null ? `(hcp ${p.handicap})` : ""}</span><br/><span class="small">Existing: ${existing == null ? "—" : existing
               }</span>`
             )
           );
@@ -1955,8 +1970,10 @@ async function main() {
       const typeInfoText = type === "team"
         ? "Scramble round: enter one team score per hole."
         : type === "group"
-          ? "Two man round: enter one group score per hole."
-          : "Player-based round: enter one score per player per hole.";
+          ? "Two man scramble: enter one pair score per hole."
+          : twoManFormat
+            ? `${fmtLabel}: enter player scores and the pair/team totals are derived automatically.`
+            : "Player-based round: enter one score per player per hole.";
 
       const info = el(
         "div",
@@ -1990,7 +2007,7 @@ async function main() {
           ? ""
           : type === "group"
             ? ((meta?.names || []).join(", "))
-              : hasTwoManBestBallTournament
+              : hasTwoManTournament
               ? (groupForPlayerRound(playersById[id], r) ? `Group ${groupForPlayerRound(playersById[id], r)}` : "")
               : "";
         const teamId = type === "team" ? id : type === "group" ? meta?.teamId : playersById[id]?.teamId;

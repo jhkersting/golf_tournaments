@@ -65,7 +65,9 @@ let savedCourses = [];
 const ROUND_FORMATS = [
   { value: "scramble", label: "scramble" },
   { value: "team_best_ball", label: "team best ball" },
-  { value: "two_man", label: "two man" },
+  { value: "two_man_scramble", label: "two man scramble" },
+  { value: "two_man_shamble", label: "two man shamble" },
+  { value: "two_man_best_ball", label: "two man best ball" },
   { value: "shamble", label: "shamble" },
   { value: "singles", label: "singles" }
 ];
@@ -152,9 +154,17 @@ function scoreRoundFormat(round) {
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
-  if (raw === "two_man_best_ball") return "two_man";
+  if (raw === "two_man") return "two_man_scramble";
   if (raw === "team_bestball") return "team_best_ball";
-  if (raw === "scramble" || raw === "team_best_ball" || raw === "two_man" || raw === "shamble" || raw === "singles") {
+  if (
+    raw === "scramble" ||
+    raw === "team_best_ball" ||
+    raw === "two_man_scramble" ||
+    raw === "two_man_shamble" ||
+    raw === "two_man_best_ball" ||
+    raw === "shamble" ||
+    raw === "singles"
+  ) {
     return raw;
   }
   return "singles";
@@ -163,7 +173,7 @@ function scoreRoundFormat(round) {
 function scoreTargetTypeForRound(round) {
   const fmt = scoreRoundFormat(round);
   if (fmt === "scramble") return "team";
-  if (fmt === "two_man") return "group";
+  if (fmt === "two_man_scramble") return "group";
   return "player";
 }
 
@@ -799,7 +809,7 @@ function renderRounds(rounds) {
   roundRows.innerHTML = "";
   rows.forEach((round) => {
     const currentFmtRaw = String(round?.format || "").toLowerCase();
-    const currentFmt = currentFmtRaw === "two_man_best_ball" ? "two_man" : currentFmtRaw;
+    const currentFmt = currentFmtRaw === "two_man" ? "two_man_scramble" : currentFmtRaw;
     const fallbackCourseIdx = Number.isInteger(Number(round?.courseIndex)) ? Number(round.courseIndex) : 0;
     const currentCourseRef = String(round?.courseRef || `tournament:${Math.max(0, fallbackCourseIdx)}`);
     const tr = document.createElement("tr");

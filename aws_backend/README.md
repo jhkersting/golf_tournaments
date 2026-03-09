@@ -31,7 +31,9 @@ Parameters:
 - `shamble`
 - `scramble`
 - `team_best_ball` (players enter their own scores; round team score is sum of best X per hole)
-- `two_man` / `two_man_best_ball` (teams should have exactly 4 players; Group A/B are used for scoring)
+- `two_man_scramble` (one score per pair; Group A/B are used for scoring)
+- `two_man_shamble` (players enter both scores for the pair; group and team totals are derived from those player holes)
+- `two_man_best_ball` (players enter both scores for the pair; group and team totals use the best gross/net hole score)
 
 Top-X behavior for player-based formats (`team_best_ball`, `singles`, `shamble`):
 - Round team leaderboard: sum of Top X

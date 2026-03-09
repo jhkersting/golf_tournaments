@@ -251,11 +251,17 @@ function isScrambleRound(viewRound) {
   return String(round.format || "").toLowerCase() === "scramble";
 }
 
-function isTwoManBestBallRound(viewRound) {
+function normalizeTwoManFormat(format) {
+  const fmt = String(format || "").trim().toLowerCase();
+  if (fmt === "two_man") return "two_man_scramble";
+  if (fmt === "two_man_scramble" || fmt === "two_man_shamble" || fmt === "two_man_best_ball") return fmt;
+  return "";
+}
+
+function isTwoManRound(viewRound) {
   const round = roundAt(viewRound);
   if (!round) return false;
-  const fmt = String(round.format || "").toLowerCase();
-  return fmt === "two_man" || fmt === "two_man_best_ball";
+  return !!normalizeTwoManFormat(round.format);
 }
 
 function tournamentHasAnyScrambleRound() {
@@ -1148,6 +1154,36 @@ function bestBallHolesForPlayers(roundData, playerIds, metric) {
   return out;
 }
 
+function aggregateTwoManGroupHoles(roundData, playerIds, format, metric) {
+  if (normalizeTwoManFormat(format) === "two_man_shamble") {
+    const out = Array(18).fill(null);
+    for (let i = 0; i < 18; i++) {
+      let sum = 0;
+      let allPresent = (playerIds || []).length > 0;
+      for (const playerId of playerIds || []) {
+        const value = asPlayedNumber(roundData?.player?.[playerId]?.[metric]?.[i]);
+        if (value == null) {
+          allPresent = false;
+          break;
+        }
+        sum += value;
+      }
+      out[i] = allPresent ? sum : null;
+    }
+    return out;
+  }
+  return bestBallHolesForPlayers(roundData, playerIds, metric);
+}
+
+function handicapShotsFromHoleSets(gross, net) {
+  return Array.from({ length: 18 }, (_, i) => {
+    const grossValue = asPlayedNumber(gross?.[i]);
+    const netValue = asPlayedNumber(net?.[i]);
+    if (grossValue == null || netValue == null) return 0;
+    return grossValue - netValue;
+  });
+}
+
 function combineGroupHoleSets(groups) {
   const out = Array(18).fill(null);
   for (let i = 0; i < 18; i++) {
@@ -1250,8 +1286,9 @@ function buildTwoManGroupBreakdownTable(par, groups, useHandicap) {
     const names = Array.isArray(g?.names) && g.names.length ? g.names.join(", ") : "—";
     return `${g?.key || "?"}: ${names}`;
   });
+  const usesCombinedPar = (groups || []).some((g) => Number(g?.parMultiplier || 1) !== 1);
   summary.textContent = labels.length
-    ? `Two-man groups • ${labels.join(" • ")}`
+    ? `Two-man groups${usesCombinedPar ? " • shamble rows use combined par" : ""} • ${labels.join(" • ")}`
     : "Two-man groups • no groups assigned";
   wrap.appendChild(summary);
 
@@ -1270,8 +1307,9 @@ function buildTwoManGroupBreakdownTable(par, groups, useHandicap) {
     tbody.appendChild(tr);
   }
 
-  function addDataRow(label, arr, start, end) {
+  function addDataRow(label, arr, start, end, parMultiplier = 1) {
     const played = sectionPlayedCount(arr, start, end);
+    const rowPar = par.map((value) => Number(value || 0) * parMultiplier);
     const scoreWeightClass = useHandicap
       ? (String(label).endsWith(" Net") || String(label) === "Net"
         ? "score-emph-net"
@@ -1285,10 +1323,10 @@ function buildTwoManGroupBreakdownTable(par, groups, useHandicap) {
       `<td class="left"><b${emph}>${label}</b></td>` +
       Array.from({ length: end - start + 1 }, (_, k) => {
         const i = start + k;
-        return holeScoreCell(arr[i], par[i]);
+        return holeScoreCell(arr[i], rowPar[i]);
       }).join("") +
       `<td class="mono"><b${emph}>${played ? segmentTotal(arr, start, end) : ""}</b></td>` +
-      `<td class="mono"><b${emph}>${played ? toParStrFromDiff(segmentToPar(arr, par, start, end)) : ""}</b></td>`;
+      `<td class="mono"><b${emph}>${played ? toParStrFromDiff(segmentToPar(arr, rowPar, start, end)) : ""}</b></td>`;
     tbody.appendChild(tr);
   }
 
@@ -1317,11 +1355,11 @@ function buildTwoManGroupBreakdownTable(par, groups, useHandicap) {
   function addSection(start, end, label) {
     addHeaderRow(label, start, end);
     for (const group of groups) {
-      addDataRow(`${group.key} Gross`, group.gross, start, end);
+      addDataRow(`${group.key} Gross`, group.gross, start, end, Number(group?.parMultiplier || 1));
     }
     if (useHandicap) {
       for (const group of groups) {
-        addDataRow(`${group.key} Net`, group.net, start, end);
+        addDataRow(`${group.key} Net`, group.net, start, end, Number(group?.parMultiplier || 1));
       }
     }
     addParRow(start, end);
@@ -1342,20 +1380,23 @@ function buildTwoManBestBallTeamScorecard(roundIndex, teamRow, useHandicap) {
 
   const roundData = TOURN?.score_data?.rounds?.[roundIndex] || {};
   const teamEntry = roundData?.team?.[teamId] || {};
+  const twoManFormat = normalizeTwoManFormat(roundData?.format);
   const groupKeys = twoManGroupKeysForTeam(teamId, roundIndex, teamEntry);
   const nameById = playerNameMap();
   const groups = groupKeys.map((key) => {
     const entry = twoManGroupEntry(teamEntry, key);
     const ids = playerIdsForTwoManGroup(teamId, roundIndex, key, entry?.playerIds);
+    const parMultiplier = twoManFormat === "two_man_shamble" ? Math.max(1, ids.length) : 1;
     return {
       key,
       names: ids.map((id) => nameById.get(id) || id),
+      parMultiplier,
       gross: Array.isArray(entry?.gross)
         ? entry.gross
-        : bestBallHolesForPlayers(roundData, ids, "gross"),
+        : aggregateTwoManGroupHoles(roundData, ids, twoManFormat, "gross"),
       net: Array.isArray(entry?.net)
         ? entry.net
-        : bestBallHolesForPlayers(roundData, ids, "net")
+        : aggregateTwoManGroupHoles(roundData, ids, twoManFormat, "net")
     };
   });
 
@@ -1373,11 +1414,12 @@ function buildTwoManBestBallTeamScorecard(roundIndex, teamRow, useHandicap) {
   if (!anyData) return null;
 
   const par = getCoursePars(roundIndex);
+  const teamParMultiplier = groups.reduce((sum, group) => sum + Number(group?.parMultiplier || 1), 0) || 1;
   const teamScores = {
     gross: teamGross,
     net: teamNet,
     handicapShots: Array.isArray(teamEntry?.handicapShots) ? teamEntry.handicapShots : Array(18).fill(0),
-    par,
+    par: par.map((value) => Number(value || 0) * teamParMultiplier),
     grossTotal: teamEntry?.grossTotal,
     netTotal: teamEntry?.netTotal,
     grossToParTotal: teamEntry?.grossToParTotal,
@@ -1512,7 +1554,7 @@ function inlineScorecardHeading(host, title, subtitle) {
 function renderLeaderboard(data) {
   const isTeam = mode === "team";
   const isAllRounds = data.view?.round === "all";
-  const isTwoManGroupView = !isTeam && !isAllRounds && isTwoManBestBallRound(data.view?.round);
+  const isTwoManGroupView = !isTeam && !isAllRounds && isTwoManRound(data.view?.round);
   const allowInlineScorecard = data.view?.round !== "all";
   const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
   const showStrokesColumn = isTeam && isAllRounds;
@@ -1680,7 +1722,7 @@ function renderLeaderboard(data) {
       const token = ++inlineReqToken;
       try {
         if (mode === "team" && !isScrambleRound(data.view?.round)) {
-          const teamTable = isTwoManBestBallRound(data.view?.round)
+          const teamTable = isTwoManRound(data.view?.round)
             ? buildTwoManBestBallTeamScorecard(rIdx, r, showGrossNet)
             : buildTeamMembersScorecard(rIdx, r, showGrossNet);
           if (token !== inlineReqToken || openInlineKey !== key) return;
@@ -1785,6 +1827,8 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
     const entry = byTeam[teamId] || {};
     const gross = Array.isArray(entry?.gross) ? entry.gross : Array(18).fill(null);
     const net = Array.isArray(entry?.net) ? entry.net : gross.slice();
+    const grossToPar = Array.isArray(entry?.grossToPar) ? entry.grossToPar : null;
+    const netToPar = Array.isArray(entry?.netToPar) ? entry.netToPar : null;
     const handicapShots = Array.isArray(entry?.handicapShots) ? entry.handicapShots : Array(18).fill(0);
     let thru = 0;
     let grossToParTotal = 0;
@@ -1793,9 +1837,13 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
       const grossV = asPlayedNumber(gross[i]);
       const netV = asPlayedNumber(net[i]);
       const par = Number(coursePars?.[i] || 0);
+      const grossDiff = asPlayedNumber(grossToPar?.[i]);
+      const netDiff = asPlayedNumber(netToPar?.[i]);
       if (grossV != null || netV != null) thru += 1;
-      if (grossV != null) grossToParTotal += grossV - par;
-      if (netV != null) netToParTotal += netV - par;
+      if (grossDiff != null) grossToParTotal += grossDiff;
+      else if (grossV != null) grossToParTotal += grossV - par;
+      if (netDiff != null) netToParTotal += netDiff;
+      else if (netV != null) netToParTotal += netV - par;
     }
 
     const grossTotal = sumHoles(gross);
@@ -1938,7 +1986,7 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
   const seedTeamIds = (leaderboardRows || []).map((row) => row?.teamId);
   const fallbackRows = leaderboardRows || [];
 
-  if (format === "scramble" || format === "two_man" || format === "two_man_best_ball") {
+  if (format === "scramble" || normalizeTwoManFormat(format)) {
     const fromTeamEntries = buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNames, seedTeamIds);
     if (fromTeamEntries.some((row) => rowHasAnyData(row))) return fromTeamEntries;
     if (fallbackRows.length) return fallbackRows;
@@ -1962,7 +2010,8 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
 function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars) {
   const roundCfg = (tournamentJson?.tournament?.rounds || [])[roundIndex] || {};
   const format = String(roundCfg.format || "").toLowerCase();
-  const isTwoManRound = format === "two_man" || format === "two_man_best_ball";
+  const twoManFormat = normalizeTwoManFormat(format);
+  const isTwoManRound = !!twoManFormat;
   const useHandicap = !!roundCfg.useHandicap;
   const teamNames = roundTeamNameLookup(tournamentJson, roundData?.leaderboard?.teams || []);
   const playersById = playerMetaByIdMap();
@@ -1998,10 +2047,13 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
       const playerIds = playerIdsForTwoManGroup(teamId, roundIndex, key, entry?.playerIds);
       const gross = Array.isArray(entry?.gross)
         ? entry.gross
-        : bestBallHolesForPlayers(roundData, playerIds, "gross");
+        : aggregateTwoManGroupHoles(roundData, playerIds, twoManFormat, "gross");
       const net = Array.isArray(entry?.net)
         ? entry.net
-        : bestBallHolesForPlayers(roundData, playerIds, "net");
+        : aggregateTwoManGroupHoles(roundData, playerIds, twoManFormat, "net");
+      const parMultiplier = twoManFormat === "two_man_shamble"
+        ? Math.max(1, playerIds.length)
+        : 1;
 
       let thru = 0;
       let grossToParTotal = 0;
@@ -2011,8 +2063,8 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
         const netV = asPlayedNumber(net[i]);
         const par = Number(coursePars?.[i] || 0);
         if (grossV != null || netV != null) thru += 1;
-        if (grossV != null) grossToParTotal += grossV - par;
-        if (netV != null) netToParTotal += netV - par;
+        if (grossV != null) grossToParTotal += grossV - (par * parMultiplier);
+        if (netV != null) netToParTotal += netV - (par * parMultiplier);
       }
 
       const grossTotal = sumHoles(gross);
@@ -2035,7 +2087,7 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
         scores: {
           gross,
           net,
-          handicapShots: Array.isArray(entry?.handicapShots) ? entry.handicapShots : Array(18).fill(0),
+          handicapShots: Array.isArray(entry?.handicapShots) ? entry.handicapShots : handicapShotsFromHoleSets(gross, net),
           grossTotal,
           netTotal,
           grossToParTotal,
@@ -2334,8 +2386,8 @@ function render() {
   const scrambleInfo = isScrambleRound(data.view.round)
     ? " • scramble rounds are team-only"
     : "";
-  const twoManInfo = isTwoManBestBallRound(data.view.round)
-    ? " • two-man scorecard includes group breakdown"
+  const twoManInfo = isTwoManRound(data.view.round)
+    ? " • two-man rounds include pair breakdown"
     : "";
   const allRoundsInfo =
     data.view.round === "all" && tournamentHasAnyScrambleRound()

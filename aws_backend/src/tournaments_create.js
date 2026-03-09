@@ -78,17 +78,12 @@ function normalizeRoundFormat(format){
   if (raw === "scramble") return "scramble";
   if (raw === "team_best_ball" || raw === "team_bestball") return "team_best_ball";
   if (raw === "shamble") return "shamble";
-  if (
-    raw === "two_man_best_ball" ||
-    raw === "two_man_scramble" ||
-    raw === "two_man" ||
-    raw === "2_man" ||
-    raw === "2man" ||
-    raw === "best_ball" ||
-    raw === "2man_best_ball" ||
-    raw === "2_man_best_ball"
-  ){
-    return "two_man";
+  if (raw === "two_man_shamble" || raw === "2man_shamble" || raw === "2_man_shamble") return "two_man_shamble";
+  if (raw === "two_man_best_ball" || raw === "two_man_bestball" || raw === "best_ball" || raw === "2man_best_ball" || raw === "2_man_best_ball"){
+    return "two_man_best_ball";
+  }
+  if (raw === "two_man_scramble" || raw === "two_man" || raw === "2_man" || raw === "2man" || raw === "2man_scramble" || raw === "2_man_scramble"){
+    return "two_man_scramble";
   }
   return "singles";
 }

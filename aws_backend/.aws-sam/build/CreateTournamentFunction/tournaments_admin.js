@@ -22,17 +22,12 @@ function normalizeRoundFormat(format) {
   if (raw === "team_best_ball" || raw === "team_bestball") return "team_best_ball";
   if (raw === "shamble") return "shamble";
   if (raw === "singles") return "singles";
-  if (
-    raw === "two_man_best_ball" ||
-    raw === "two_man_scramble" ||
-    raw === "two_man" ||
-    raw === "2_man" ||
-    raw === "2man" ||
-    raw === "best_ball" ||
-    raw === "2man_best_ball" ||
-    raw === "2_man_best_ball"
-  ) {
-    return "two_man";
+  if (raw === "two_man_shamble" || raw === "2man_shamble" || raw === "2_man_shamble") return "two_man_shamble";
+  if (raw === "two_man_best_ball" || raw === "two_man_bestball" || raw === "best_ball" || raw === "2man_best_ball" || raw === "2_man_best_ball") {
+    return "two_man_best_ball";
+  }
+  if (raw === "two_man_scramble" || raw === "two_man" || raw === "2_man" || raw === "2man" || raw === "2man_scramble" || raw === "2_man_scramble") {
+    return "two_man_scramble";
   }
   return "singles";
 }
@@ -200,7 +195,7 @@ function readEditCode(event, body = null) {
 function isTwoManTournament(rounds) {
   return Array.isArray(rounds) && rounds.some((r) => {
     const fmt = String(r?.format || "").toLowerCase();
-    return fmt === "two_man" || fmt === "two_man_best_ball";
+    return fmt === "two_man" || fmt === "two_man_scramble" || fmt === "two_man_shamble" || fmt === "two_man_best_ball";
   });
 }
 
@@ -226,7 +221,7 @@ function roundFormat(round) {
 function scoreTargetTypeForRound(round) {
   const fmt = roundFormat(round);
   if (fmt === "scramble") return "team";
-  if (fmt === "two_man") return "group";
+  if (fmt === "two_man_scramble") return "group";
   return "player";
 }
 

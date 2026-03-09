@@ -229,6 +229,24 @@ function scrambleTeamHandicap(teamPlayers){
   return Math.round(avg);
 }
 
+function effectiveHandicap(value, multiplier = 1){
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.round(n * multiplier));
+}
+
+function twoManScrambleHandicap(groupPlayers){
+  const vals = (groupPlayers || [])
+    .map((player) => Number(player?.handicap ?? 0))
+    .filter(Number.isFinite)
+    .map((value) => Math.max(0, value))
+    .sort((a, b) => a - b);
+  if (!vals.length) return 0;
+  const lower = vals[0] || 0;
+  const upper = vals[1] ?? vals[0] ?? 0;
+  return Math.max(0, Math.round((lower * 0.35) + (upper * 0.15)));
+}
+
 function getPlayersByTeamMap(players){
   const byTeam = new Map();
   for (const pid of Object.keys(players || {})){
@@ -240,9 +258,24 @@ function getPlayersByTeamMap(players){
   return byTeam;
 }
 
-function isTwoManFormat(format){
+function normalizeTwoManFormat(format){
   const fmt = String(format || "").toLowerCase();
-  return fmt === "two_man" || fmt === "two_man_best_ball";
+  if (fmt === "two_man") return "two_man_scramble";
+  if (fmt === "two_man_scramble" || fmt === "two_man_shamble" || fmt === "two_man_best_ball") return fmt;
+  return "";
+}
+
+function isTwoManFormat(format){
+  return !!normalizeTwoManFormat(format);
+}
+
+function isTwoManScrambleFormat(format){
+  return normalizeTwoManFormat(format) === "two_man_scramble";
+}
+
+function isTwoManPlayerFormat(format){
+  const fmt = normalizeTwoManFormat(format);
+  return fmt === "two_man_shamble" || fmt === "two_man_best_ball";
 }
 
 function isTeamBestBallFormat(format){
@@ -493,7 +526,10 @@ export function materializePublicFromState(state){
     const round = rounds[r] || {};
     const roundCourse = courseForRound(rounds, courses, r);
     const isScramble = round.format === "scramble";
-    const isTwoMan = isTwoManFormat(round.format);
+    const twoManFormat = normalizeTwoManFormat(round.format);
+    const isTwoMan = !!twoManFormat;
+    const isTwoManScramble = isTwoManScrambleFormat(round.format);
+    const isTwoManPlayerRound = isTwoManPlayerFormat(round.format);
     const isTeamBestBall = isTeamBestBallFormat(round.format);
     const useHandicap = !!round.useHandicap;
 
@@ -508,10 +544,11 @@ export function materializePublicFromState(state){
     };
 
     // Player entries
-    if (!isScramble && !isTwoMan){
+    if (!isScramble && !isTwoManScramble){
       for (const pid of Object.keys(players)){
         const gross = (roundScores.players?.[pid]?.holes || Array(18).fill(null)).map(v => (v === 0 ? null : v));
-        const hcp = Number(players[pid]?.handicap || 0);
+        const handicapMultiplier = twoManFormat === "two_man_shamble" ? 0.8 : 1;
+        const hcp = effectiveHandicap(players[pid]?.handicap, handicapMultiplier);
         const shots = useHandicap ? strokesPerHole(hcp, roundCourse.strokeIndex) : Array(18).fill(0);
         const net = gross.map((v,i)=> v==null ? null : (Number(v) - Number(shots[i]||0)));
         const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i]||0)));
@@ -609,11 +646,64 @@ export function materializePublicFromState(state){
 
         for (const key of groupKeys){
           const groupId = twoManGroupId(teamId, key);
-          const grossRaw = (roundScores.groups?.[groupId]?.holes || Array(18).fill(null)).map(v => (v === 0 ? null : v));
           const gPlayers = groups[key] || [];
-          const gHcp = useHandicap ? scrambleTeamHandicap(gPlayers) : 0;
-          const shots = useHandicap ? strokesPerHole(gHcp, roundCourse.strokeIndex) : Array(18).fill(0);
-          const netRaw = grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(shots[i] || 0)));
+          let grossRaw = Array(18).fill(null);
+          let netRaw = Array(18).fill(null);
+          let shots = Array(18).fill(0);
+
+          if (isTwoManScramble){
+            grossRaw = (roundScores.groups?.[groupId]?.holes || Array(18).fill(null)).map(v => (v === 0 ? null : v));
+            const groupHcp = useHandicap ? twoManScrambleHandicap(gPlayers) : 0;
+            shots = useHandicap ? strokesPerHole(groupHcp, roundCourse.strokeIndex) : Array(18).fill(0);
+            netRaw = grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(shots[i] || 0)));
+          } else if (isTwoManPlayerRound){
+            for (let i = 0; i < 18; i++) {
+              if (twoManFormat === "two_man_shamble") {
+                let grossSum = 0;
+                let netSum = 0;
+                let shotSum = 0;
+                let allPresent = gPlayers.length > 0;
+                for (const player of gPlayers){
+                  const playerSc = outRound.player[player.playerId];
+                  const grossVal = Number.isFinite(Number(playerSc?.gross?.[i])) ? Number(playerSc.gross[i]) : null;
+                  const netVal = Number.isFinite(Number(playerSc?.net?.[i])) ? Number(playerSc.net[i]) : null;
+                  const shotVal = Number.isFinite(Number(playerSc?.handicapShots?.[i])) ? Number(playerSc.handicapShots[i]) : 0;
+                  if (grossVal == null || netVal == null) {
+                    allPresent = false;
+                    break;
+                  }
+                  grossSum += grossVal;
+                  netSum += netVal;
+                  shotSum += shotVal;
+                }
+                if (allPresent) {
+                  grossRaw[i] = grossSum;
+                  netRaw[i] = netSum;
+                  shots[i] = shotSum;
+                }
+                continue;
+              }
+
+              let grossBest = null;
+              let netBest = null;
+              let shotBest = 0;
+              for (const player of gPlayers){
+                const playerSc = outRound.player[player.playerId];
+                const grossVal = Number.isFinite(Number(playerSc?.gross?.[i])) ? Number(playerSc.gross[i]) : null;
+                const netVal = Number.isFinite(Number(playerSc?.net?.[i])) ? Number(playerSc.net[i]) : null;
+                const shotVal = Number.isFinite(Number(playerSc?.handicapShots?.[i])) ? Number(playerSc.handicapShots[i]) : 0;
+                if (grossVal != null && (grossBest == null || grossVal < grossBest)) grossBest = grossVal;
+                if (netVal != null && (netBest == null || netVal < netBest)) {
+                  netBest = netVal;
+                  shotBest = shotVal;
+                }
+              }
+              if (grossBest != null) grossRaw[i] = grossBest;
+              if (netBest != null) netRaw[i] = netBest;
+              if (netBest != null) shots[i] = shotBest;
+            }
+          }
+
           groupGross[key] = grossRaw;
           groupNet[key] = netRaw;
           groupShots[key] = shots;
@@ -625,24 +715,28 @@ export function materializePublicFromState(state){
           const netToParTotalGroup = netTotalGroup - parPlayedGroup;
           const thruGroup = thruFromHoles(grossRaw);
 
-          for (const p of gPlayers){
-            outRound.player[p.playerId] = {
-              gross: grossRaw.slice(),
-              net: netRaw.slice(),
-              grossToPar: grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(roundCourse.pars[i] || 0))),
-              netToPar: netRaw.map((v, i) => (v == null ? null : Number(v) - Number(roundCourse.pars[i] || 0))),
-              handicapShots: shots.slice(),
-              grossTotal: grossTotalGroup,
-              netTotal: netTotalGroup,
-              grossToParTotal: grossToParTotalGroup,
-              netToParTotal: netToParTotalGroup,
-              thru: thruGroup
-            };
+          if (isTwoManScramble){
+            for (const p of gPlayers){
+              outRound.player[p.playerId] = {
+                gross: grossRaw.slice(),
+                net: netRaw.slice(),
+                grossToPar: grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(roundCourse.pars[i] || 0))),
+                netToPar: netRaw.map((v, i) => (v == null ? null : Number(v) - Number(roundCourse.pars[i] || 0))),
+                handicapShots: shots.slice(),
+                grossTotal: grossTotalGroup,
+                netTotal: netTotalGroup,
+                grossToParTotal: grossToParTotalGroup,
+                netToParTotal: netToParTotalGroup,
+                thru: thruGroup
+              };
+            }
           }
         }
 
         const gross = Array(18).fill(null);
         const net = Array(18).fill(null);
+        const grossToPar = Array(18).fill(null);
+        const netToPar = Array(18).fill(null);
         for (let i=0;i<18;i++){
           let grossSum = 0;
           let netSum = 0;
@@ -658,16 +752,17 @@ export function materializePublicFromState(state){
           }
           if (allGross) gross[i] = grossSum;
           if (allNet) net[i] = netSum;
+          const parBase = Number(roundCourse.pars[i] || 0) * groupKeys.length;
+          if (allGross) grossToPar[i] = grossSum - parBase;
+          if (allNet) netToPar[i] = netSum - parBase;
         }
 
-        const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i] || 0)));
-        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i] || 0)));
-        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(roundCourse.pars[i] || 0)),0);
+        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:(Number(roundCourse.pars[i] || 0) * groupKeys.length)),0);
         const grossTotal = sumPlayed(gross);
         const netTotal = sumPlayed(net);
         const thru = thruFromHoles(gross);
-        const grossToParTotal = grossTotal - parPlayed;
-        const netToParTotal = netTotal - parPlayed;
+        const grossToParTotal = sumPlayed(grossToPar);
+        const netToParTotal = sumPlayed(netToPar);
 
         outRound.team[teamId] = {
           gross, net, grossToPar, netToPar,
@@ -993,11 +1088,11 @@ export function materializePublicFromState(state){
   score_data.leaderboard_all.teams = teamLb;
   score_data.leaderboard_all.players = playerLb;
 
-  const hasTwoManBestBall = rounds.some(round => isTwoManFormat(round?.format));
+  const hasTwoManFormat = rounds.some(round => isTwoManFormat(round?.format));
   const playersByTeam = getPlayersByTeamMap(players);
   const publicTeams = Object.keys(teams).map(teamId => {
     const row = { teamId, teamName: teams[teamId].teamName };
-    if (!hasTwoManBestBall) return row;
+    if (!hasTwoManFormat) return row;
     const groupsByRound = {};
     for (let r = 0; r < rounds.length; r++){
       if (!isTwoManFormat(rounds[r]?.format)) continue;
