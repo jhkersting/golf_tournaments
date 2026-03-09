@@ -2200,6 +2200,25 @@ function twoManGroupId(teamId, label) {
   return `${team}::${g}`;
 }
 
+function uniqueDisplayNames(values) {
+  const seen = new Set();
+  const out = [];
+  for (const value of values || []) {
+    const name = String(value || "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+function twoManPairLabel(groupPlayerIds, playersById, fallbackGroup) {
+  const names = uniqueDisplayNames((groupPlayerIds || []).map((id) => playersById?.[id]?.name));
+  if (names.length) return names.join("/");
+  const group = normalizeGroup(fallbackGroup);
+  return group ? `Group ${group}` : "Pair";
+}
+
 function normalizeTwoManFormat(format) {
   const fmt = String(format || "").trim().toLowerCase();
   if (fmt === "two_man") return "two_man_scramble";
@@ -2889,8 +2908,9 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
       }
 
       const teamName = teamsById[teamId]?.teamName || teamId || "Team";
+      const pairLabel = twoManPairLabel(groupPlayerIds, playersById, group);
       individualTickerRows.push({
-        name: `Group ${group} | ${teamName}`,
+        name: `${pairLabel} | ${teamName}`,
         teamId,
         teeTime:
           teeTimeDisplayForPlayerIds(groupPlayerIds, playersById, safeRound) ||

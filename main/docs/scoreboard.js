@@ -1212,6 +1212,25 @@ function playerNameMap() {
   return out;
 }
 
+function uniqueDisplayNames(values) {
+  const seen = new Set();
+  const out = [];
+  for (const value of values || []) {
+    const name = String(value || "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+function twoManPairLabelFromIds(playerIds, nameById, fallbackGroupKey) {
+  const names = uniqueDisplayNames((playerIds || []).map((id) => nameById.get(String(id || "").trim())));
+  if (names.length) return names.join("/");
+  const key = normalizeTwoManGroupKey(fallbackGroupKey);
+  return key ? `Group ${key}` : "Pair";
+}
+
 function twoManGroupKeysForTeam(teamId, roundIndex, teamEntry = {}) {
   const out = new Set();
   const normTeamId = String(teamId || "").trim();
@@ -2015,6 +2034,7 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
   const useHandicap = !!roundCfg.useHandicap;
   const teamNames = roundTeamNameLookup(tournamentJson, roundData?.leaderboard?.teams || []);
   const playersById = playerMetaByIdMap();
+  const nameById = playerNameMap();
 
   const attachPlayerMeta = (row) => {
     const playerId = String(row?.playerId || "").trim();
@@ -2045,6 +2065,7 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
     for (const key of groupKeys) {
       const entry = twoManGroupEntry(teamEntry, key);
       const playerIds = playerIdsForTwoManGroup(teamId, roundIndex, key, entry?.playerIds);
+      const pairLabel = twoManPairLabelFromIds(playerIds, nameById, key);
       const gross = Array.isArray(entry?.gross)
         ? entry.gross
         : aggregateTwoManGroupHoles(roundData, playerIds, twoManFormat, "gross");
@@ -2073,7 +2094,7 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
         playerId: `group:${teamId}:${key}`,
         groupId: `${teamId}::${key}`,
         groupKey: key,
-        name: `Group ${key}`,
+        name: pairLabel,
         teamId,
         teamName: teamNames.get(teamId) || teamId || "Team",
         thru,
