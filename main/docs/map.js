@@ -3373,14 +3373,9 @@ function roundTargets(roundIndex) {
 
   if (mode === "group") {
     const actor = entryState.playersById?.[entryState.enter?.player?.playerId] || entryState.enter?.player || {};
-    const teamId = normalizeTeamId(actor?.teamId || entryState.enter?.team?.teamId);
+    const actorTeamId = normalizeTeamId(actor?.teamId || entryState.enter?.team?.teamId);
     const actorGroup = groupForPlayerRound(actor, roundIndex);
-    const groupId = twoManGroupId(teamId, actorGroup);
-    if (!groupId) return { mode, targets: [], savedByTarget: {} };
-    const names = (entryState.players || [])
-      .filter((player) => normalizeTeamId(player?.teamId) === teamId && groupForPlayerRound(player, roundIndex) === actorGroup)
-      .map((player) => player?.name)
-      .filter(Boolean);
+    const actorGroupId = twoManGroupId(actorTeamId, actorGroup);
     const savedByTarget = {};
     for (const [sdTeamId, teamEntry] of Object.entries(scoreRound?.team || {})) {
       for (const [label, groupEntry] of Object.entries(teamEntry?.groups || {})) {
@@ -3389,14 +3384,58 @@ function roundTargets(roundIndex) {
         savedByTarget[gid] = normalizeScoreArray(groupEntry?.gross);
       }
     }
+
+    // Match enter.js behavior for two-man scramble: include all pair groups on the actor's tee time.
+    const allowedIds = allowedPlayerIdsForRound(roundIndex);
+    const groupMetaById = new Map();
+    for (const pid of allowedIds) {
+      const player = entryState.playersById?.[pid];
+      if (!player) continue;
+      const teamId = normalizeTeamId(player?.teamId);
+      const group = groupForPlayerRound(player, roundIndex);
+      const groupId = twoManGroupId(teamId, group);
+      if (!groupId) continue;
+      if (!groupMetaById.has(groupId)) {
+        const teamName = entryState.teamsById?.[teamId]?.teamName || teamId || "Team";
+        groupMetaById.set(groupId, { groupId, teamId, group, teamName, names: new Set() });
+      }
+    }
+
+    for (const player of entryState.players || []) {
+      const teamId = normalizeTeamId(player?.teamId);
+      const group = groupForPlayerRound(player, roundIndex);
+      const groupId = twoManGroupId(teamId, group);
+      if (!groupMetaById.has(groupId)) continue;
+      if (player?.name) groupMetaById.get(groupId).names.add(player.name);
+    }
+
+    if (!groupMetaById.size && actorGroupId) {
+      const teamName = entryState.teamsById?.[actorTeamId]?.teamName || actorTeamId || "Team";
+      groupMetaById.set(actorGroupId, {
+        groupId: actorGroupId,
+        teamId: actorTeamId,
+        group: actorGroup,
+        teamName,
+        names: new Set(),
+      });
+    }
+
+    const targets = Array.from(groupMetaById.values())
+      .sort((a, b) => {
+        const nameCompare = String(a.teamName).localeCompare(String(b.teamName));
+        if (nameCompare !== 0) return nameCompare;
+        return String(a.group).localeCompare(String(b.group));
+      })
+      .map((meta) => ({
+        id: meta.groupId,
+        label: `${meta.teamName} • Group ${meta.group || "—"}`,
+        subtitle: meta.names.size ? Array.from(meta.names).join(", ") : "Pair",
+        teamId: meta.teamId,
+      }));
+
     return {
       mode,
-      targets: [{
-        id: groupId,
-        label: `Group ${actorGroup || "—"}`,
-        subtitle: names.length ? names.join(", ") : "Pair",
-        teamId,
-      }],
+      targets,
       savedByTarget,
     };
   }

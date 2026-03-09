@@ -1591,7 +1591,12 @@ async function main() {
         const teamId = enter.team?.teamId;
         const teamEntry = sd.team?.[teamId];
         const gross = (teamEntry?.gross || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
-        return { type: "team", savedByTarget: { [teamId]: gross }, targetIds: [teamId] };
+        return {
+          type: "team",
+          savedByTarget: { [teamId]: gross },
+          targetIds: [teamId],
+          progressTargetIds: [teamId].filter(Boolean),
+        };
       } else if (isTwoManGroupRound) {
         const savedByTarget = {};
         for (const [teamId, teamEntry] of Object.entries(sd.team || {})) {
@@ -1608,7 +1613,8 @@ async function main() {
         const ids = (groupIds.length ? groupIds : [fallbackGroup].filter(Boolean)).filter((id) =>
           allowedSet.has(id)
         );
-        return { type: "group", savedByTarget, targetIds: ids };
+        const progressTargetIds = [fallbackGroup].filter((id) => Boolean(id) && allowedSet.has(id));
+        return { type: "group", savedByTarget, targetIds: ids, progressTargetIds };
       } else {
         const savedByTarget = {};
         for (const pid of Object.keys(sd.player || {})) {
@@ -1618,7 +1624,8 @@ async function main() {
         const ids = (groupIds.length ? groupIds : [myId].filter(Boolean)).filter((id) =>
           allowedRoundPlayerSet.has(id)
         );
-        return { type: "player", savedByTarget, targetIds: ids };
+        const progressTargetIds = [myId].filter((id) => Boolean(id) && allowedRoundPlayerSet.has(id));
+        return { type: "player", savedByTarget, targetIds: ids, progressTargetIds };
       }
     }
 
@@ -1666,9 +1673,10 @@ async function main() {
     function renderHoleForm() {
       holePane.innerHTML = "";
 
-      const { type, savedByTarget, targetIds } = getSavedForRound();
+      const { type, savedByTarget, targetIds, progressTargetIds } = getSavedForRound();
       // set currentHole to next unplayed, but keep user-selected if they already moved it manually
-      const suggested = nextHoleIndexForGroup(savedByTarget, targetIds);
+      const progressIds = progressTargetIds?.length ? progressTargetIds : targetIds;
+      const suggested = nextHoleIndexForGroup(savedByTarget, progressIds);
 
       // On first load (or if user hasn't manually set a hole), jump to next unplayed
       if (!holeManuallySet || currentHole == null || Number.isNaN(currentHole) || currentHole < 0 || currentHole > 17) {
@@ -1908,9 +1916,10 @@ async function main() {
             currentHole = Math.min(17, submittedHoleIndex + 1);
             holeManuallySet = true;
           } else {
-            // advance to next unplayed hole for group
+            // advance to next unplayed hole for this code's progress target(s)
             const nowSaved = getSavedForRound();
-            currentHole = nextHoleIndexForGroup(nowSaved.savedByTarget, nowSaved.targetIds);
+            const progressIds = nowSaved.progressTargetIds?.length ? nowSaved.progressTargetIds : nowSaved.targetIds;
+            currentHole = nextHoleIndexForGroup(nowSaved.savedByTarget, progressIds);
           }
 
           renderHoleForm();
