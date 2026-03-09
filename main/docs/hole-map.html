@@ -17,12 +17,19 @@
   <link rel="apple-touch-icon" href="icons/icon.svg" />
   <link rel="stylesheet" href="styles.css" />
   <title>Map + Enter Scores</title>
+
+  <style>
+    .mobile-header-link-secondary{
+              right: 126px;
+    }
+  </style>
 </head>
 
 <body class="hole-map-page" style="visibility: hidden;">
   <header>
     <div class="nav">
       <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
+      <a href="./enter.html" class="mobile-header-link mobile-header-link-secondary" data-scoreboard-link>Enter</a>
       <a href="./scoreboard.html" class="mobile-header-link mobile-header-link-primary"
         data-scoreboard-link>Scoreboard</a>
       <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu"

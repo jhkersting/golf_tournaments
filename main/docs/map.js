@@ -3368,6 +3368,7 @@ function roundTargets(roundIndex) {
       savedByTarget: {
         [teamId]: normalizeScoreArray(scoreRound?.team?.[teamId]?.gross),
       },
+      progressTargetIds: [teamId].filter(Boolean),
     };
   }
 
@@ -3437,9 +3438,11 @@ function roundTargets(roundIndex) {
       mode,
       targets,
       savedByTarget,
+      progressTargetIds: [actorGroupId].filter(Boolean),
     };
   }
 
+  const actorId = entryState.enter?.player?.playerId;
   const ids = allowedPlayerIdsForRound(roundIndex);
   const savedByTarget = {};
   for (const pid of Object.keys(scoreRound?.player || {})) {
@@ -3466,6 +3469,7 @@ function roundTargets(roundIndex) {
       })
       .filter((target) => !!target.id),
     savedByTarget,
+    progressTargetIds: [actorId].filter((id) => Boolean(id) && ids.includes(id)),
   };
 }
 
@@ -3662,10 +3666,11 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
     );
     await refreshTournamentJson();
     if (advanceToSuggested) {
-      const { targets, savedByTarget } = roundTargets(roundIndex);
+      const { targets, savedByTarget, progressTargetIds } = roundTargets(roundIndex);
+      const progressIds = progressTargetIds?.length ? progressTargetIds : targets.map((target) => target.id);
       entryState.currentHoleIndex = nextHoleIndexForGroup(
         savedByTarget,
-        targets.map((target) => target.id)
+        progressIds
       );
       setHoleByIndex(entryState.currentHoleIndex, { syncEntry: false });
     }
@@ -3738,10 +3743,11 @@ async function selectRound(roundIndex, { jumpToSuggestedHole = false } = {}) {
   const safeRound = Math.max(0, Math.min(rounds.length - 1, Number(roundIndex) || 0));
   entryState.selectedRoundIndex = safeRound;
   if (jumpToSuggestedHole) {
-    const { targets, savedByTarget } = roundTargets(safeRound);
+    const { targets, savedByTarget, progressTargetIds } = roundTargets(safeRound);
+    const progressIds = progressTargetIds?.length ? progressTargetIds : targets.map((target) => target.id);
     entryState.currentHoleIndex = nextHoleIndexForGroup(
       savedByTarget,
-      targets.map((target) => target.id)
+      progressIds
     );
   }
   renderRoundTabs();
@@ -3838,10 +3844,11 @@ async function init() {
       throw new Error("Tournament has no rounds.");
     }
     entryState.selectedRoundIndex = activeRoundIndexFromTournament();
-    const { targets, savedByTarget } = roundTargets(entryState.selectedRoundIndex);
+    const { targets, savedByTarget, progressTargetIds } = roundTargets(entryState.selectedRoundIndex);
+    const progressIds = progressTargetIds?.length ? progressTargetIds : targets.map((target) => target.id);
     entryState.currentHoleIndex = nextHoleIndexForGroup(
       savedByTarget,
-      targets.map((target) => target.id)
+      progressIds
     );
     await selectRound(entryState.selectedRoundIndex, { jumpToSuggestedHole: false });
     renderCurrentHole();
