@@ -85,6 +85,8 @@ const entryState = {
   tid: "",
   enter: null,
   tournament: null,
+  mapIndex: null,
+  mapIndexPromise: null,
   rounds: [],
   players: [],
   playersById: Object.create(null),
@@ -3217,6 +3219,21 @@ async function fetchCourseMapIndex() {
   throw new Error(`Could not load course map index: ${attempts.join(" | ")}`);
 }
 
+function startCourseMapIndexFetch() {
+  if (!entryState.mapIndexPromise) {
+    entryState.mapIndexPromise = fetchCourseMapIndex();
+    entryState.mapIndexPromise.catch(() => {});
+  }
+  return entryState.mapIndexPromise;
+}
+
+async function ensureCourseMapIndex() {
+  if (entryState.mapIndex) return entryState.mapIndex;
+  startCourseMapIndexFetch();
+  entryState.mapIndex = await entryState.mapIndexPromise;
+  return entryState.mapIndex;
+}
+
 function resolveCourseMapMeta(course, mapIndex) {
   if (!course || !mapIndex) return null;
   const bySlug = mapIndex?.courses_by_slug || {};
@@ -3712,9 +3729,10 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
 async function loadMapForSelectedRound() {
   const roundIndex = entryState.selectedRoundIndex;
   const course = courseForRoundRaw(entryState.tournament, roundIndex);
-  let mapMeta = resolveCourseMapMeta(course, entryState.mapIndex);
+  const mapIndex = await ensureCourseMapIndex();
+  let mapMeta = resolveCourseMapMeta(course, mapIndex);
   if (!mapMeta && FORCED_DATA_SLUG) {
-    const bySlug = entryState.mapIndex?.courses_by_slug || {};
+    const bySlug = mapIndex?.courses_by_slug || {};
     if (bySlug[FORCED_DATA_SLUG]) {
       mapMeta = { slug: FORCED_DATA_SLUG, ...bySlug[FORCED_DATA_SLUG] };
     } else {
@@ -3803,6 +3821,10 @@ async function initializeEntryContext() {
     link.setAttribute("href", `./scoreboard.html?t=${encodeURIComponent(tid)}`);
   });
 
+  entryState.mapIndex = null;
+  entryState.mapIndexPromise = null;
+  startCourseMapIndexFetch();
+
   const tournament = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, {
     cacheKey: `t:${tid}`,
   });
@@ -3824,7 +3846,6 @@ async function initializeEntryContext() {
   seedTeamColors(tournament);
   updateBrandDotFromTournament(tournament);
   renderTicker(tournament, entryState.playersById, entryState.teamsById, entryState.selectedRoundIndex);
-  entryState.mapIndex = await fetchCourseMapIndex();
 }
 
 function startAutoRefresh() {
@@ -3870,11 +3891,11 @@ async function init() {
       savedByTarget,
       progressIds
     );
-    await selectRound(entryState.selectedRoundIndex, { jumpToSuggestedHole: false });
-    renderCurrentHole();
+    const initialRoundLoad = selectRound(entryState.selectedRoundIndex, { jumpToSuggestedHole: false });
     syncFooterViewportLock();
     showPageBody();
     updateMapTickerStickyState();
+    await initialRoundLoad;
     await maybeAutoStartTracking();
     startAutoRefresh();
   } catch (error) {
