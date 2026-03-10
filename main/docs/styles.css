@@ -125,8 +125,11 @@ header {
 }
 
 .brand .dot {
+  flex: 0 0 10px;
   width: 10px;
+  min-width: 10px;
   height: 10px;
+  min-height: 10px;
   border-radius: 50%;
   background: var(--brand);
   box-shadow: 0 0 0 6px color-mix(in srgb, var(--brand) 18%, transparent);
@@ -1091,6 +1094,11 @@ pre {
   color: var(--brand-contrast);
 }
 
+.toggle button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .dotrow {
   height: 10px;
   line-height: 10px;
@@ -1162,7 +1170,7 @@ th.dots {
   .menu-toggle {
     display: inline-flex;
     position: absolute;
-    top: 10px;
+    top: 8px;
     right: 10px;
   }
 
@@ -1182,7 +1190,7 @@ th.dots {
   .mobile-header-link {
     display: inline-flex;
     position: absolute;
-    top: 10px;
+    top: 8px;
     min-height: 25px;
     border-radius: 5px !important;
     padding: 1px 5px !important;
@@ -1450,6 +1458,9 @@ th.dots {
   z-index: 85;
 
 }
+#metric_summary{
+  font-size: 13px;
+}
 
 .hole-map-controls-placeholder {
   display: none;
@@ -1472,8 +1483,8 @@ th.dots {
 .hole-map-nav select {
   width: 100%;
   min-width: 0;
-  height: 48px;
-  min-height: 48px;
+  height: 32px;
+  min-height: 32px;
 }
 
 .hole-map-nav button {
@@ -1495,6 +1506,10 @@ th.dots {
   text-align: center;
   display: block;
   margin-top: 6px;
+}
+
+.hole-map-mode-toggle {
+  margin-bottom: 8px;
 }
 
 .hole-map-location label {
@@ -1614,6 +1629,11 @@ th.dots {
 @media (max-width: 560px) {
   .hole-map-page .container {
     padding-bottom: calc(150px + env(safe-area-inset-bottom));
+  }
+
+  span[data-brand-title] {
+    font-size: 13px;
+    white-space: nowrap;
   }
 
   .hole-map-nav {

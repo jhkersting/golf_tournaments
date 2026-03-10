@@ -29,7 +29,7 @@
   <header>
     <div class="nav">
       <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
-      <a href="./enter.html" class="mobile-header-link mobile-header-link-secondary" data-scoreboard-link>Enter</a>
+      <a href="./enter.html" class="mobile-header-link mobile-header-link-secondary" data-enter-link>Enter</a>
       <a href="./scoreboard.html" class="mobile-header-link mobile-header-link-primary"
         data-scoreboard-link>Scoreboard</a>
       <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu"
@@ -45,13 +45,13 @@
   </header>
 
   <div class="container">
-    <div class="card">
+    <!--<div class="card">
       <h1 style="margin:0 0 8px 0;">Map + Enter Scores</h1>
       <div class="small">
         Uses your player code and tournament setup to open the current round/hole, then chooses full or simplified map
         data for that round's course.
       </div>
-    </div>
+    </div>-->
 
     <div id="map_ticker_shell" class="map-ticker-shell">
       <div class="enter-ticker" id="enter_ticker" style="display:none;">
@@ -80,6 +80,11 @@
           aria-label="Hole layout"></canvas>
         <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
         <div class="hole-map-location">
+          <div id="map_mode_toggle" class="toggle hole-map-mode-toggle" role="group" aria-label="Map mode"
+            style="display:none;">
+            <button type="button" data-map-mode="simplified">Satellite</button>
+            <button type="button" data-map-mode="full">Advanced</button>
+          </div>
           <button id="loc_btn" type="button">Use My Location</button>
           <button id="loc_clear" class="secondary" type="button">Clear Location</button>
         </div>

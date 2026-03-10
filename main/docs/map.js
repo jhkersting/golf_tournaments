@@ -38,6 +38,7 @@ const LOCATION_MIN_MOVEMENT_UPDATE_M = 2.5;
 const LOCATION_BASE_JUMP_TOLERANCE_M = 12;
 const LOCATION_MAX_REASONABLE_SPEED_MPS = 14;
 const GEO_GRANTED_KEY = "hole-map:geo-granted";
+const MAP_MODE_PREFS_KEY = "hole-map:map-mode-preferences";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 const MAP_PROXIMITY_ZOOM_MAX_BOOST = 0.45;
 const USER_ZOOM_MIN = 1;
@@ -94,6 +95,8 @@ const entryState = {
   selectedRoundIndex: 0,
   currentHoleIndex: 0,
   currentInputs: [],
+  currentMapMeta: null,
+  mapModePreferenceBySlug: Object.create(null),
   submitting: false,
   refreshTimer: 0,
 };
@@ -182,6 +185,8 @@ const els = {
   scoreRows: null,
   scoreStatus: null,
   mapInfo: null,
+  mapModeToggle: document.getElementById("map_mode_toggle"),
+  scoreOverrideInput: null,
 };
 
 function parseHoleRef(value) {
@@ -1091,6 +1096,53 @@ function persistGeolocationGrant(granted) {
   } catch (_) {
     // ignore
   }
+}
+
+function normalizeMapModeValue(value) {
+  const mode = String(value || "").toLowerCase();
+  return mode === MAP_MODE_FULL || mode === MAP_MODE_SIMPLIFIED ? mode : "";
+}
+
+function readMapModePreferences() {
+  try {
+    const raw = localStorage.getItem(MAP_MODE_PREFS_KEY);
+    if (!raw) return Object.create(null);
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return Object.create(null);
+    }
+    const prefs = Object.create(null);
+    for (const [slug, mode] of Object.entries(parsed)) {
+      const cleanSlug = String(slug || "").trim();
+      const cleanMode = normalizeMapModeValue(mode);
+      if (!cleanSlug || !cleanMode) continue;
+      prefs[cleanSlug] = cleanMode;
+    }
+    return prefs;
+  } catch (_) {
+    return Object.create(null);
+  }
+}
+
+function persistMapModePreferences() {
+  try {
+    localStorage.setItem(MAP_MODE_PREFS_KEY, JSON.stringify(entryState.mapModePreferenceBySlug));
+  } catch (_) {
+    // ignore
+  }
+}
+
+function hydrateMapModePreferences() {
+  entryState.mapModePreferenceBySlug = readMapModePreferences();
+}
+
+function rememberMapModePreference(slug, mode) {
+  const cleanSlug = String(slug || "").trim();
+  const cleanMode = normalizeMapModeValue(mode);
+  if (!cleanSlug || !cleanMode) return;
+  if (entryState.mapModePreferenceBySlug[cleanSlug] === cleanMode) return;
+  entryState.mapModePreferenceBySlug[cleanSlug] = cleanMode;
+  persistMapModePreferences();
 }
 
 function updateTrackingButton() {
@@ -3103,7 +3155,55 @@ function renderTicker(tjson, playersById, teamsById, roundIndex) {
 }
 
 function mapModeLabel(mode) {
-  return mode === MAP_MODE_FULL ? "Full map" : "Simplified map";
+  return mode === MAP_MODE_FULL ? "Advanced map" : "Satellite map (simplified)";
+}
+
+function mapModeButtonLabel(mode) {
+  return mode === MAP_MODE_FULL ? "Advanced" : "Satellite";
+}
+
+function availableMapModesFromMeta(meta) {
+  const available = [];
+  if (meta?.has_full_map) available.push(MAP_MODE_FULL);
+  if (meta?.has_simplified_map) available.push(MAP_MODE_SIMPLIFIED);
+  const level = String(meta?.map_level || "").toLowerCase();
+  if ((level === MAP_MODE_FULL || level === MAP_MODE_SIMPLIFIED) && !available.includes(level)) {
+    available.push(level);
+  }
+  return available;
+}
+
+function orderedMapModes(availableModes, preferredMode) {
+  const unique = Array.from(new Set(Array.isArray(availableModes) ? availableModes : []));
+  if (!unique.length) return [];
+  if (!preferredMode || !unique.includes(preferredMode)) return unique;
+  return [preferredMode, ...unique.filter((mode) => mode !== preferredMode)];
+}
+
+function updateMapInfoText(mapMeta, mode) {
+  if (!els.mapInfo) return;
+  const name = mapMeta?.name || mapMeta?.slug || "Course";
+  els.mapInfo.textContent = `${name} • ${mapModeLabel(mode)}`;
+}
+
+function updateMapModeToggleUi(mapMeta, availableModes, activeMode) {
+  if (!els.mapModeToggle) return;
+  const modes = Array.isArray(availableModes) ? availableModes : [];
+  if (!mapMeta || !modes.length) {
+    els.mapModeToggle.style.display = "none";
+    return;
+  }
+  els.mapModeToggle.style.display = "";
+  els.mapModeToggle.querySelectorAll("button[data-map-mode]").forEach((button) => {
+    const mode = String(button.getAttribute("data-map-mode") || "");
+    const available = modes.includes(mode);
+    const active = available && mode === activeMode;
+    button.disabled = !available;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    const label = mapModeLabel(mode);
+    button.title = available ? `Use ${label}` : `${label} is unavailable for this course`;
+  });
 }
 
 function setScoreStatus(message, isError = false) {
@@ -3143,7 +3243,11 @@ function ensureScoreCard() {
         <div id="map_round_tabs" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
       </div>
       <div id="map_score_rows" style="display:flex; flex-wrap:wrap; gap:8px; overflow:auto; padding:2px 1px; margin-top:10px;"></div>
-      <div class="actions hole-actions" style="margin-top:10px;">
+      <div class="actions hole-actions" style="margin-top:10px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <label class="small" style="display:inline-flex; align-items:center; gap:6px; margin-right:auto;">
+          <input id="map_score_override" type="checkbox" />
+          Override existing
+        </label>
         <button id="map_submit_hole_btn" type="button">Submit hole</button>
       </div>
       <div class="small" id="map_score_status" style="margin-top:8px;"></div>
@@ -3159,6 +3263,7 @@ function ensureScoreCard() {
     els.scoreRows = card.querySelector("#map_score_rows");
     els.scoreStatus = card.querySelector("#map_score_status");
     els.mapInfo = card.querySelector("#map_course_info");
+    els.scoreOverrideInput = card.querySelector("#map_score_override");
     const submitBtn = card.querySelector("#map_submit_hole_btn");
     const changeCodeBtn = card.querySelector("#map_change_code_btn");
     submitBtn?.addEventListener("click", async () => {
@@ -3168,13 +3273,32 @@ function ensureScoreCard() {
       }
     });
     changeCodeBtn?.addEventListener("click", clearCodeAndReload);
+    els.mapModeToggle?.addEventListener("click", async (event) => {
+      const button = event.target?.closest?.("button[data-map-mode]");
+      if (!button || button.disabled) return;
+      const requestedMode = String(button.getAttribute("data-map-mode") || "");
+      if (requestedMode !== MAP_MODE_FULL && requestedMode !== MAP_MODE_SIMPLIFIED) return;
+      if (!entryState.currentMapMeta) return;
+      if (requestedMode === state.mapMode && entryState.currentMapMeta.slug === state.dataSlug) return;
+      setScoreStatus(`Loading ${mapModeButtonLabel(requestedMode)} map…`);
+      const result = await loadMapForSelectedRound({ forcedMode: requestedMode });
+      if (result?.ok) {
+        setScoreStatus(`Using ${mapModeLabel(result.mode)}.`);
+      } else if (result?.message) {
+        setScoreStatus(result.message, true);
+      } else {
+        setScoreStatus("Could not switch map mode.", true);
+      }
+    });
   }
 }
 
 function showCodePrompt() {
   ensureScoreCard();
   if (!els.scoreRows || !els.roundTabs || !els.mapInfo) return;
+  entryState.currentMapMeta = null;
   els.mapInfo.textContent = "Player code required";
+  updateMapModeToggleUi(null, [], "");
   els.roundTabs.innerHTML = "";
   els.scoreRows.innerHTML = `
     <div style="min-width:280px;">
@@ -3263,11 +3387,7 @@ function resolveCourseMapMeta(course, mapIndex) {
 }
 
 function mapModeFromMeta(meta) {
-  if (meta?.has_full_map) return MAP_MODE_FULL;
-  if (meta?.has_simplified_map) return MAP_MODE_SIMPLIFIED;
-  if (String(meta?.map_level || "").toLowerCase() === MAP_MODE_FULL) return MAP_MODE_FULL;
-  if (String(meta?.map_level || "").toLowerCase() === MAP_MODE_SIMPLIFIED) return MAP_MODE_SIMPLIFIED;
-  return "";
+  return availableMapModesFromMeta(meta)[0] || "";
 }
 
 function dataCandidatesForSlug(slug) {
@@ -3663,10 +3783,11 @@ async function refreshTournamentJson() {
   return fresh;
 }
 
-async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = false } = {}) {
+async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = false, override = null } = {}) {
   if (entryState.submitting) return { ok: false };
   const roundIndex = entryState.selectedRoundIndex;
   const holeIndex = entryState.currentHoleIndex;
+  const withOverride = override == null ? Boolean(els.scoreOverrideInput?.checked) : Boolean(override);
   const entries = [];
   for (const { targetId, input } of entryState.currentInputs || []) {
     const raw = String(input?.value ?? "").trim();
@@ -3693,7 +3814,7 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
         mode: "hole",
         holeIndex,
         entries,
-        override: false,
+        override: withOverride,
       },
     });
     clearHoleDraftTargets(
@@ -3716,7 +3837,11 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
     return { ok: true, submitted: true };
   } catch (error) {
     if (error?.status === 409) {
-      setScoreStatus("Conflict: scores already posted. Use Enter Scores page to override.", true);
+      if (withOverride) {
+        setScoreStatus("Conflict: existing scores could not be overridden for this player code.", true);
+      } else {
+        setScoreStatus('Conflict: scores already posted. Check "Override existing" and submit again.', true);
+      }
       return { ok: false, conflict: true };
     }
     setScoreStatus(`Error: ${error?.message || String(error)}`, true);
@@ -3726,7 +3851,7 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
   }
 }
 
-async function loadMapForSelectedRound() {
+async function loadMapForSelectedRound({ forcedMode = "" } = {}) {
   const roundIndex = entryState.selectedRoundIndex;
   const course = courseForRoundRaw(entryState.tournament, roundIndex);
   const mapIndex = await ensureCourseMapIndex();
@@ -3739,9 +3864,11 @@ async function loadMapForSelectedRound() {
       mapMeta = { slug: FORCED_DATA_SLUG, name: FORCED_DATA_SLUG, has_simplified_map: true };
     }
   }
+  entryState.currentMapMeta = mapMeta || null;
   if (!mapMeta) {
     resetMapData();
     state.mapLabel = "No map";
+    updateMapModeToggleUi(null, [], "");
     if (els.mapInfo) {
       els.mapInfo.textContent = `No map found for ${course?.name || "selected course"}.`;
     }
@@ -3749,13 +3876,14 @@ async function loadMapForSelectedRound() {
       els.holeEmpty.style.display = "";
       els.holeEmpty.textContent = "No hole map is available for this course.";
     }
-    return;
+    return { ok: false, reason: "missing" };
   }
 
-  const mode = mapModeFromMeta(mapMeta);
-  if (!mode) {
+  const availableModes = availableMapModesFromMeta(mapMeta);
+  if (!availableModes.length) {
     resetMapData();
     state.mapLabel = "No map";
+    updateMapModeToggleUi(mapMeta, [], "");
     if (els.mapInfo) {
       els.mapInfo.textContent = `${mapMeta?.name || mapMeta?.slug || "Course"} has no map files.`;
     }
@@ -3763,16 +3891,46 @@ async function loadMapForSelectedRound() {
       els.holeEmpty.style.display = "";
       els.holeEmpty.textContent = "No hole map is available for this course.";
     }
-    return;
+    return { ok: false, reason: "missing" };
   }
 
-  state.mapLabel = mapModeLabel(mode);
-  if (els.mapInfo) {
-    els.mapInfo.textContent = `${mapMeta?.name || mapMeta?.slug} • ${state.mapLabel}`;
+  const remembered = entryState.mapModePreferenceBySlug[mapMeta.slug] || "";
+  const mode = forcedMode || remembered || mapModeFromMeta(mapMeta);
+  const modeCandidates = orderedMapModes(availableModes, mode);
+  let loadedMode = "";
+  let lastLoadError = null;
+  for (const candidateMode of modeCandidates) {
+    try {
+      await loadMapDataForCourse(mapMeta.slug, candidateMode);
+      loadedMode = candidateMode;
+      break;
+    } catch (error) {
+      lastLoadError = error;
+    }
   }
-  await loadMapDataForCourse(mapMeta.slug, mode);
+
+  if (!loadedMode) {
+    resetMapData();
+    state.mapLabel = "No map";
+    updateMapModeToggleUi(mapMeta, availableModes, "");
+    if (els.mapInfo) {
+      els.mapInfo.textContent = `${mapMeta?.name || mapMeta?.slug || "Course"} map files could not be loaded.`;
+    }
+    if (els.holeEmpty) {
+      els.holeEmpty.style.display = "";
+      els.holeEmpty.textContent = "No hole map is available for this course.";
+    }
+    const message = `Could not load map files: ${lastLoadError?.message || "Unknown error."}`;
+    return { ok: false, reason: "load_failed", message };
+  }
+
+  rememberMapModePreference(mapMeta.slug, loadedMode);
+  state.mapLabel = mapModeLabel(loadedMode);
+  updateMapInfoText(mapMeta, loadedMode);
+  updateMapModeToggleUi(mapMeta, availableModes, loadedMode);
   setHoleByIndex(entryState.currentHoleIndex, { syncEntry: false });
   renderCurrentHole();
+  return { ok: true, mode: loadedMode };
 }
 
 async function selectRound(roundIndex, { jumpToSuggestedHole = false } = {}) {
@@ -3862,6 +4020,7 @@ function startAutoRefresh() {
 
 async function init() {
   ensureScoreCard();
+  hydrateMapModePreferences();
   bindEvents();
   state.locationPermissionGranted = readGeolocationGrant();
   updateTrackingButton();
