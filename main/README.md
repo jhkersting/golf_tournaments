@@ -16,7 +16,7 @@ Example:
 - STATIC_BASE = "https://YOUR_CLOUDFRONT_DOMAIN"
   or          = "https://your-public-bucket.s3.us-east-1.amazonaws.com"
 
-## What makes it seamless?
-Reads come from static JSON with ETag caching (`staticJson()`), and the app keeps a small local draft for hole inputs so reloads feel instant.
+## Current behavior
+Reads come directly from the published static JSON without service-worker or browser persistence for tournament payloads.
 
 Writes still go to the API (`/scores`) and the backend re-materializes the static JSON immediately.

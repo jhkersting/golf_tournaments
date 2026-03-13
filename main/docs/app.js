@@ -44,35 +44,13 @@ export async function api(path, { method="GET", body=null, headers={} } = {}) {
 
 export async function staticJson(path, { cacheKey=null } = {}){
   const url = `${STATIC_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
-  const key = cacheKey || `static:${url}`;
-  const metaKey = `${key}:meta`;
-
-  const meta = (() => {
-    try{ return JSON.parse(localStorage.getItem(metaKey) || "null"); } catch { return null; }
-  })();
-
-  // Render from cache immediately if present; caller can decide
-  const headers = {};
-  if (meta?.etag) headers["If-None-Match"] = meta.etag;
-
-  const res = await fetch(url, { headers, cache: "no-cache" });
-  if (res.status === 304 && meta?.json){
-    return meta.json;
-  }
+  void cacheKey;
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok){
-    // fallback to cached if available
-    if (meta?.json) return meta.json;
     const txt = await res.text().catch(()=> "");
     throw new Error(`STATIC ${res.status}: ${txt}`);
   }
-
-  const etag = res.headers.get("ETag") || res.headers.get("etag");
-  const jsonData = await res.json();
-  try{
-    localStorage.setItem(metaKey, JSON.stringify({ etag, json: jsonData, ts: Date.now() }));
-  }catch(_){}
-
-  return jsonData;
+  return res.json();
 }
 
 export function qs(name){ return new URLSearchParams(location.search).get(name); }
