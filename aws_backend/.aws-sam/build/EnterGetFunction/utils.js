@@ -740,24 +740,35 @@ export function materializePublicFromState(state){
         for (let i=0;i<18;i++){
           let grossSum = 0;
           let netSum = 0;
-          let allGross = groupKeys.length > 0;
-          let allNet = groupKeys.length > 0;
+          let grossCount = 0;
+          let netCount = 0;
           for (const key of groupKeys){
             const gGross = Number.isFinite(groupGross[key]?.[i]) ? Number(groupGross[key][i]) : null;
             const gNet = Number.isFinite(groupNet[key]?.[i]) ? Number(groupNet[key][i]) : null;
-            if (gGross == null) allGross = false;
-            else grossSum += gGross;
-            if (gNet == null) allNet = false;
-            else netSum += gNet;
+            if (gGross != null) {
+              grossSum += gGross;
+              grossCount += 1;
+            }
+            if (gNet != null) {
+              netSum += gNet;
+              netCount += 1;
+            }
           }
-          if (allGross) gross[i] = grossSum;
-          if (allNet) net[i] = netSum;
-          const parBase = Number(roundCourse.pars[i] || 0) * groupKeys.length;
-          if (allGross) grossToPar[i] = grossSum - parBase;
-          if (allNet) netToPar[i] = netSum - parBase;
+          if (grossCount > 0) gross[i] = grossSum;
+          if (netCount > 0) net[i] = netSum;
+          const holePar = Number(roundCourse.pars[i] || 0);
+          if (grossCount > 0) grossToPar[i] = grossSum - (holePar * grossCount);
+          if (netCount > 0) netToPar[i] = netSum - (holePar * netCount);
         }
 
-        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:(Number(roundCourse.pars[i] || 0) * groupKeys.length)),0);
+        const parPlayed = gross.reduce((acc, v, i) => {
+          if (v == null) return acc;
+          let groupsPlayed = 0;
+          for (const key of groupKeys) {
+            if (Number.isFinite(groupGross[key]?.[i])) groupsPlayed += 1;
+          }
+          return acc + (Number(roundCourse.pars[i] || 0) * groupsPlayed);
+        }, 0);
         const grossTotal = sumPlayed(gross);
         const netTotal = sumPlayed(net);
         const thru = thruFromHoles(gross);
