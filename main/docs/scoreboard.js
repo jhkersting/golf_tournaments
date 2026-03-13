@@ -1188,18 +1188,30 @@ function combineGroupHoleSets(groups) {
   const out = Array(18).fill(null);
   for (let i = 0; i < 18; i++) {
     let sum = 0;
-    let allPresent = (groups || []).length > 0;
+    let count = 0;
     for (const arr of groups || []) {
       const v = asPlayedNumber(arr?.[i]);
-      if (v == null) {
-        allPresent = false;
-        break;
+      if (v != null) {
+        sum += v;
+        count += 1;
       }
-      sum += v;
     }
-    out[i] = allPresent ? sum : null;
+    out[i] = count > 0 ? sum : null;
   }
   return out;
+}
+
+function twoManTeamParFromGroups(par, groups, metric) {
+  return Array.from({ length: 18 }, (_, i) => {
+    const holePar = Number(par?.[i] || 0);
+    let multiplier = 0;
+    for (const group of groups || []) {
+      const holes = metric === "net" ? group?.net : group?.gross;
+      if (asPlayedNumber(holes?.[i]) == null) continue;
+      multiplier += Number(group?.parMultiplier || 1);
+    }
+    return holePar * multiplier;
+  });
 }
 
 function playerNameMap() {
@@ -1433,12 +1445,13 @@ function buildTwoManBestBallTeamScorecard(roundIndex, teamRow, useHandicap) {
   if (!anyData) return null;
 
   const par = getCoursePars(roundIndex);
-  const teamParMultiplier = groups.reduce((sum, group) => sum + Number(group?.parMultiplier || 1), 0) || 1;
+  const teamGrossPar = twoManTeamParFromGroups(par, groups, "gross");
+  const teamNetPar = twoManTeamParFromGroups(par, groups, "net");
   const teamScores = {
     gross: teamGross,
     net: teamNet,
     handicapShots: Array.isArray(teamEntry?.handicapShots) ? teamEntry.handicapShots : Array(18).fill(0),
-    par: par.map((value) => Number(value || 0) * teamParMultiplier),
+    par: useHandicap ? teamNetPar : teamGrossPar,
     grossTotal: teamEntry?.grossTotal,
     netTotal: teamEntry?.netTotal,
     grossToParTotal: teamEntry?.grossToParTotal,
