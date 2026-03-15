@@ -722,6 +722,29 @@ function netStrokesForRow(row) {
   return null;
 }
 
+function handicapStrokesForRow(row) {
+  if (row?.handicapStrokes != null && Number(row.handicapStrokes) > 0) return Number(row.handicapStrokes);
+  if (row?.scores?.handicapStrokes != null && Number(row.scores.handicapStrokes) > 0) {
+    return Number(row.scores.handicapStrokes);
+  }
+  if (Array.isArray(row?.scores?.handicapShots)) {
+    const total = sumHoles(row.scores.handicapShots);
+    if (total > 0) return total;
+  }
+  const gross = grossForRow(row);
+  const net = netForRow(row);
+  if (gross != null && net != null) {
+    const total = Number(gross) - Number(net);
+    if (total > 0) return total;
+  }
+  return null;
+}
+
+function handicapStrokesLabelForRow(row) {
+  const total = handicapStrokesForRow(row);
+  return total == null ? "" : ` (${formatDecimal(total)})`;
+}
+
 function toParDisplay(v) {
   if (v == null) return "—";
   if (typeof v === "number" && Number.isFinite(v)) return toParStrFromDiff(v);
@@ -1607,6 +1630,7 @@ function renderLeaderboard(data) {
   const isTwoManGroupView = !isTeam && !isAllRounds && isTwoManRound(data.view?.round);
   const allowInlineScorecard = data.view?.round !== "all";
   const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
+  const showHandicapNameStrokes = isHandicapRound(data.view?.round);
   const showStrokesColumn = isTeam && isAllRounds;
   lbTitle.textContent = isTeam ? "Teams" : isTwoManGroupView ? "Groups" : "Individuals";
   rebuildTeamColors();
@@ -1705,10 +1729,15 @@ function renderLeaderboard(data) {
       standingRank == null || displayedRanks.has(standingRank) ? "" : `${standingRank}`;
     if (standingRank != null) displayedRanks.add(standingRank);
     const teamColor = colorForTeam(r.teamId, r.teamName);
+    const baseName = isTeam ? r.teamName : r.name;
+    const displayName = baseName || (isTeam ? "Team" : "Player");
+    const handicapSuffix = showHandicapNameStrokes ? handicapStrokesLabelForRow(r) : "";
 
     const nameCell = `
       <td class="left name-col">
-        <div class="${isTeam ? "team-accent" : ""}" style="--team-accent:${teamColor};"><b>${isTeam ? r.teamName : r.name}</b></div>
+        <div class="${isTeam ? "team-accent" : ""}" style="--team-accent:${teamColor};">
+          <b>${displayName}</b>${handicapSuffix ? `<span style="font-size:calc(1em - 2px); font-weight:400;">${handicapSuffix}</span>` : ""}
+        </div>
         ${!isTeam && r.teamName ? `<div class="small muted team-accent team-accent-sub" style="--team-accent:${teamColor};">${r.teamName}</div>` : ""}
       </td>
     `;
