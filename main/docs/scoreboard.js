@@ -743,10 +743,9 @@ function firstDefined(obj, keys) {
 }
 
 function grossToParForRow(row, data) {
-  // Prefer hole-by-hole computation so unplayed holes never count against par.
-  if (Array.isArray(row?.scores?.gross) && Array.isArray(data?.course?.pars)) {
-    const diff = row.scores.gross.reduce(
-      (a, v, i) => a + (!isPlayedScore(v) ? 0 : Number(v) - Number(data.course.pars[i] || 0)),
+  if (Array.isArray(row?.scores?.grossToPar)) {
+    const diff = row.scores.grossToPar.reduce(
+      (a, v) => a + (v == null ? 0 : Number(v) || 0),
       0
     );
     return toParDisplay(diff);
@@ -761,6 +760,16 @@ function grossToParForRow(row, data) {
   if (explicit != null) return toParDisplay(explicit);
   if (row?.scores?.grossToParTotal != null) return toParDisplay(row.scores.grossToParTotal);
 
+  // Fall back to hole-by-hole computation when an explicit total is unavailable.
+  const parByHole = Array.isArray(row?.scores?.par) ? row.scores.par : data?.course?.pars;
+  if (Array.isArray(row?.scores?.gross) && Array.isArray(parByHole)) {
+    const diff = row.scores.gross.reduce(
+      (a, v, i) => a + (!isPlayedScore(v) ? 0 : Number(v) - Number(parByHole[i] || 0)),
+      0
+    );
+    return toParDisplay(diff);
+  }
+
   const gross = grossForRow(row);
   const parTotal = Number(data?.course?.parTotal || 0);
   if (gross != null && parTotal > 0 && Number(row?.thru || 0) >= 18) {
@@ -770,10 +779,9 @@ function grossToParForRow(row, data) {
 }
 
 function netToParForRow(row, data) {
-  // Prefer hole-by-hole computation so unplayed holes never count against par.
-  if (Array.isArray(row?.scores?.net) && Array.isArray(data?.course?.pars)) {
-    const diff = row.scores.net.reduce(
-      (a, v, i) => a + (!isPlayedScore(v) ? 0 : Number(v) - Number(data.course.pars[i] || 0)),
+  if (Array.isArray(row?.scores?.netToPar)) {
+    const diff = row.scores.netToPar.reduce(
+      (a, v) => a + (v == null ? 0 : Number(v) || 0),
       0
     );
     return toParDisplay(diff);
@@ -787,6 +795,16 @@ function netToParForRow(row, data) {
   ]);
   if (explicit != null) return toParDisplay(explicit);
   if (row?.scores?.netToParTotal != null) return toParDisplay(row.scores.netToParTotal);
+
+  // Fall back to hole-by-hole computation when an explicit total is unavailable.
+  const parByHole = Array.isArray(row?.scores?.par) ? row.scores.par : data?.course?.pars;
+  if (Array.isArray(row?.scores?.net) && Array.isArray(parByHole)) {
+    const diff = row.scores.net.reduce(
+      (a, v, i) => a + (!isPlayedScore(v) ? 0 : Number(v) - Number(parByHole[i] || 0)),
+      0
+    );
+    return toParDisplay(diff);
+  }
 
   const net = netForRow(row);
   const parTotal = Number(data?.course?.parTotal || 0);
@@ -1893,6 +1911,8 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
       scores: {
         gross,
         net,
+        grossToPar,
+        netToPar,
         handicapShots,
         grossTotal,
         netTotal,

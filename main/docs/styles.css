@@ -1543,7 +1543,7 @@ th.dots {
   height: auto;
   max-height: 75vh;
   display: block;
-  touch-action: none;
+  touch-action: auto;
   border-radius: 14px;
   border: 0;
   background: color-mix(in srgb, var(--surface) 85%, var(--bg));

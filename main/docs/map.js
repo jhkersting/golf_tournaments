@@ -2119,10 +2119,6 @@ function bindEvents() {
 
   if (els.holeCanvas) {
     els.holeCanvas.addEventListener("click", handleHoleTap);
-    els.holeCanvas.addEventListener("touchstart", handleCanvasTouchStart, { passive: false });
-    els.holeCanvas.addEventListener("touchmove", handleCanvasTouchMove, { passive: false });
-    els.holeCanvas.addEventListener("touchend", handleCanvasTouchEnd, { passive: true });
-    els.holeCanvas.addEventListener("touchcancel", handleCanvasTouchCancel, { passive: true });
   }
 
   window.addEventListener("keydown", (event) => {
