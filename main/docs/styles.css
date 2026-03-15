@@ -1504,8 +1504,22 @@ th.dots {
 .hole-map-location {
   align-items: center;
   text-align: center;
-  display: block;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
   margin-top: 6px;
+}
+
+.hole-map-location-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.hole-map-zoom-toggle {
+  display: inline-flex;
+  justify-content: center;
 }
 
 .hole-map-mode-toggle {
@@ -1653,6 +1667,12 @@ th.dots {
   .hole-map-location button {
     width: 100%;
     min-width: 0;
+  }
+
+  .hole-map-location-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .hole-map-location .small {
