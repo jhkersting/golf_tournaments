@@ -39,8 +39,11 @@ const LOCATION_BASE_JUMP_TOLERANCE_M = 12;
 const LOCATION_MAX_REASONABLE_SPEED_MPS = 14;
 const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_MODE_PREFS_KEY = "hole-map:map-mode-preferences";
+const AUTO_ZOOM_PREFS_KEY = "hole-map:auto-zoom-enabled";
 const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 const MAP_PROXIMITY_ZOOM_MAX_BOOST = 0.45;
+const MAP_PLAYER_REAR_PADDING_YARDS = 20;
+const MAP_GREEN_BACK_PADDING_YARDS = 20;
 const USER_ZOOM_MIN = 1;
 const USER_ZOOM_MAX = 3;
 const TAP_PREVIEW_DURATION_MS = 7000;
@@ -76,6 +79,7 @@ const state = {
   renderNonce: 0,
   tileImageCache: new Map(),
   userZoomMultiplier: 1,
+  autoZoomEnabled: true,
   userPanX: 0,
   userPanY: 0,
   lastProjectionInput: null,
@@ -169,6 +173,7 @@ const els = {
   holeNext: document.getElementById("hole_next"),
   locBtn: document.getElementById("loc_btn"),
   locClear: document.getElementById("loc_clear"),
+  zoomAutoToggle: document.getElementById("zoom_auto_toggle"),
   metricSummary: document.getElementById("metric_summary"),
   metricToPointHead: document.getElementById("metric_to_point_head"),
   metricToPointRow: document.getElementById("metric_to_point_row"),
@@ -1136,6 +1141,35 @@ function hydrateMapModePreferences() {
   entryState.mapModePreferenceBySlug = readMapModePreferences();
 }
 
+function readAutoZoomPreference() {
+  try {
+    const raw = localStorage.getItem(AUTO_ZOOM_PREFS_KEY);
+    if (raw === "0" || raw === "false") return false;
+  } catch (_) {
+    // ignore
+  }
+  return true;
+}
+
+function persistAutoZoomPreference(enabled) {
+  try {
+    localStorage.setItem(AUTO_ZOOM_PREFS_KEY, enabled ? "1" : "0");
+  } catch (_) {
+    // ignore
+  }
+}
+
+function updateAutoZoomButton() {
+  if (!els.zoomAutoToggle) return;
+  els.zoomAutoToggle.textContent = state.autoZoomEnabled ? "Auto Zoom: On" : "Auto Zoom: Off";
+  els.zoomAutoToggle.setAttribute("aria-pressed", state.autoZoomEnabled ? "true" : "false");
+}
+
+function hydrateAutoZoomPreference() {
+  state.autoZoomEnabled = readAutoZoomPreference();
+  updateAutoZoomButton();
+}
+
 function rememberMapModePreference(slug, mode) {
   const cleanSlug = String(slug || "").trim();
   const cleanMode = normalizeMapModeValue(mode);
@@ -1717,7 +1751,16 @@ async function renderCurrentHole() {
   const mapShouldFocusHole =
     Number.isFinite(userToGreenCenterYards) && userToGreenCenterYards > MAP_FOCUS_MAX_USER_DISTANCE_YARDS;
   const mapPlayerPoint = mapShouldFocusHole ? null : basePoint;
+  const playerRearPaddingPoint =
+    Array.isArray(mapPlayerPoint) && Array.isArray(greenTargets.center)
+      ? projectBeyondPoint(greenTargets.center, mapPlayerPoint, MAP_PLAYER_REAR_PADDING_YARDS)
+      : null;
+  const greenBackPaddingPoint =
+    Array.isArray(greenTargets.center) && Array.isArray(greenTargets.back)
+      ? projectBeyondPoint(greenTargets.center, greenTargets.back, MAP_GREEN_BACK_PADDING_YARDS)
+      : null;
   const proximityZoomMultiplier = (() => {
+    if (!state.autoZoomEnabled) return 1;
     if (!Number.isFinite(userToGreenCenterYards) || mapShouldFocusHole) return 1;
     const nearFactor = Math.max(
       0,
@@ -1813,6 +1856,8 @@ async function renderCurrentHole() {
     greenTargets.back,
     syntheticBackProjectionPoint,
     mapPlayerPoint,
+    playerRearPaddingPoint,
+    greenBackPaddingPoint,
   ];
 
   const teeRefForMarkers = Array.isArray(backTee) ? backTee : alignmentStart;
@@ -2113,6 +2158,15 @@ function bindEvents() {
   if (els.locClear) {
     els.locClear.addEventListener("click", () => {
       stopLocationTracking(true, "Location cleared.");
+      renderCurrentHole();
+    });
+  }
+
+  if (els.zoomAutoToggle) {
+    els.zoomAutoToggle.addEventListener("click", () => {
+      state.autoZoomEnabled = !state.autoZoomEnabled;
+      persistAutoZoomPreference(state.autoZoomEnabled);
+      updateAutoZoomButton();
       renderCurrentHole();
     });
   }
@@ -4017,6 +4071,7 @@ function startAutoRefresh() {
 async function init() {
   ensureScoreCard();
   hydrateMapModePreferences();
+  hydrateAutoZoomPreference();
   bindEvents();
   state.locationPermissionGranted = readGeolocationGrant();
   updateTrackingButton();
