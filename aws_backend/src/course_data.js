@@ -122,6 +122,12 @@ export function normalizeCourseRecord(course) {
   const bluegolfUrl = trimString(course.bluegolfUrl, 500);
   if (bluegolfUrl) out.bluegolfUrl = bluegolfUrl;
 
+  const dataSlug = trimString(course.dataSlug, 140);
+  if (dataSlug) out.dataSlug = dataSlug;
+
+  const mapSlug = trimString(course.mapSlug, 140);
+  if (mapSlug) out.mapSlug = mapSlug;
+
   const tees = Array.isArray(course.tees)
     ? course.tees.map((entry) => normalizeTee(entry)).filter(Boolean)
     : [];

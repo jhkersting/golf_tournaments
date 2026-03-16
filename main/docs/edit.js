@@ -28,6 +28,7 @@ const scoresStatus = document.getElementById("scores_status");
 
 const nameEl = document.getElementById("e_name");
 const datesEl = document.getElementById("e_dates");
+const scoringEl = document.getElementById("e_scoring");
 const roundRows = document.getElementById("round_rows");
 const playersHead = document.getElementById("players_head");
 const playerRows = document.getElementById("player_rows");
@@ -973,6 +974,8 @@ function normalizeCourseForUi(course) {
   const defaultSi = Array.from({ length: 18 }, (_, i) => i + 1);
   const courseId = String(course?.courseId || course?.id || "").trim();
   const sourceCourseId = String(course?.sourceCourseId || "").trim();
+  const dataSlug = String(course?.dataSlug || "").trim();
+  const mapSlug = String(course?.mapSlug || "").trim();
   const pars = Array.isArray(course?.pars) && course.pars.length === 18
     ? course.pars.map((v) => Number(v) || 4)
     : defaultPars;
@@ -987,6 +990,8 @@ function normalizeCourseForUi(course) {
   return {
     courseId,
     ...(sourceCourseId ? { sourceCourseId } : {}),
+    ...(dataSlug ? { dataSlug } : {}),
+    ...(mapSlug ? { mapSlug } : {}),
     name: String(course?.name || "").trim(),
     pars,
     strokeIndex: siErr ? defaultSi : strokeIndex,
@@ -1146,7 +1151,9 @@ function collectCourse() {
   const siErr = validateStrokeIndex(strokeIndex);
   if (siErr) throw new Error(siErr);
   const out = {
-    ...(base?.sourceCourseId ? { sourceCourseId: base.sourceCourseId } : {}),
+    ...((base?.sourceCourseId || base?.courseId) ? { sourceCourseId: base?.sourceCourseId || base?.courseId } : {}),
+    ...(base?.dataSlug ? { dataSlug: base.dataSlug } : {}),
+    ...(base?.mapSlug ? { mapSlug: base.mapSlug } : {}),
     ...(base?.selectedTeeKey ? { selectedTeeKey: base.selectedTeeKey } : {}),
     ...(base?.teeName ? { teeName: base.teeName } : {}),
     ...(base?.teeLabel ? { teeLabel: base.teeLabel } : {}),
@@ -1494,6 +1501,7 @@ function renderPage(data) {
   setHeaderTournamentName(data?.tournament?.name);
   nameEl.value = data?.tournament?.name || "";
   datesEl.value = data?.tournament?.dates || "";
+  if (scoringEl) scoringEl.value = String(data?.tournament?.scoring || "stroke").trim() || "stroke";
   const course = tournamentCourses[0] || normalizeCourseForUi(data?.course || null);
   if (courseNameEl) courseNameEl.value = course.name;
   fillCourseRows(course.pars, course.strokeIndex);
@@ -1557,6 +1565,8 @@ async function resolveCoursesAndRoundsForSave(roundsDraft, primaryCourse) {
     return {
       ...(normalized?.name ? { name: normalized.name } : {}),
       ...(normalized?.sourceCourseId ? { sourceCourseId: normalized.sourceCourseId } : {}),
+      ...(normalized?.dataSlug ? { dataSlug: normalized.dataSlug } : {}),
+      ...(normalized?.mapSlug ? { mapSlug: normalized.mapSlug } : {}),
       ...(normalized?.selectedTeeKey ? { selectedTeeKey: normalized.selectedTeeKey } : {}),
       ...(normalized?.teeName ? { teeName: normalized.teeName } : {}),
       ...(normalized?.teeLabel ? { teeLabel: normalized.teeLabel } : {}),
@@ -1678,7 +1688,8 @@ async function saveTournament() {
       editCode: currentEditCode,
       tournament: {
         name: String(nameEl.value || "").trim(),
-        dates: String(datesEl.value || "").trim()
+        dates: String(datesEl.value || "").trim(),
+        scoring: String(scoringEl?.value || "stroke").trim() || "stroke"
       },
       course: courses[0],
       courses,

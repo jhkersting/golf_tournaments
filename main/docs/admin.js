@@ -4,6 +4,7 @@ const roundsEl = document.getElementById("rounds");
 const addRoundBtn = document.getElementById("add_round");
 const createBtn = document.getElementById("create_tournament");
 const createStatus = document.getElementById("create_status");
+const scoringEl = document.getElementById("t_scoring");
 
 const createdBox = document.getElementById("created_box");
 const tidEl = document.getElementById("tid");
@@ -81,6 +82,8 @@ function normalizeCourseForTournament(course){
   return {
     ...(c.name ? { name: c.name } : {}),
     ...(c.sourceCourseId ? { sourceCourseId: c.sourceCourseId } : {}),
+    ...(c.dataSlug ? { dataSlug: c.dataSlug } : {}),
+    ...(c.mapSlug ? { mapSlug: c.mapSlug } : {}),
     ...(c.selectedTeeKey ? { selectedTeeKey: c.selectedTeeKey } : {}),
     ...(c.teeName ? { teeName: c.teeName } : {}),
     ...(c.teeLabel ? { teeLabel: c.teeLabel } : {}),
@@ -441,6 +444,8 @@ function normalizeCourse(course){
   if (!course || typeof course !== "object") return null;
   const courseId = String(course.courseId || course.id || "").trim();
   const sourceCourseId = String(course.sourceCourseId || "").trim();
+  const dataSlug = String(course.dataSlug || "").trim();
+  const mapSlug = String(course.mapSlug || "").trim();
   const name = String(course.name || "").trim();
   const pars = Array.isArray(course.pars) ? course.pars.map((v) => Number(v) || 0) : null;
   const strokeIndex = Array.isArray(course.strokeIndex)
@@ -453,6 +458,8 @@ function normalizeCourse(course){
   return {
     courseId,
     ...(sourceCourseId ? { sourceCourseId } : {}),
+    ...(dataSlug ? { dataSlug } : {}),
+    ...(mapSlug ? { mapSlug } : {}),
     name,
     pars,
     strokeIndex,
@@ -834,7 +841,9 @@ function collectPrimaryCourseForTournament(){
   const siErr = validateStrokeIndex(strokeIndex);
   if (siErr) throw new Error(siErr);
   return {
-    ...(base?.sourceCourseId ? { sourceCourseId: base.sourceCourseId } : {}),
+    ...((base?.sourceCourseId || base?.courseId) ? { sourceCourseId: base?.sourceCourseId || base?.courseId } : {}),
+    ...(base?.dataSlug ? { dataSlug: base.dataSlug } : {}),
+    ...(base?.mapSlug ? { mapSlug: base.mapSlug } : {}),
     ...(base?.selectedTeeKey ? { selectedTeeKey: base.selectedTeeKey } : {}),
     ...(base?.teeName ? { teeName: base.teeName } : {}),
     ...(base?.teeLabel ? { teeLabel: base.teeLabel } : {}),
@@ -854,6 +863,8 @@ async function resolveCoursesAndRounds(rounds, primaryCourse){
     return {
       ...(normalized?.name ? { name: normalized.name } : {}),
       ...(normalized?.sourceCourseId ? { sourceCourseId: normalized.sourceCourseId } : {}),
+      ...(normalized?.dataSlug ? { dataSlug: normalized.dataSlug } : {}),
+      ...(normalized?.mapSlug ? { mapSlug: normalized.mapSlug } : {}),
       ...(normalized?.selectedTeeKey ? { selectedTeeKey: normalized.selectedTeeKey } : {}),
       ...(normalized?.teeName ? { teeName: normalized.teeName } : {}),
       ...(normalized?.teeLabel ? { teeLabel: normalized.teeLabel } : {}),
@@ -971,6 +982,7 @@ createBtn.onclick = async () => {
   try{
     const name = document.getElementById("t_name").value.trim();
     const dates = document.getElementById("t_dates").value.trim();
+    const scoring = String(scoringEl?.value || "stroke").trim() || "stroke";
     const roundDraft = getRounds();
     if (!name) throw new Error("Tournament name is required.");
     if (!roundDraft.length) throw new Error("Add at least one round.");
@@ -983,6 +995,8 @@ createBtn.onclick = async () => {
       body:{
         name,
         dates,
+        scoring,
+        tournament: { scoring },
         rounds,
         courses,
         course: courses[0]

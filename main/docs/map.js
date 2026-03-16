@@ -2,6 +2,7 @@ import {
   api,
   staticJson,
   qs,
+  STATIC_BASE,
   createTeamColorRegistry,
   setHeaderTournamentName,
   STORAGE_KEYS,
@@ -19,6 +20,8 @@ import {
 } from "./offline.js";
 
 const DATA_ROOT_CANDIDATES = [
+  "./data",
+  `${STATIC_BASE}/course-data`,
   "../../golf_course_hole_geo_data/data",
   "/golf_tournaments/golf_course_hole_geo_data/data",
   "/golf_course_hole_geo_data/data",
@@ -2601,6 +2604,10 @@ function normalizeScoreArray(arr) {
   return (Array.isArray(arr) ? arr : Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : Number(v)));
 }
 
+function isCompleteScoreArray(arr) {
+  return normalizeScoreArray(arr).every((v) => !isEmptyScore(v));
+}
+
 function nextHoleIndexForGroup(savedByTarget, targetIds) {
   for (let i = 0; i < 18; i += 1) {
     for (const id of targetIds || []) {
@@ -3478,7 +3485,14 @@ async function fetchCourseMapIndex() {
       // try next path
     }
   }
-  throw new Error(`Could not load course map index: ${attempts.join(" | ")}`);
+  return {
+    generated_at_utc: "",
+    data_root: "",
+    course_count: 0,
+    counts_by_map_level: { full: 0, simplified: 0, none: 0 },
+    courses_by_slug: {},
+    courses: []
+  };
 }
 
 function startCourseMapIndexFetch() {
@@ -3504,6 +3518,9 @@ function resolveCourseMapMeta(course, mapIndex) {
   const slugCandidates = [
     course?.mapSlug,
     course?.dataSlug,
+    course?.sourceCourseId,
+    course?.courseId,
+    course?.bluegolfCourseSlug,
     course?.slug,
     course?.courseSlug,
     course?.course_slug,
@@ -3519,6 +3536,15 @@ function resolveCourseMapMeta(course, mapIndex) {
   if (targetNameKey) {
     const exact = courses.find((item) => normalizeKey(item?.name) === targetNameKey);
     if (exact?.slug) return { slug: exact.slug, ...exact };
+  }
+
+  if (slugCandidates.length) {
+    return {
+      slug: slugCandidates[0],
+      name: course?.name || course?.courseName || course?.title || slugCandidates[0],
+      has_simplified_map: true,
+      map_level: "simplified"
+    };
   }
 
   return null;
@@ -3770,11 +3796,17 @@ function roundTargets(roundIndex) {
 
 function activeRoundIndexFromTournament() {
   const rounds = entryState.rounds || [];
+  for (let i = 0; i < rounds.length; i += 1) {
+    const { targets, savedByTarget, progressTargetIds } = roundTargets(i);
+    const progressIds = progressTargetIds?.length ? progressTargetIds : targets.map((target) => target.id);
+    if (!progressIds.length) return i;
+    if (!progressIds.every((id) => isCompleteScoreArray(savedByTarget[id]))) return i;
+  }
   const scoreRounds = entryState.tournament?.score_data?.rounds || [];
   for (let i = rounds.length - 1; i >= 0; i -= 1) {
     if (roundHasAnyData(scoreRounds[i])) return i;
   }
-  return 0;
+  return rounds.length ? rounds.length - 1 : 0;
 }
 
 const draftByRound = Object.create(null);
