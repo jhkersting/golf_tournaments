@@ -250,6 +250,12 @@ Resources:
       - S3WritePolicy:
           BucketName:
             Ref: StateBucketName
+      - S3ReadPolicy:
+          BucketName:
+            Ref: PublicBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: PublicBucketName
       Events:
         GetCourses:
           Type: Api

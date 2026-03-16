@@ -348,6 +348,11 @@ function isEmptyScore(v) {
   return v == null || Number(v) === 0;
 }
 
+function isCompleteScoreArray(arr) {
+  const scores = Array.isArray(arr) ? arr : Array(18).fill(null);
+  return scores.length >= 18 && scores.slice(0, 18).every((v) => !isEmptyScore(v));
+}
+
 function nextHoleIndexForGroup(savedByTarget, targetIds) {
   // choose the lowest hole where at least one target doesn't have a score yet
   for (let i = 0; i < 18; i++) {
@@ -537,6 +542,12 @@ function normalizePostedScore(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n;
+}
+
+function scoreValue(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  return String(Math.round(n));
 }
 
 function scoreResultLabel(diffToPar) {
@@ -1310,14 +1321,62 @@ async function main() {
 
   forms.innerHTML = "";
 
-  // Open newest round that already has data; fallback to round 1.
+  function progressTargetIdsForRound(roundIndex) {
+    const round = rounds[roundIndex] || {};
+    const fmt = String(round.format || "singles").toLowerCase();
+    if (fmt === "scramble") return [enter.team?.teamId].filter(Boolean);
+    if (normalizeTwoManFormat(fmt) === "two_man_scramble") {
+      const actorGroupId = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], roundIndex));
+      return [actorGroupId].filter(Boolean);
+    }
+    return [myId].filter(Boolean);
+  }
+
+  function savedScoresByTargetForRound(roundIndex) {
+    const roundData = tjson.score_data?.rounds?.[roundIndex] || {};
+    const round = rounds[roundIndex] || {};
+    const fmt = String(round.format || "singles").toLowerCase();
+    const savedByTarget = Object.create(null);
+    if (fmt === "scramble") {
+      for (const [teamId, teamEntry] of Object.entries(roundData.team || {})) {
+        savedByTarget[teamId] = Array.isArray(teamEntry?.gross) ? teamEntry.gross : Array(18).fill(null);
+      }
+      return savedByTarget;
+    }
+    if (normalizeTwoManFormat(fmt) === "two_man_scramble") {
+      for (const [teamId, teamEntry] of Object.entries(roundData.team || {})) {
+        for (const [label, groupEntry] of Object.entries(teamEntry?.groups || {})) {
+          const groupId = String(groupEntry?.groupId || twoManGroupId(teamId, label)).trim();
+          if (!groupId) continue;
+          savedByTarget[groupId] = Array.isArray(groupEntry?.gross) ? groupEntry.gross : Array(18).fill(null);
+        }
+      }
+      return savedByTarget;
+    }
+    for (const [playerId, playerEntry] of Object.entries(roundData.player || {})) {
+      savedByTarget[playerId] = Array.isArray(playerEntry?.gross) ? playerEntry.gross : Array(18).fill(null);
+    }
+    return savedByTarget;
+  }
+
+  function roundIsFullyCompletedForActor(roundIndex) {
+    const progressIds = progressTargetIdsForRound(roundIndex);
+    if (!progressIds.length) return false;
+    const savedByTarget = savedScoresByTargetForRound(roundIndex);
+    return progressIds.every((id) => isCompleteScoreArray(savedByTarget[id]));
+  }
+
+  // Open the earliest round whose actor progress target is not fully completed.
   function activeRoundIndex() {
     if (!rounds.length) return 0;
+    for (let i = 0; i < rounds.length; i++) {
+      if (!roundIsFullyCompletedForActor(i)) return i;
+    }
     const scoreRounds = tjson.score_data?.rounds || [];
     for (let i = rounds.length - 1; i >= 0; i--) {
       if (roundHasAnyData(scoreRounds[i])) return i;
     }
-    return 0;
+    return rounds.length - 1;
   }
   const defaultOpenRound = activeRoundIndex();
   let tickerRoundIndex = defaultOpenRound;
@@ -1413,6 +1472,7 @@ async function main() {
 
     const roundCfg = rounds[tickerRoundIndex] || {};
     const isScrambleRound = String(roundCfg.format || "").toLowerCase() === "scramble";
+    const isStableford = String(tjson?.tournament?.scoring || "").trim().toLowerCase() === "stableford";
     const useNet = !!roundCfg.useHandicap || isScrambleRound;
     const roundLabel = `R${tickerRoundIndex + 1}`;
     const pars = courseForRound(tjson, tickerRoundIndex).pars || Array(18).fill(4);
@@ -1429,9 +1489,32 @@ async function main() {
       return;
     }
 
+    const thru = holeDisplayFromThru(teamRow);
+    if (isStableford) {
+      const grossPoints = scoreValue(teamRow?.grossPoints);
+      const netPoints = scoreValue(teamRow?.netPoints ?? teamRow?.points);
+      if (!!roundCfg.useHandicap) {
+        target.innerHTML = "";
+        target.appendChild(document.createTextNode(`Current score (${roundLabel}): `));
+        const grossEl = document.createElement("span");
+        grossEl.className = "score-emph-gross";
+        grossEl.textContent = grossPoints;
+        target.appendChild(grossEl);
+        target.appendChild(document.createTextNode(" ["));
+        const netEl = document.createElement("span");
+        netEl.className = "score-emph-net";
+        netEl.textContent = netPoints;
+        target.appendChild(netEl);
+        target.appendChild(document.createTextNode(`] pts ${thru}`));
+        return;
+      }
+      const points = useNet ? netPoints : grossPoints;
+      target.textContent = `Current score (${roundLabel}): ${points} pts ${thru}`;
+      return;
+    }
+
     const grossToPar = grossToParText(teamRow, pars);
     const netToPar = netToParText(teamRow, pars);
-    const thru = holeDisplayFromThru(teamRow);
     if (!!roundCfg.useHandicap) {
       target.innerHTML = "";
       target.appendChild(document.createTextNode(`Current score (${roundLabel}): `));

@@ -60,6 +60,33 @@ function round1(value) {
   return Math.round(n * 10) / 10;
 }
 
+function normalizeTournamentScoring(scoring) {
+  const raw = String(scoring || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  return raw === "stableford" ? "stableford" : "stroke";
+}
+
+function playedHoleScore(value) {
+  if (value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+function stablefordPointsForHole(score, par) {
+  const scoreNum = playedHoleScore(score);
+  if (scoreNum == null) return null;
+  const parNum = Number(par);
+  if (!Number.isFinite(parNum) || parNum <= 0) return null;
+  return Math.max(0, 2 + parNum - scoreNum);
+}
+
+function stablefordPointsArray(scores, pars) {
+  return Array.from({ length: HOLE_COUNT }, (_, idx) => stablefordPointsForHole(scores?.[idx], pars?.[idx]));
+}
+
 function quantize(value, step) {
   const safeStep = Math.max(Number(step) || 0, 0.0001);
   return Math.round((Number(value) || 0) / safeStep) * safeStep;
@@ -921,23 +948,33 @@ function sampleUnplayedHoles(context, rng) {
   return simulatedUnits;
 }
 
-function entityTotalsFromHoles(gross, net, par) {
+function entityTotalsFromHoles(gross, net, par, stablefordOverrides = null) {
   let grossToParTotal = 0;
   let netToParTotal = 0;
   let thru = 0;
   for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
-    const grossValue = gross[holeIndex];
-    const netValue = net[holeIndex];
+    const grossValue = playedHoleScore(gross[holeIndex]);
+    const netValue = playedHoleScore(net[holeIndex]);
     const holePar = Number(par?.[holeIndex] || 0);
     if (grossValue != null || netValue != null) thru += 1;
     if (grossValue != null) grossToParTotal += Number(grossValue) - holePar;
     if (netValue != null) netToParTotal += Number(netValue) - holePar;
   }
+  const grossStableford = Array.isArray(stablefordOverrides?.gross)
+    ? stablefordOverrides.gross.slice()
+    : stablefordPointsArray(gross, par);
+  const netStableford = Array.isArray(stablefordOverrides?.net)
+    ? stablefordOverrides.net.slice()
+    : stablefordPointsArray(net, par);
   return {
     grossTotal: sumPlayed(gross),
     netTotal: sumPlayed(net),
     grossToParTotal,
     netToParTotal,
+    grossStableford,
+    netStableford,
+    grossStablefordTotal: sumPlayed(grossStableford),
+    netStablefordTotal: sumPlayed(netStableford),
     thru
   };
 }
@@ -953,11 +990,14 @@ function groupById(entries, key) {
   return out;
 }
 
-function bestXByMetric(entries, topX, metricKey) {
+function bestXByMetric(entries, topX, metricKey, direction = "low") {
   const sorted = (entries || [])
     .filter((entry) => Number.isFinite(Number(entry?.[metricKey])))
     .slice()
-    .sort((a, b) => Number(a[metricKey]) - Number(b[metricKey]));
+    .sort((a, b) => {
+      const delta = Number(a[metricKey]) - Number(b[metricKey]);
+      return direction === "high" ? -delta : delta;
+    });
   return sorted.slice(0, Math.min(topX, sorted.length));
 }
 
@@ -986,7 +1026,7 @@ function bestBallGroupHoles(players, metricKey) {
   for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
     let best = null;
     for (const player of players || []) {
-      const value = player?.[metricKey]?.[holeIndex];
+      const value = playedHoleScore(player?.[metricKey]?.[holeIndex]);
       if (value == null) continue;
       if (best == null || Number(value) < best) best = Number(value);
     }
@@ -998,6 +1038,7 @@ function bestBallGroupHoles(players, metricKey) {
 function evaluateRoundContext(context, unitStates) {
   const coursePar = Array.isArray(context.course?.pars) ? context.course.pars : Array(HOLE_COUNT).fill(4);
   const useHandicap = !!context.useHandicap;
+  const scoring = normalizeTournamentScoring(context.scoring);
   const players = new Map();
   const groups = new Map();
   const teams = new Map();
@@ -1053,6 +1094,10 @@ function evaluateRoundContext(context, unitStates) {
         netTotal: teamEntry.netTotal,
         grossToParTotal: teamEntry.grossToParTotal,
         netToParTotal: teamEntry.netToParTotal,
+        grossStableford: teamEntry.grossStableford,
+        netStableford: teamEntry.netStableford,
+        grossStablefordTotal: teamEntry.grossStablefordTotal,
+        netStablefordTotal: teamEntry.netStablefordTotal,
         thru: teamEntry.thru
       });
     }
@@ -1084,12 +1129,22 @@ function evaluateRoundContext(context, unitStates) {
       const teamGroups = groupsByTeam.get(team.teamId) || [];
       const gross = sumHoleArrays(teamGroups.map((entry) => entry.gross));
       const net = sumHoleArrays(teamGroups.map((entry) => entry.net));
+      const grossStableford = sumHoleArrays(teamGroups.map((entry) => entry.grossStableford));
+      const netStableford = sumHoleArrays(teamGroups.map((entry) => entry.netStableford));
       const par = Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
-        const holePar = Number(coursePar[holeIndex] || 0);
-        const multiplier = teamGroups.reduce((count, entry) => count + (entry.gross[holeIndex] != null ? 1 : 0), 0);
-        return holePar * multiplier;
+        let total = 0;
+        let count = 0;
+        for (const entry of teamGroups) {
+          if (entry.gross[holeIndex] == null && entry.net[holeIndex] == null) continue;
+          total += Number(entry?.par?.[holeIndex] || coursePar[holeIndex] || 0);
+          count += 1;
+        }
+        return count > 0 ? total : 0;
       });
-      const totals = entityTotalsFromHoles(gross, net, par);
+      const totals = entityTotalsFromHoles(gross, net, par, {
+        gross: grossStableford,
+        net: netStableford
+      });
       teams.set(team.teamId, {
         entityId: team.teamId,
         teamId: team.teamId,
@@ -1117,6 +1172,10 @@ function evaluateRoundContext(context, unitStates) {
           netTotal: groupEntry.netTotal,
           grossToParTotal: groupEntry.grossToParTotal,
           netToParTotal: groupEntry.netToParTotal,
+          grossStableford: groupEntry.grossStableford,
+          netStableford: groupEntry.netStableford,
+          grossStablefordTotal: groupEntry.grossStablefordTotal,
+          netStablefordTotal: groupEntry.netStablefordTotal,
           thru: groupEntry.thru
         });
       }
@@ -1134,36 +1193,48 @@ function evaluateRoundContext(context, unitStates) {
       let gross;
       let net;
       let parMultiplier = 1;
+      let stablefordOverrides = null;
       if (normalizeTwoManFormat(context.format) === "two_man_shamble") {
         gross = emptyHoleArray();
         net = emptyHoleArray();
         parMultiplier = Math.max(1, groupPlayers.length);
+        const grossStableford = emptyHoleArray();
+        const netStableford = emptyHoleArray();
         for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
           let grossSum = 0;
           let netSum = 0;
+          let grossPointSum = 0;
+          let netPointSum = 0;
           let allPresent = groupPlayers.length > 0;
           for (const player of groupPlayers) {
             const grossValue = player.gross[holeIndex];
             const netValue = player.net[holeIndex];
-            if (grossValue == null || netValue == null) {
+            const grossPoints = player.grossStableford?.[holeIndex];
+            const netPoints = player.netStableford?.[holeIndex];
+            if (grossValue == null || netValue == null || grossPoints == null || netPoints == null) {
               allPresent = false;
               break;
             }
             grossSum += Number(grossValue);
             netSum += Number(netValue);
+            grossPointSum += Number(grossPoints);
+            netPointSum += Number(netPoints);
           }
           if (allPresent) {
             gross[holeIndex] = grossSum;
             net[holeIndex] = netSum;
+            grossStableford[holeIndex] = grossPointSum;
+            netStableford[holeIndex] = netPointSum;
           }
         }
+        stablefordOverrides = { gross: grossStableford, net: netStableford };
       } else {
         gross = bestBallGroupHoles(groupPlayers, "gross");
         net = bestBallGroupHoles(groupPlayers, "net");
       }
 
       const par = coursePar.map((value) => Number(value || 0) * parMultiplier);
-      const totals = entityTotalsFromHoles(gross, net, par);
+      const totals = entityTotalsFromHoles(gross, net, par, stablefordOverrides);
       groups.set(groupDef.groupId, {
         entityId: groupDef.groupId,
         groupId: groupDef.groupId,
@@ -1185,15 +1256,22 @@ function evaluateRoundContext(context, unitStates) {
       const teamGroups = groupsByTeam.get(team.teamId) || [];
       const gross = sumHoleArrays(teamGroups.map((entry) => entry.gross));
       const net = sumHoleArrays(teamGroups.map((entry) => entry.net));
+      const grossStableford = sumHoleArrays(teamGroups.map((entry) => entry.grossStableford));
+      const netStableford = sumHoleArrays(teamGroups.map((entry) => entry.netStableford));
       const par = Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
-        const holePar = Number(coursePar[holeIndex] || 0);
-        const multiplier = teamGroups.reduce((count, entry) => {
-          const parMultiplier = Number(entry?.par?.[holeIndex] || 0) / Math.max(1, holePar || 1);
-          return count + (entry.gross[holeIndex] != null ? parMultiplier : 0);
-        }, 0);
-        return holePar * multiplier;
+        let total = 0;
+        let count = 0;
+        for (const entry of teamGroups) {
+          if (entry.gross[holeIndex] == null && entry.net[holeIndex] == null) continue;
+          total += Number(entry?.par?.[holeIndex] || 0);
+          count += 1;
+        }
+        return count > 0 ? total : 0;
       });
-      const totals = entityTotalsFromHoles(gross, net, par);
+      const totals = entityTotalsFromHoles(gross, net, par, {
+        gross: grossStableford,
+        net: netStableford
+      });
       teams.set(team.teamId, {
         entityId: team.teamId,
         teamId: team.teamId,
@@ -1215,29 +1293,42 @@ function evaluateRoundContext(context, unitStates) {
       const teamPlayers = playersByTeam.get(team.teamId) || [];
       const gross = emptyHoleArray();
       const net = emptyHoleArray();
+      const grossStableford = emptyHoleArray();
+      const netStableford = emptyHoleArray();
       for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
         const sorted = teamPlayers
           .map((entry) => ({
             gross: entry.gross[holeIndex],
             net: entry.net[holeIndex],
-            metric: useHandicap ? entry.net[holeIndex] : entry.gross[holeIndex]
+            grossPoints: entry.grossStableford?.[holeIndex],
+            netPoints: entry.netStableford?.[holeIndex],
+            metric: scoring === "stableford"
+              ? (useHandicap ? entry.netStableford?.[holeIndex] : entry.grossStableford?.[holeIndex])
+              : (useHandicap ? entry.net[holeIndex] : entry.gross[holeIndex])
           }))
           .filter((entry) => entry.metric != null)
-          .sort((a, b) => Number(a.metric) - Number(b.metric));
+          .sort((a, b) => scoring === "stableford" ? Number(b.metric) - Number(a.metric) : Number(a.metric) - Number(b.metric));
         const take = sorted.slice(0, Math.min(topX, sorted.length));
         if (take.length) {
           gross[holeIndex] = take.reduce((total, entry) => total + Number(entry.gross || 0), 0);
           net[holeIndex] = take.reduce((total, entry) => total + Number(entry.net || 0), 0);
+          grossStableford[holeIndex] = take.reduce((total, entry) => total + Number(entry.grossPoints || 0), 0);
+          netStableford[holeIndex] = take.reduce((total, entry) => total + Number(entry.netPoints || 0), 0);
         }
       }
       const par = Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
         const metricCount = (teamPlayers || []).filter((entry) => {
-          const metric = useHandicap ? entry.net[holeIndex] : entry.gross[holeIndex];
+          const metric = scoring === "stableford"
+            ? (useHandicap ? entry.netStableford?.[holeIndex] : entry.grossStableford?.[holeIndex])
+            : (useHandicap ? entry.net[holeIndex] : entry.gross[holeIndex]);
           return metric != null;
         }).length;
         return Number(coursePar[holeIndex] || 0) * Math.min(topX, metricCount);
       });
-      const totals = entityTotalsFromHoles(gross, net, par);
+      const totals = entityTotalsFromHoles(gross, net, par, {
+        gross: grossStableford,
+        net: netStableford
+      });
       teams.set(team.teamId, {
         entityId: team.teamId,
         teamId: team.teamId,
@@ -1256,11 +1347,33 @@ function evaluateRoundContext(context, unitStates) {
   const playersByTeam = groupById(playerStateEntries, "teamId");
   for (const team of context.teams) {
     const teamPlayers = playersByTeam.get(team.teamId) || [];
-    const selected = bestXByMetric(teamPlayers, topX, useHandicap ? "netTotal" : "grossTotal");
+    const metricKey = scoring === "stableford"
+      ? (useHandicap ? "netStablefordTotal" : "grossStablefordTotal")
+      : (useHandicap ? "netTotal" : "grossTotal");
+    const selected = bestXByMetric(
+      teamPlayers,
+      topX,
+      metricKey,
+      scoring === "stableford" ? "high" : "low"
+    );
     const gross = sumHoleArrays(selected.map((entry) => entry.gross));
     const net = sumHoleArrays(selected.map((entry) => entry.net));
-    const par = sumHoleArrays(selected.map(() => coursePar));
-    const totals = entityTotalsFromHoles(gross, net, par);
+    const grossStableford = sumHoleArrays(selected.map((entry) => entry.grossStableford));
+    const netStableford = sumHoleArrays(selected.map((entry) => entry.netStableford));
+    const par = Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
+      let total = 0;
+      let count = 0;
+      for (const entry of selected) {
+        if (entry.gross[holeIndex] == null && entry.net[holeIndex] == null) continue;
+        total += Number(coursePar[holeIndex] || 0);
+        count += 1;
+      }
+      return count > 0 ? total : 0;
+    });
+    const totals = entityTotalsFromHoles(gross, net, par, {
+      gross: grossStableford,
+      net: netStableford
+    });
     teams.set(team.teamId, {
       entityId: team.teamId,
       teamId: team.teamId,
@@ -1291,6 +1404,7 @@ function chooseSimulationCount(remainingCells) {
 function buildRoundContext(tournamentJson, roundIndex) {
   const rounds = tournamentJson?.tournament?.rounds || [];
   const round = rounds[roundIndex] || {};
+  const scoring = normalizeTournamentScoring(tournamentJson?.tournament?.scoring);
   const course = courseForRoundIndex(tournamentJson, roundIndex);
   const maxGrossByHole = maxGrossByHoleForRound(round?.maxHoleScore, course?.pars);
   const roundData = tournamentJson?.score_data?.rounds?.[roundIndex] || {};
@@ -1398,6 +1512,7 @@ function buildRoundContext(tournamentJson, roundIndex) {
   return {
     roundIndex,
     round,
+    scoring,
     format,
     useHandicap: !!round?.useHandicap,
     teamAggregation: round?.teamAggregation || { topX: 4 },
@@ -1438,6 +1553,8 @@ function createEntityAccumulator(entries, remainingHoleKeysById) {
       netSum: 0,
       grossToParSum: 0,
       netToParSum: 0,
+      grossPointsSum: 0,
+      netPointsSum: 0,
       leaderShare: 0,
       lowGrossShare: 0,
       lowNetShare: 0,
@@ -1488,14 +1605,17 @@ function averageHoleArrays(entries, prop) {
   return out;
 }
 
-function placementShares(sortedEntries, scoreSelector, accumulatorById, fieldName) {
+function placementShares(sortedEntries, scoreSelector, accumulatorById, fieldName, direction = "low") {
   const ranked = (sortedEntries || [])
     .map((entry) => ({
       entityId: String(entry?.entityId || "").trim(),
       score: Number(scoreSelector(entry))
     }))
     .filter((entry) => entry.entityId && Number.isFinite(entry.score))
-    .sort((a, b) => a.score - b.score || a.entityId.localeCompare(b.entityId));
+    .sort((a, b) => {
+      const delta = a.score - b.score;
+      return (direction === "high" ? -delta : delta) || a.entityId.localeCompare(b.entityId);
+    });
 
   let cursor = 0;
   let startRank = 1;
@@ -1522,7 +1642,7 @@ function placementShares(sortedEntries, scoreSelector, accumulatorById, fieldNam
   }
 }
 
-function accumulateEntitySet(accumulatorById, entries, scoreSelector) {
+function accumulateEntitySet(accumulatorById, entries, scoreSelector, scoreDirection = "low") {
   const rows = Array.from(entries.values());
   for (const entry of rows) {
     const entityId = String(entry?.entityId || "").trim();
@@ -1533,6 +1653,8 @@ function accumulateEntitySet(accumulatorById, entries, scoreSelector) {
     acc.netSum += Number(entry.netTotal || 0);
     acc.grossToParSum += Number(entry.grossToParTotal || 0);
     acc.netToParSum += Number(entry.netToParTotal || 0);
+    acc.grossPointsSum += Number(entry.grossStablefordTotal || 0);
+    acc.netPointsSum += Number(entry.netStablefordTotal || 0);
     const holeGrossByKey = entry.holeGrossByKey instanceof Map ? entry.holeGrossByKey : null;
     const holeNetByKey = entry.holeNetByKey instanceof Map ? entry.holeNetByKey : null;
     for (const [key, sums] of acc.holeSums.entries()) {
@@ -1556,12 +1678,12 @@ function accumulateEntitySet(accumulatorById, entries, scoreSelector) {
     }
   }
 
-  placementShares(rows, scoreSelector, accumulatorById, "leader");
+  placementShares(rows, scoreSelector, accumulatorById, "leader", scoreDirection);
   placementShares(rows, (entry) => entry.grossTotal, accumulatorById, "gross");
   placementShares(rows, (entry) => entry.netTotal, accumulatorById, "net");
 }
 
-function finalizeEntitySet(accumulatorById, simulationCount, entityType) {
+function finalizeEntitySet(accumulatorById, simulationCount, entityType, scoreDirection = "low") {
   return Array.from(accumulatorById.values())
     .map((acc) => {
       const entry = acc.entry;
@@ -1589,6 +1711,8 @@ function finalizeEntitySet(accumulatorById, simulationCount, entityType) {
         projectedNet: round2(acc.netSum / simulationCount),
         projectedGrossToPar: round2(acc.grossToParSum / simulationCount),
         projectedNetToPar: round2(acc.netToParSum / simulationCount),
+        projectedGrossPoints: round2(acc.grossPointsSum / simulationCount),
+        projectedNetPoints: round2(acc.netPointsSum / simulationCount),
         leaderProbability: round2((acc.leaderShare / simulationCount) * 100),
         lowestGrossProbability: round2((acc.lowGrossShare / simulationCount) * 100),
         lowestNetProbability: round2((acc.lowNetShare / simulationCount) * 100),
@@ -1601,7 +1725,9 @@ function finalizeEntitySet(accumulatorById, simulationCount, entityType) {
     .sort((a, b) => {
       const leadDiff = Number(b.leaderProbability || 0) - Number(a.leaderProbability || 0);
       if (leadDiff !== 0) return leadDiff;
-      return Number(a.projectedScore || 0) - Number(b.projectedScore || 0);
+      return scoreDirection === "high"
+        ? Number(b.projectedScore || 0) - Number(a.projectedScore || 0)
+        : Number(a.projectedScore || 0) - Number(b.projectedScore || 0);
     });
 }
 
@@ -1644,6 +1770,8 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
       netTotal: 0,
       grossToParTotal: 0,
       netToParTotal: 0,
+      grossStablefordTotal: 0,
+      netStablefordTotal: 0,
       holeGrossByKey: new Map(),
       holeNetByKey: new Map()
     });
@@ -1663,6 +1791,8 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
       netTotal: 0,
       grossToParTotal: 0,
       netToParTotal: 0,
+      grossStablefordTotal: 0,
+      netStablefordTotal: 0,
       holeGrossByKey: new Map(),
       holeNetByKey: new Map()
     });
@@ -1673,16 +1803,22 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
     const evaluation = roundEvaluations[roundIndex];
     const weight = roundWeights[roundIndex] ?? 1;
     const useHandicap = !!context.useHandicap;
+    const scoring = normalizeTournamentScoring(context.scoring);
+    const metricValue = (entry) => scoring === "stableford"
+      ? (useHandicap ? entry.netStablefordTotal : entry.grossStablefordTotal)
+      : (useHandicap ? entry.netTotal : entry.grossTotal);
 
     if (context.format === "scramble") {
       for (const teamEntry of evaluation.teams.values()) {
         const target = teamEntries.get(teamEntry.teamId);
         if (!target) continue;
-        target.leaderboardTotal += Number(useHandicap ? teamEntry.netTotal : teamEntry.grossTotal) * weight;
+        target.leaderboardTotal += Number(metricValue(teamEntry) || 0) * weight;
         target.grossTotal += Number(teamEntry.grossTotal || 0) * weight;
         target.netTotal += Number(teamEntry.netTotal || 0) * weight;
         target.grossToParTotal += Number(teamEntry.grossToParTotal || 0) * weight;
         target.netToParTotal += Number(teamEntry.netToParTotal || 0) * weight;
+        target.grossStablefordTotal += Number(teamEntry.grossStablefordTotal || 0) * weight;
+        target.netStablefordTotal += Number(teamEntry.netStablefordTotal || 0) * weight;
         addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, teamEntry.gross, teamEntry.net, weight);
       }
       for (const player of context.players) {
@@ -1690,11 +1826,13 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
         const target = playerEntries.get(player.playerId);
         if (!target || !teamEntry) continue;
         target.teamName = teamEntry.teamName;
-        target.leaderboardTotal += Number(useHandicap ? teamEntry.netTotal : teamEntry.grossTotal) * weight;
+        target.leaderboardTotal += Number(metricValue(teamEntry) || 0) * weight;
         target.grossTotal += Number(teamEntry.grossTotal || 0) * weight;
         target.netTotal += Number(teamEntry.netTotal || 0) * weight;
         target.grossToParTotal += Number(teamEntry.grossToParTotal || 0) * weight;
         target.netToParTotal += Number(teamEntry.netToParTotal || 0) * weight;
+        target.grossStablefordTotal += Number(teamEntry.grossStablefordTotal || 0) * weight;
+        target.netStablefordTotal += Number(teamEntry.netStablefordTotal || 0) * weight;
         addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, teamEntry.gross, teamEntry.net, weight);
       }
       continue;
@@ -1704,11 +1842,13 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
       const target = playerEntries.get(playerEntry.playerId);
       if (!target) continue;
       target.teamName = playerEntry.teamName;
-      target.leaderboardTotal += Number(useHandicap ? playerEntry.netTotal : playerEntry.grossTotal) * weight;
+      target.leaderboardTotal += Number(metricValue(playerEntry) || 0) * weight;
       target.grossTotal += Number(playerEntry.grossTotal || 0) * weight;
       target.netTotal += Number(playerEntry.netTotal || 0) * weight;
       target.grossToParTotal += Number(playerEntry.grossToParTotal || 0) * weight;
       target.netToParTotal += Number(playerEntry.netToParTotal || 0) * weight;
+      target.grossStablefordTotal += Number(playerEntry.grossStablefordTotal || 0) * weight;
+      target.netStablefordTotal += Number(playerEntry.netStablefordTotal || 0) * weight;
       addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, playerEntry.gross, playerEntry.net, weight);
     }
 
@@ -1723,24 +1863,31 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
           const netSum = teamGroups.reduce((total, entry) => total + Number(entry.netTotal || 0), 0);
           const grossToParSum = teamGroups.reduce((total, entry) => total + Number(entry.grossToParTotal || 0), 0);
           const netToParSum = teamGroups.reduce((total, entry) => total + Number(entry.netToParTotal || 0), 0);
+          const grossPointsSum = teamGroups.reduce((total, entry) => total + Number(entry.grossStablefordTotal || 0), 0);
+          const netPointsSum = teamGroups.reduce((total, entry) => total + Number(entry.netStablefordTotal || 0), 0);
           const gross = sumHoleArrays(teamGroups.map((entry) => entry.gross));
           const net = sumHoleArrays(teamGroups.map((entry) => entry.net));
-          target.leaderboardTotal += Number(useHandicap ? netSum : grossSum) * weight;
-          target.grossTotal += grossSum * weight;
-          target.netTotal += netSum * weight;
-          target.grossToParTotal += grossToParSum * weight;
-          target.netToParTotal += netToParSum * weight;
+          const groupCount = teamGroups.length || 1;
+          target.leaderboardTotal += Number(scoring === "stableford" ? (useHandicap ? netPointsSum : grossPointsSum) : (useHandicap ? netSum : grossSum)) / groupCount * weight;
+          target.grossTotal += (grossSum / groupCount) * weight;
+          target.netTotal += (netSum / groupCount) * weight;
+          target.grossToParTotal += (grossToParSum / groupCount) * weight;
+          target.netToParTotal += (netToParSum / groupCount) * weight;
+          target.grossStablefordTotal += (grossPointsSum / groupCount) * weight;
+          target.netStablefordTotal += (netPointsSum / groupCount) * weight;
           addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, gross, net, weight);
           continue;
         }
 
         const fallback = evaluation.teams.get(team.teamId);
         if (!fallback) continue;
-        target.leaderboardTotal += Number(useHandicap ? fallback.netTotal : fallback.grossTotal) * weight;
+        target.leaderboardTotal += Number(metricValue(fallback) || 0) * weight;
         target.grossTotal += Number(fallback.grossTotal || 0) * weight;
         target.netTotal += Number(fallback.netTotal || 0) * weight;
         target.grossToParTotal += Number(fallback.grossToParTotal || 0) * weight;
         target.netToParTotal += Number(fallback.netToParTotal || 0) * weight;
+        target.grossStablefordTotal += Number(fallback.grossStablefordTotal || 0) * weight;
+        target.netStablefordTotal += Number(fallback.netStablefordTotal || 0) * weight;
         addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, fallback.gross, fallback.net, weight);
       }
       continue;
@@ -1751,7 +1898,12 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
       if (!target) continue;
       const teamPlayers = Array.from(evaluation.players.values()).filter((entry) => entry.teamId === team.teamId);
       const { topX } = normalizeTeamAggregation(context.teamAggregation);
-      const selected = bestXByMetric(teamPlayers, topX, useHandicap ? "netTotal" : "grossTotal");
+      const selected = bestXByMetric(
+        teamPlayers,
+        topX,
+        scoring === "stableford" ? (useHandicap ? "netStablefordTotal" : "grossStablefordTotal") : (useHandicap ? "netTotal" : "grossTotal"),
+        scoring === "stableford" ? "high" : "low"
+      );
       const grossSum = selected.length
         ? selected.reduce((total, entry) => total + Number(entry.grossTotal || 0), 0)
         : 0;
@@ -1764,13 +1916,21 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
       const netToParSum = selected.length
         ? selected.reduce((total, entry) => total + Number(entry.netToParTotal || 0), 0)
         : 0;
+      const grossPointsSum = selected.length
+        ? selected.reduce((total, entry) => total + Number(entry.grossStablefordTotal || 0), 0)
+        : 0;
+      const netPointsSum = selected.length
+        ? selected.reduce((total, entry) => total + Number(entry.netStablefordTotal || 0), 0)
+        : 0;
       const gross = sumHoleArrays(selected.map((entry) => entry.gross));
       const net = sumHoleArrays(selected.map((entry) => entry.net));
-      target.leaderboardTotal += Number(useHandicap ? netSum : grossSum) * weight;
+      target.leaderboardTotal += Number(scoring === "stableford" ? (useHandicap ? netPointsSum : grossPointsSum) : (useHandicap ? netSum : grossSum)) * weight;
       target.grossTotal += grossSum * weight;
       target.netTotal += netSum * weight;
       target.grossToParTotal += grossToParSum * weight;
       target.netToParTotal += netToParSum * weight;
+      target.grossStablefordTotal += grossPointsSum * weight;
+      target.netStablefordTotal += netPointsSum * weight;
       addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, gross, net, weight);
     }
   }
@@ -1779,11 +1939,22 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
 }
 
 function scoreSelectorForRound(context) {
-  return (entry) => (context.useHandicap ? entry.netTotal : entry.grossTotal);
+  const scoring = normalizeTournamentScoring(context.scoring);
+  return (entry) => scoring === "stableford"
+    ? (context.useHandicap ? entry.netStablefordTotal : entry.grossStablefordTotal)
+    : (context.useHandicap ? entry.netTotal : entry.grossTotal);
 }
 
 function scoreSelectorForAllRounds() {
   return (entry) => entry.leaderboardTotal;
+}
+
+function scoreDirectionForContext(context) {
+  return normalizeTournamentScoring(context?.scoring) === "stableford" ? "high" : "low";
+}
+
+function scoreDirectionForTournament(tournamentJson) {
+  return normalizeTournamentScoring(tournamentJson?.tournament?.scoring) === "stableford" ? "high" : "low";
 }
 
 export function computeLiveOdds(tournamentJson, {
@@ -1827,14 +1998,16 @@ export function computeLiveOdds(tournamentJson, {
     for (let roundIndex = 0; roundIndex < roundContexts.length; roundIndex++) {
       const context = roundContexts[roundIndex];
       const evaluation = roundEvaluations[roundIndex];
-      accumulateEntitySet(roundAccumulators[roundIndex].teams, evaluation.teams, scoreSelectorForRound(context));
-      accumulateEntitySet(roundAccumulators[roundIndex].players, evaluation.players, scoreSelectorForRound(context));
-      accumulateEntitySet(roundAccumulators[roundIndex].groups, evaluation.groups, scoreSelectorForRound(context));
+      const scoreDirection = scoreDirectionForContext(context);
+      accumulateEntitySet(roundAccumulators[roundIndex].teams, evaluation.teams, scoreSelectorForRound(context), scoreDirection);
+      accumulateEntitySet(roundAccumulators[roundIndex].players, evaluation.players, scoreSelectorForRound(context), scoreDirection);
+      accumulateEntitySet(roundAccumulators[roundIndex].groups, evaluation.groups, scoreSelectorForRound(context), scoreDirection);
     }
 
     const allRoundsEvaluation = combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluations, roundWeights);
-    accumulateEntitySet(allRoundAccumulators.teams, allRoundsEvaluation.teams, scoreSelectorForAllRounds());
-    accumulateEntitySet(allRoundAccumulators.players, allRoundsEvaluation.players, scoreSelectorForAllRounds());
+    const tournamentScoreDirection = scoreDirectionForTournament(tournamentJson);
+    accumulateEntitySet(allRoundAccumulators.teams, allRoundsEvaluation.teams, scoreSelectorForAllRounds(), tournamentScoreDirection);
+    accumulateEntitySet(allRoundAccumulators.players, allRoundsEvaluation.players, scoreSelectorForAllRounds(), tournamentScoreDirection);
   }
 
   return {
@@ -1844,13 +2017,13 @@ export function computeLiveOdds(tournamentJson, {
     latencyMode: LATENCY_MODE,
     rounds: roundAccumulators.map((acc, roundIndex) => ({
       roundIndex,
-      teams: finalizeEntitySet(acc.teams, simulationCount, "team"),
-      players: finalizeEntitySet(acc.players, simulationCount, "player"),
-      groups: finalizeEntitySet(acc.groups, simulationCount, "group")
+      teams: finalizeEntitySet(acc.teams, simulationCount, "team", scoreDirectionForContext(roundContexts[roundIndex])),
+      players: finalizeEntitySet(acc.players, simulationCount, "player", scoreDirectionForContext(roundContexts[roundIndex])),
+      groups: finalizeEntitySet(acc.groups, simulationCount, "group", scoreDirectionForContext(roundContexts[roundIndex]))
     })),
     all_rounds: {
-      teams: finalizeEntitySet(allRoundAccumulators.teams, simulationCount, "team"),
-      players: finalizeEntitySet(allRoundAccumulators.players, simulationCount, "player"),
+      teams: finalizeEntitySet(allRoundAccumulators.teams, simulationCount, "team", scoreDirectionForTournament(tournamentJson)),
+      players: finalizeEntitySet(allRoundAccumulators.players, simulationCount, "player", scoreDirectionForTournament(tournamentJson)),
       groups: []
     }
   };

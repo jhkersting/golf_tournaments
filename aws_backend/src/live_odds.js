@@ -68,11 +68,18 @@ function normalizeTournamentScoring(scoring) {
   return raw === "stableford" ? "stableford" : "stroke";
 }
 
+function playedHoleScore(value) {
+  if (value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 function stablefordPointsForHole(score, par) {
-  if (score == null) return null;
-  const scoreNum = Number(score);
+  const scoreNum = playedHoleScore(score);
+  if (scoreNum == null) return null;
   const parNum = Number(par);
-  if (!Number.isFinite(scoreNum) || !Number.isFinite(parNum)) return null;
+  if (!Number.isFinite(parNum) || parNum <= 0) return null;
   return Math.max(0, 2 + parNum - scoreNum);
 }
 
@@ -946,8 +953,8 @@ function entityTotalsFromHoles(gross, net, par, stablefordOverrides = null) {
   let netToParTotal = 0;
   let thru = 0;
   for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
-    const grossValue = gross[holeIndex];
-    const netValue = net[holeIndex];
+    const grossValue = playedHoleScore(gross[holeIndex]);
+    const netValue = playedHoleScore(net[holeIndex]);
     const holePar = Number(par?.[holeIndex] || 0);
     if (grossValue != null || netValue != null) thru += 1;
     if (grossValue != null) grossToParTotal += Number(grossValue) - holePar;
@@ -1019,7 +1026,7 @@ function bestBallGroupHoles(players, metricKey) {
   for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
     let best = null;
     for (const player of players || []) {
-      const value = player?.[metricKey]?.[holeIndex];
+      const value = playedHoleScore(player?.[metricKey]?.[holeIndex]);
       if (value == null) continue;
       if (best == null || Number(value) < best) best = Number(value);
     }
@@ -1860,13 +1867,14 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
           const netPointsSum = teamGroups.reduce((total, entry) => total + Number(entry.netStablefordTotal || 0), 0);
           const gross = sumHoleArrays(teamGroups.map((entry) => entry.gross));
           const net = sumHoleArrays(teamGroups.map((entry) => entry.net));
-          target.leaderboardTotal += Number(scoring === "stableford" ? (useHandicap ? netPointsSum : grossPointsSum) : (useHandicap ? netSum : grossSum)) * weight;
-          target.grossTotal += grossSum * weight;
-          target.netTotal += netSum * weight;
-          target.grossToParTotal += grossToParSum * weight;
-          target.netToParTotal += netToParSum * weight;
-          target.grossStablefordTotal += grossPointsSum * weight;
-          target.netStablefordTotal += netPointsSum * weight;
+          const groupCount = teamGroups.length || 1;
+          target.leaderboardTotal += Number(scoring === "stableford" ? (useHandicap ? netPointsSum : grossPointsSum) : (useHandicap ? netSum : grossSum)) / groupCount * weight;
+          target.grossTotal += (grossSum / groupCount) * weight;
+          target.netTotal += (netSum / groupCount) * weight;
+          target.grossToParTotal += (grossToParSum / groupCount) * weight;
+          target.netToParTotal += (netToParSum / groupCount) * weight;
+          target.grossStablefordTotal += (grossPointsSum / groupCount) * weight;
+          target.netStablefordTotal += (netPointsSum / groupCount) * weight;
           addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, gross, net, weight);
           continue;
         }
@@ -1916,14 +1924,13 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
         : 0;
       const gross = sumHoleArrays(selected.map((entry) => entry.gross));
       const net = sumHoleArrays(selected.map((entry) => entry.net));
-      const divisor = selected.length || 1;
-      target.leaderboardTotal += Number(scoring === "stableford" ? (useHandicap ? netPointsSum : grossPointsSum) : (useHandicap ? netSum : grossSum)) / divisor * weight;
-      target.grossTotal += (grossSum / divisor) * weight;
-      target.netTotal += (netSum / divisor) * weight;
-      target.grossToParTotal += (grossToParSum / divisor) * weight;
-      target.netToParTotal += (netToParSum / divisor) * weight;
-      target.grossStablefordTotal += (grossPointsSum / divisor) * weight;
-      target.netStablefordTotal += (netPointsSum / divisor) * weight;
+      target.leaderboardTotal += Number(scoring === "stableford" ? (useHandicap ? netPointsSum : grossPointsSum) : (useHandicap ? netSum : grossSum)) * weight;
+      target.grossTotal += grossSum * weight;
+      target.netTotal += netSum * weight;
+      target.grossToParTotal += grossToParSum * weight;
+      target.netToParTotal += netToParSum * weight;
+      target.grossStablefordTotal += grossPointsSum * weight;
+      target.netStablefordTotal += netPointsSum * weight;
       addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, gross, net, weight);
     }
   }
@@ -1940,6 +1947,14 @@ function scoreSelectorForRound(context) {
 
 function scoreSelectorForAllRounds() {
   return (entry) => entry.leaderboardTotal;
+}
+
+function scoreDirectionForContext(context) {
+  return normalizeTournamentScoring(context?.scoring) === "stableford" ? "high" : "low";
+}
+
+function scoreDirectionForTournament(tournamentJson) {
+  return normalizeTournamentScoring(tournamentJson?.tournament?.scoring) === "stableford" ? "high" : "low";
 }
 
 export function computeLiveOdds(tournamentJson, {
@@ -1983,14 +1998,16 @@ export function computeLiveOdds(tournamentJson, {
     for (let roundIndex = 0; roundIndex < roundContexts.length; roundIndex++) {
       const context = roundContexts[roundIndex];
       const evaluation = roundEvaluations[roundIndex];
-      accumulateEntitySet(roundAccumulators[roundIndex].teams, evaluation.teams, scoreSelectorForRound(context));
-      accumulateEntitySet(roundAccumulators[roundIndex].players, evaluation.players, scoreSelectorForRound(context));
-      accumulateEntitySet(roundAccumulators[roundIndex].groups, evaluation.groups, scoreSelectorForRound(context));
+      const scoreDirection = scoreDirectionForContext(context);
+      accumulateEntitySet(roundAccumulators[roundIndex].teams, evaluation.teams, scoreSelectorForRound(context), scoreDirection);
+      accumulateEntitySet(roundAccumulators[roundIndex].players, evaluation.players, scoreSelectorForRound(context), scoreDirection);
+      accumulateEntitySet(roundAccumulators[roundIndex].groups, evaluation.groups, scoreSelectorForRound(context), scoreDirection);
     }
 
     const allRoundsEvaluation = combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluations, roundWeights);
-    accumulateEntitySet(allRoundAccumulators.teams, allRoundsEvaluation.teams, scoreSelectorForAllRounds());
-    accumulateEntitySet(allRoundAccumulators.players, allRoundsEvaluation.players, scoreSelectorForAllRounds());
+    const tournamentScoreDirection = scoreDirectionForTournament(tournamentJson);
+    accumulateEntitySet(allRoundAccumulators.teams, allRoundsEvaluation.teams, scoreSelectorForAllRounds(), tournamentScoreDirection);
+    accumulateEntitySet(allRoundAccumulators.players, allRoundsEvaluation.players, scoreSelectorForAllRounds(), tournamentScoreDirection);
   }
 
   return {
@@ -2000,13 +2017,13 @@ export function computeLiveOdds(tournamentJson, {
     latencyMode: LATENCY_MODE,
     rounds: roundAccumulators.map((acc, roundIndex) => ({
       roundIndex,
-      teams: finalizeEntitySet(acc.teams, simulationCount, "team"),
-      players: finalizeEntitySet(acc.players, simulationCount, "player"),
-      groups: finalizeEntitySet(acc.groups, simulationCount, "group")
+      teams: finalizeEntitySet(acc.teams, simulationCount, "team", scoreDirectionForContext(roundContexts[roundIndex])),
+      players: finalizeEntitySet(acc.players, simulationCount, "player", scoreDirectionForContext(roundContexts[roundIndex])),
+      groups: finalizeEntitySet(acc.groups, simulationCount, "group", scoreDirectionForContext(roundContexts[roundIndex]))
     })),
     all_rounds: {
-      teams: finalizeEntitySet(allRoundAccumulators.teams, simulationCount, "team"),
-      players: finalizeEntitySet(allRoundAccumulators.players, simulationCount, "player"),
+      teams: finalizeEntitySet(allRoundAccumulators.teams, simulationCount, "team", scoreDirectionForTournament(tournamentJson)),
+      players: finalizeEntitySet(allRoundAccumulators.players, simulationCount, "player", scoreDirectionForTournament(tournamentJson)),
       groups: []
     }
   };

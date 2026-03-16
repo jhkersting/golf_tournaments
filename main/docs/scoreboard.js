@@ -901,6 +901,15 @@ function roundAt(viewRound) {
   return (TOURN?.tournament?.rounds || [])[Number(viewRound)] || null;
 }
 
+function tournamentScoring() {
+  const raw = String(TOURN?.tournament?.scoring || "").trim().toLowerCase();
+  return raw === "stableford" ? "stableford" : "stroke";
+}
+
+function isStablefordTournament() {
+  return tournamentScoring() === "stableford";
+}
+
 function isHandicapRound(viewRound) {
   const round = roundAt(viewRound);
   if (!round) return false;
@@ -961,6 +970,8 @@ function leaderboardColCount(data) {
   const isAllRounds = data.view?.round === "all";
   const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
   const showStrokesColumn = mode === "team" && isAllRounds;
+  if (isStablefordTournament() && showGrossNet) return isAllRounds ? 4 : 5;
+  if (isStablefordTournament()) return 4;
   if (showGrossNet && isAllRounds) return showStrokesColumn ? 4 : 3;
   if (showGrossNet) return 5;
   return 4;
@@ -1248,6 +1259,9 @@ function compareNullableNumber(a, b, dir) {
 }
 
 function defaultScoreForSort(row, showGrossNet, data) {
+  if (isStablefordTournament()) {
+    return showGrossNet ? netStablefordForRow(row) : firstDefined(row, ["points", "netPoints", "grossPoints"]);
+  }
   if (showGrossNet) return toParNumber(netToParForRow(row, data));
   return toParNumber(firstDefined(row, ["toPar", "netToPar", "toParNet", "toParTotal"]));
 }
@@ -1256,7 +1270,7 @@ function defaultSortComparator(a, b, showGrossNet, data) {
   const scoreCmp = compareNullableNumber(
     defaultScoreForSort(a, showGrossNet, data),
     defaultScoreForSort(b, showGrossNet, data),
-    "asc"
+    isStablefordTournament() ? "desc" : "asc"
   );
   if (scoreCmp !== 0) return scoreCmp;
   const holesCmp = compareNullableNumber(holesPlayedForRow(a), holesPlayedForRow(b), "desc");
@@ -1281,6 +1295,11 @@ function compareRows(a, b, sortKey, sortDir, showGrossNet, data, isTeam) {
   }
 
   if (sortKey === "gross") {
+    if (isStablefordTournament()) {
+      const out = compareNullableNumber(grossStablefordForRow(a), grossStablefordForRow(b), sortDir);
+      if (out !== 0) return out;
+      return defaultSortComparator(a, b, showGrossNet, data);
+    }
     const out = compareNullableNumber(
       toParNumber(grossToParForRow(a, data)),
       toParNumber(grossToParForRow(b, data)),
@@ -1291,6 +1310,11 @@ function compareRows(a, b, sortKey, sortDir, showGrossNet, data, isTeam) {
   }
 
   if (sortKey === "net") {
+    if (isStablefordTournament()) {
+      const out = compareNullableNumber(netStablefordForRow(a), netStablefordForRow(b), sortDir);
+      if (out !== 0) return out;
+      return defaultSortComparator(a, b, showGrossNet, data);
+    }
     const out = compareNullableNumber(
       toParNumber(netToParForRow(a, data)),
       toParNumber(netToParForRow(b, data)),
@@ -1301,6 +1325,15 @@ function compareRows(a, b, sortKey, sortDir, showGrossNet, data, isTeam) {
   }
 
   if (sortKey === "toPar") {
+    if (isStablefordTournament()) {
+      const out = compareNullableNumber(
+        firstDefined(a, ["points", "netPoints", "grossPoints"]),
+        firstDefined(b, ["points", "netPoints", "grossPoints"]),
+        sortDir
+      );
+      if (out !== 0) return out;
+      return defaultSortComparator(a, b, showGrossNet, data);
+    }
     const out = compareNullableNumber(
       toParNumber(firstDefined(a, ["toPar", "netToPar", "toParNet", "toParTotal"])),
       toParNumber(firstDefined(b, ["toPar", "netToPar", "toParNet", "toParTotal"])),
@@ -1402,6 +1435,23 @@ function netStrokesForRow(row) {
   if (row?.netTotal != null) return row.netTotal;
   if (row?.scores?.netTotal != null) return row.scores.netTotal;
   if (Array.isArray(row?.scores?.net)) return sumHoles(row.scores.net);
+  return null;
+}
+
+function grossStablefordForRow(row) {
+  if (row?.grossPoints != null) return row.grossPoints;
+  if (row?.grossStablefordTotal != null) return row.grossStablefordTotal;
+  if (row?.scores?.grossStablefordTotal != null) return row.scores.grossStablefordTotal;
+  if (Array.isArray(row?.scores?.grossStableford)) return sumHoles(row.scores.grossStableford);
+  return null;
+}
+
+function netStablefordForRow(row) {
+  if (row?.points != null && !isNaN(Number(row.points))) return row.points;
+  if (row?.netPoints != null) return row.netPoints;
+  if (row?.netStablefordTotal != null) return row.netStablefordTotal;
+  if (row?.scores?.netStablefordTotal != null) return row.scores.netStablefordTotal;
+  if (Array.isArray(row?.scores?.netStableford)) return sumHoles(row.scores.netStableford);
   return null;
 }
 
@@ -1567,6 +1617,8 @@ function holeScoreCell(value, parValue) {
 function buildScorecardTable(scores, useHandicap) {
   const gross = scores.gross || Array(18).fill(null);
   const net = scores.net || Array(18).fill(null);
+  const grossStableford = scores.grossStableford || Array(18).fill(null);
+  const netStableford = scores.netStableford || Array(18).fill(null);
   const defaultPar = getCoursePars();
   const par =
     Array.isArray(scores.par) && scores.par.length === 18 && scores.par.some((v) => Number(v) > 0)
@@ -1584,6 +1636,15 @@ function buildScorecardTable(scores, useHandicap) {
     scores.netToParTotal != null
       ? scores.netToParTotal
       : segmentToPar(net, par, 0, 17);
+  const grossStablefordTotal =
+    scores.grossStablefordTotal != null
+      ? scores.grossStablefordTotal
+      : sumHoles(grossStableford);
+  const netStablefordTotal =
+    scores.netStablefordTotal != null
+      ? scores.netStablefordTotal
+      : sumHoles(netStableford);
+  const showStableford = isStablefordTournament();
   const thru =
     scores.thru != null
       ? scores.thru
@@ -1605,10 +1666,14 @@ function buildScorecardTable(scores, useHandicap) {
       `<span class="score-emph-gross">Gross <span class="mono">${grossTotal}</span> (<span class="mono">${toParStrFromDiff(grossToParTotal)}</span>)</span>` +
       ` • ` +
       `<span class="score-emph-net">Net <span class="mono">${netTotal}</span> (<span class="mono">${toParStrFromDiff(netToParTotal)}</span>)</span>` +
+      (showStableford
+        ? ` • <span class="score-emph-gross">Gross Pts <span class="mono">${grossStablefordTotal}</span></span> • <span class="score-emph-net">Net Pts <span class="mono">${netStablefordTotal}</span></span>`
+        : "") +
       ` • Thru <span class="mono">${displayThru(thru)}</span>`;
   } else {
     summary.innerHTML =
       `Gross <span class="mono">${grossTotal}</span> (<span class="mono">${toParStrFromDiff(grossToParTotal)}</span>)` +
+      (showStableford ? ` • Points <span class="mono">${grossStablefordTotal}</span>` : "") +
       ` • Thru <span class="mono">${displayThru(thru)}</span>`;
   }
   wrap.appendChild(summary);
@@ -1678,6 +1743,23 @@ function buildScorecardTable(scores, useHandicap) {
     tbody.appendChild(tr);
   }
 
+  function addStablefordRow(label, arr, start, end, emphClass = "") {
+    if (!showStableford) return;
+    const total = sectionPlayedCount(arr, start, end) ? String(segmentTotal(arr, start, end)) : "";
+    const emph = emphClass ? ` class="${emphClass}"` : "";
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="left"><b${emph}>${label}</b></td>` +
+      Array.from({ length: end - start + 1 }, (_, k) => {
+        const i = start + k;
+        const value = arr[i];
+        return `<td class="mono">${value == null ? "" : String(value)}</td>`;
+      }).join("") +
+      `<td class="mono"><b${emph}>${total}</b></td>` +
+      `<td class="mono"></td>`;
+    tbody.appendChild(tr);
+  }
+
   function addSectionSpacer() {
     const tr = document.createElement("tr");
     tr.className = "scorecard-spacer-row";
@@ -1689,12 +1771,16 @@ function buildScorecardTable(scores, useHandicap) {
   addHeaderRow("Front 9", 0, 8);
   addDataRow("Gross", gross, 0, 8);
   if (useHandicap) addDataRow("Net", net, 0, 8);
+  addStablefordRow("Gross Pts", grossStableford, 0, 8, "score-emph-gross");
+  if (useHandicap) addStablefordRow("Net Pts", netStableford, 0, 8, "score-emph-net");
   addParRow(0, 8);
   addSectionSpacer();
   addDotsRow(9, 17);
   addHeaderRow("Back 9", 9, 17);
   addDataRow("Gross", gross, 9, 17);
   if (useHandicap) addDataRow("Net", net, 9, 17);
+  addStablefordRow("Gross Pts", grossStableford, 9, 17, "score-emph-gross");
+  if (useHandicap) addStablefordRow("Net Pts", netStableford, 9, 17, "score-emph-net");
   addParRow(9, 17);
 
   tbl.appendChild(tbody);
@@ -2315,28 +2401,40 @@ function renderLeaderboard(data) {
   const isTwoManGroupView = !isTeam && !isAllRounds && isTwoManRound(data.view?.round);
   const allowInlineScorecard = data.view?.round !== "all";
   const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
+  const showStableford = isStablefordTournament();
   const showHandicapNameStrokes = isHandicapRound(data.view?.round);
-  const showStrokesColumn = isTeam && isAllRounds;
+  const showStrokesColumn = isTeam && isAllRounds && !showStableford;
+  const defaultSortDir = showStableford ? "desc" : "asc";
   lbTitle.textContent = isTeam ? "Teams" : isTwoManGroupView ? "Groups" : "Individuals";
   rebuildTeamColors();
 
   const head = document.getElementById("lb_head");
   const prevSortKey = sortState?.key || "score";
-  const defaultSortKey = showGrossNet ? "net" : "toPar";
+  const defaultSortKey = showStableford ? "net" : (showGrossNet ? "net" : "toPar");
   const allowedSortKeys = isAllRounds
-    ? new Set(showStrokesColumn ? ["name", "net", "netStrokes", "score"] : ["name", "net", "score"])
+    ? new Set(showStableford
+      ? ["name", ...(showGrossNet ? ["gross", "net"] : ["toPar"]), "score"]
+      : (showStrokesColumn ? ["name", "net", "netStrokes", "score"] : ["name", "net", "score"]))
     : showGrossNet
       ? new Set(["name", "thru", "gross", "net", "score"])
       : new Set(["name", "toPar", "thru", "score"]);
-  if (!allowedSortKeys.has(prevSortKey)) sortState = { key: defaultSortKey, dir: "asc" };
-  if (sortState.key === "score") sortState = { key: defaultSortKey, dir: "asc" };
+  if (!allowedSortKeys.has(prevSortKey)) sortState = { key: defaultSortKey, dir: defaultSortDir };
+  if (sortState.key === "score") sortState = { key: defaultSortKey, dir: defaultSortDir };
 
   function headBtn(label, key, left = false) {
     return `<button type="button" class="sort-head-btn ${left ? "left" : ""}" data-sort-key="${key}">${label}</button>`;
   }
   const nameHeading = isTeam ? "Team" : isTwoManGroupView ? "Group" : "Player";
 
-  if (showGrossNet && isAllRounds) {
+  if (showStableford && showGrossNet) {
+    head.innerHTML = `
+      <th class="rank-col"></th>
+      <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
+      <th class="metric-col">${headBtn('<span class="score-emph-gross">Gross Pts</span>', "gross")}</th>
+      <th class="metric-col">${headBtn('<span class="score-emph-net">Net Pts</span>', "net")}</th>
+      ${isAllRounds ? "" : `<th class="thru-col">${headBtn("Thru", "thru")}</th>`}
+    `;
+  } else if (showGrossNet && isAllRounds) {
     head.innerHTML = `
       <th class="rank-col"></th>
       <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
@@ -2349,6 +2447,13 @@ function renderLeaderboard(data) {
       <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
       <th class="metric-col">${headBtn('<span class="score-emph-gross">Gross ±</span>', "gross")}</th>
       <th class="metric-col">${headBtn('<span class="score-emph-net">Net ±</span>', "net")}</th>
+      <th class="thru-col">${headBtn("Thru", "thru")}</th>
+    `;
+  } else if (showStableford) {
+    head.innerHTML = `
+      <th class="rank-col"></th>
+      <th class="left name-col">${headBtn(nameHeading, "name", true)}</th>
+      <th class="metric-col">${headBtn("Pts", "toPar")}</th>
       <th class="thru-col">${headBtn("Thru", "thru")}</th>
     `;
   } else {
@@ -2378,7 +2483,8 @@ function renderLeaderboard(data) {
       if (sortState.key === key) {
         sortState = { key, dir: sortState.dir === "asc" ? "desc" : "asc" };
       } else {
-        sortState = { key, dir: "asc" };
+        const metricSort = key === "gross" || key === "net" || key === "toPar" || key === "score";
+        sortState = { key, dir: showStableford && metricSort ? "desc" : "asc" };
       }
       render();
     };
@@ -2412,7 +2518,15 @@ function renderLeaderboard(data) {
     const shouldShowTeeTime = !hasData && r?.teeTime && (!isTeam || isScrambleRound(data.view?.round));
     const thruCell = shouldShowTeeTime ? r.teeTime : displayThru(r.thru);
 
-    if (showGrossNet && isAllRounds) {
+    if (showStableford && showGrossNet) {
+      tr.innerHTML = `
+        <td class="mono rank-col">${rankCellValue}</td>
+        ${nameCell}
+        <td class="mono metric-col"><b class="score-emph-gross">${scoreValue(grossStablefordForRow(r))}</b></td>
+        <td class="mono metric-col"><b class="score-emph-net">${scoreValue(netStablefordForRow(r))}</b></td>
+        ${isAllRounds ? "" : `<td class="mono thru-col">${thruCell}</td>`}
+      `;
+    } else if (showGrossNet && isAllRounds) {
       tr.innerHTML = `
         <td class="mono rank-col">${rankCellValue}</td>
         ${nameCell}
@@ -2425,6 +2539,13 @@ function renderLeaderboard(data) {
         ${nameCell}
         <td class="mono metric-col"><b class="score-emph-gross">${grossToParForRow(r, data)}</b></td>
         <td class="mono metric-col"><b class="score-emph-net">${netToParForRow(r, data)}</b></td>
+        <td class="mono thru-col">${thruCell}</td>
+      `;
+    } else if (showStableford) {
+      tr.innerHTML = `
+        <td class="mono rank-col">${rankCellValue}</td>
+        ${nameCell}
+        <td class="mono metric-col"><b>${scoreValue(firstDefined(r, ["points", "grossPoints", "netPoints"]))}</b></td>
         <td class="mono thru-col">${thruCell}</td>
       `;
     } else {
@@ -2977,6 +3098,14 @@ function toParArrayFromHoles(holes, parByHole) {
   });
 }
 
+function stablefordArrayFromHoles(holes, parByHole) {
+  return Array.from({ length: 18 }, (_, i) => {
+    const score = asPlayedNumber(holes?.[i]);
+    if (score == null) return null;
+    return Math.max(0, 2 + Number(parByHole?.[i] || 0) - score);
+  });
+}
+
 function normalizeScoreBundle(row = {}, scores = {}, fallbackPar = []) {
   const par = (
     Array.isArray(scores?.par) && scores.par.length === 18
@@ -3033,6 +3162,20 @@ function normalizeScoreBundle(row = {}, scores = {}, fallbackPar = []) {
 
   const grossTotal = firstDefined(scores, ["grossTotal"]) ?? firstDefined(row, ["gross", "grossTotal"]) ?? sumHoles(gross);
   const netTotal = firstDefined(scores, ["netTotal"]) ?? firstDefined(row, ["net", "netTotal", "strokes"]) ?? sumHoles(net);
+  const grossStableford = (
+    Array.isArray(scores?.grossStableford) && scores.grossStableford.length === 18
+      ? scores.grossStableford
+      : Array.isArray(row?.scores?.grossStableford) && row.scores.grossStableford.length === 18
+        ? row.scores.grossStableford
+        : stablefordArrayFromHoles(gross, par)
+  ).slice();
+  const netStableford = (
+    Array.isArray(scores?.netStableford) && scores.netStableford.length === 18
+      ? scores.netStableford
+      : Array.isArray(row?.scores?.netStableford) && row.scores.netStableford.length === 18
+        ? row.scores.netStableford
+        : stablefordArrayFromHoles(net, par)
+  ).slice();
   const grossToParTotal =
     toParNumber(firstDefined(scores, ["grossToParTotal"])) ??
     toParNumber(firstDefined(row, ["toParGross", "grossToPar", "grossToParTotal"])) ??
@@ -3041,6 +3184,14 @@ function normalizeScoreBundle(row = {}, scores = {}, fallbackPar = []) {
     toParNumber(firstDefined(scores, ["netToParTotal"])) ??
     toParNumber(firstDefined(row, ["toParNet", "netToPar", "netToParTotal", "toPar"])) ??
     netToPar.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0);
+  const grossStablefordTotal =
+    firstDefined(scores, ["grossStablefordTotal"]) ??
+    firstDefined(row, ["grossPoints", "grossStablefordTotal"]) ??
+    grossStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0);
+  const netStablefordTotal =
+    firstDefined(scores, ["netStablefordTotal"]) ??
+    firstDefined(row, ["points", "netPoints", "netStablefordTotal"]) ??
+    netStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0);
   const thru =
     firstDefined(scores, ["thru"]) ??
     firstDefined(row, ["thru"]) ??
@@ -3052,11 +3203,15 @@ function normalizeScoreBundle(row = {}, scores = {}, fallbackPar = []) {
     par,
     grossToPar,
     netToPar,
+    grossStableford,
+    netStableford,
     handicapShots,
     grossTotal,
     netTotal,
     grossToParTotal,
     netToParTotal,
+    grossStablefordTotal,
+    netStablefordTotal,
     thru
   };
 }
@@ -3103,6 +3258,9 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
       thru: scoreBundle.thru,
       gross: scoreBundle.grossTotal,
       net: scoreBundle.netTotal,
+      points: scoreBundle.netStablefordTotal,
+      grossPoints: scoreBundle.grossStablefordTotal,
+      netPoints: scoreBundle.netStablefordTotal,
       strokes: useHandicap ? scoreBundle.netTotal : scoreBundle.grossTotal,
       toPar: useHandicap ? scoreBundle.netToParTotal : scoreBundle.grossToParTotal,
       toParGross: scoreBundle.grossToParTotal,
@@ -3155,6 +3313,8 @@ function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundDat
     const parByHole = Array(18).fill(0);
     const grossToPar = Array(18).fill(null);
     const netToPar = Array(18).fill(null);
+    const grossStableford = Array(18).fill(null);
+    const netStableford = Array(18).fill(null);
     const selectedCountByHole = Array(18).fill(0);
 
     for (let i = 0; i < 18; i++) {
@@ -3196,10 +3356,12 @@ function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundDat
       if (grossV != null) {
         grossToPar[i] = Number(grossV) - parBase;
         grossToParTotal += grossToPar[i];
+        grossStableford[i] = Math.max(0, 2 + parBase - Number(grossV));
       }
       if (netV != null) {
         netToPar[i] = Number(netV) - parBase;
         netToParTotal += netToPar[i];
+        netStableford[i] = Math.max(0, 2 + parBase - Number(netV));
       }
     }
 
@@ -3209,6 +3371,9 @@ function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundDat
       thru,
       gross: grossTotal,
       net: netTotal,
+      points: netStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
+      grossPoints: grossStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
+      netPoints: netStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
       strokes: useHandicap ? netTotal : grossTotal,
       toPar: useHandicap ? netToParTotal : grossToParTotal,
       toParGross: grossToParTotal,
@@ -3219,10 +3384,14 @@ function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundDat
         par: parByHole,
         grossToPar,
         netToPar,
+        grossStableford,
+        netStableford,
         grossTotal,
         netTotal,
         grossToParTotal,
         netToParTotal,
+        grossStablefordTotal: grossStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
+        netStablefordTotal: netStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
         thru
       }
     });
@@ -3283,6 +3452,9 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
       teamName: row?.teamName || teamNames.get(teamId) || meta?.teamName || teamId || "",
       gross: firstDefined(rawScores, ["grossTotal"]) ?? firstDefined(row, ["gross"]) ?? scoreBundle.grossTotal,
       net: firstDefined(rawScores, ["netTotal"]) ?? firstDefined(row, ["net", "strokes"]) ?? scoreBundle.netTotal,
+      points: firstDefined(rawScores, ["netStablefordTotal"]) ?? firstDefined(row, ["points", "netPoints"]) ?? scoreBundle.netStablefordTotal,
+      grossPoints: firstDefined(rawScores, ["grossStablefordTotal"]) ?? firstDefined(row, ["grossPoints"]) ?? scoreBundle.grossStablefordTotal,
+      netPoints: firstDefined(rawScores, ["netStablefordTotal"]) ?? firstDefined(row, ["points", "netPoints"]) ?? scoreBundle.netStablefordTotal,
       toParGross: firstDefined(row, ["toParGross", "grossToPar", "grossToParTotal"]) ?? scoreBundle.grossToParTotal,
       toParNet: firstDefined(row, ["toParNet", "netToPar", "netToParTotal", "toPar"]) ?? scoreBundle.netToParTotal,
       teeTime: row?.teeTime || teeTimeForPlayerRound(meta, roundIndex),
@@ -3319,6 +3491,8 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
       const parByHole = coursePars.map((value) => Number(value || 0) * parMultiplier);
       const grossToPar = toParArrayFromHoles(gross, parByHole);
       const netToPar = toParArrayFromHoles(net, parByHole);
+      const grossStableford = stablefordArrayFromHoles(gross, parByHole);
+      const netStableford = stablefordArrayFromHoles(net, parByHole);
 
       let thru = 0;
       let grossToParTotal = 0;
@@ -3343,6 +3517,9 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
         thru,
         gross: grossTotal,
         net: netTotal,
+        points: netStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
+        grossPoints: grossStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
+        netPoints: netStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
         strokes: useHandicap ? netTotal : grossTotal,
         toPar: useHandicap ? netToParTotal : grossToParTotal,
         toParGross: grossToParTotal,
@@ -3354,11 +3531,15 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
           par: parByHole,
           grossToPar,
           netToPar,
+          grossStableford,
+          netStableford,
           handicapShots: Array.isArray(entry?.handicapShots) ? entry.handicapShots : handicapShotsFromHoleSets(gross, net),
           grossTotal,
           netTotal,
           grossToParTotal,
           netToParTotal,
+          grossStablefordTotal: grossStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
+          netStablefordTotal: netStableford.reduce((acc, value) => acc + (value == null ? 0 : Number(value) || 0), 0),
           thru
         }
       });
@@ -3562,6 +3743,7 @@ function renderOddsTable(title, rows, key) {
   const lowOddsLabel = oddsMetric === "net"
     ? (oddsValueMode === "american" ? "Low N Odds" : "Low N%")
     : (oddsValueMode === "american" ? "Low G Odds" : "Low G%");
+  const showStableford = isStablefordTournament();
 
   const table = document.createElement("table");
   table.className = "table odds-table";
@@ -3571,7 +3753,7 @@ function renderOddsTable(title, rows, key) {
         <th class="left entity-col">${key === "teams" ? "Team" : key === "groups" ? "Group" : "Player"}</th>
         <th>${leadLabel}</th>
         <th>${lowOddsLabel}</th>
-        <th>Proj ±</th>
+        <th>${showStableford ? "Proj Pts" : "Proj ±"}</th>
         <th class="remaining-col">Rem</th>
       </tr>
     </thead>
@@ -3591,9 +3773,9 @@ function renderOddsTable(title, rows, key) {
     const lowMetricProbability = oddsMetric === "net"
       ? row?.lowestNetProbability
       : row?.lowestGrossProbability;
-    const projectedOddsMetricToPar = oddsMetric === "net"
-      ? row?.projectedNetToPar
-      : row?.projectedGrossToPar;
+    const projectedOddsMetricValue = showStableford
+      ? (oddsMetric === "net" ? row?.projectedNetPoints : row?.projectedGrossPoints)
+      : (oddsMetric === "net" ? row?.projectedNetToPar : row?.projectedGrossToPar);
     const isFinished = Number(row?.holesRemaining || 0) <= 0;
     const isTournamentWinner = completedWinners.has(oddsRowStableId(row, key));
     const leadOddsContent = hasCompletedWinner
@@ -3609,7 +3791,7 @@ function renderOddsTable(title, rows, key) {
       </td>
       <td class="mono">${leadOddsContent}</td>
       <td class="mono">${lowOddsContent}</td>
-      <td class="mono"><b>${escapeHtml(projectedOddsMetricToPar == null ? "—" : toParStrFromTenths(projectedOddsMetricToPar))}</b></td>
+      <td class="mono"><b>${escapeHtml(projectedOddsMetricValue == null ? "—" : (showStableford ? formatDecimal(projectedOddsMetricValue) : toParStrFromTenths(projectedOddsMetricValue)))}</b></td>
       <td class="mono remaining-col" title="${escapeHtml(remTitle)}">${escapeHtml(String(Number(row?.holesRemaining || 0)))}</td>
     `;
     tbody.appendChild(tr);
@@ -4027,6 +4209,9 @@ function render() {
   const data = buildScoreboardResponse(TOURN, currentRound);
 
   const rLabel = viewRoundLabel(data.view.round);
+  const stablefordInfo = isStablefordTournament()
+    ? " • stableford points drive leaderboard positions"
+    : "";
   const handicapInfo = isHandicapRound(data.view.round)
     ? " • leaderboard shows gross + net, scorecards show both"
     : "";
@@ -4040,7 +4225,7 @@ function render() {
     data.view.round === "all" && tournamentHasAnyScrambleRound()
       ? " • all rounds view is team-only (scramble in tournament)"
       : "";
-  toggleNote.textContent = `${rLabel}${handicapInfo}${scrambleInfo}${twoManInfo}${allRoundsInfo}`;
+  toggleNote.textContent = `${rLabel}${stablefordInfo}${handicapInfo}${scrambleInfo}${twoManInfo}${allRoundsInfo}`;
   if (lbTitleHelp) {
     const oddsInfo = liveOddsForView(currentRound)
       ? " Odds & projections are shown in the dedicated section below."

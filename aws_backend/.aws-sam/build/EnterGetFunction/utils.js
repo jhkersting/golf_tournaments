@@ -163,11 +163,18 @@ export function normalizeTournamentScoring(scoring){
   return "stroke";
 }
 
+function holeScoreOrNull(value){
+  if (value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 function stablefordPointsForHole(score, par){
-  if (score == null) return null;
-  const scoreNum = Number(score);
+  const scoreNum = holeScoreOrNull(score);
+  if (scoreNum == null) return null;
   const parNum = Number(par);
-  if (!Number.isFinite(scoreNum) || !Number.isFinite(parNum)) return null;
+  if (!Number.isFinite(parNum) || parNum <= 0) return null;
   return Math.max(0, 2 + parNum - scoreNum);
 }
 
@@ -204,16 +211,10 @@ function selectEntriesByMetric(entries, metricKey, topX, direction = "low"){
 
 function buildScoreEntry(grossIn, netIn, handicapShotsIn, parIn){
   const gross = Array.from({ length: 18 }, (_, i) => {
-    const v = grossIn?.[i];
-    if (v == null) return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
+    return holeScoreOrNull(grossIn?.[i]);
   });
   const net = Array.from({ length: 18 }, (_, i) => {
-    const v = netIn?.[i];
-    if (v == null) return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
+    return holeScoreOrNull(netIn?.[i]);
   });
   const handicapShots = Array.from({ length: 18 }, (_, i) => {
     const n = Number(handicapShotsIn?.[i]);
@@ -738,8 +739,8 @@ export function materializePublicFromState(state){
                 let allPresent = gPlayers.length > 0;
                 for (const player of gPlayers){
                   const playerSc = outRound.player[player.playerId];
-                  const grossVal = Number.isFinite(Number(playerSc?.gross?.[i])) ? Number(playerSc.gross[i]) : null;
-                  const netVal = Number.isFinite(Number(playerSc?.net?.[i])) ? Number(playerSc.net[i]) : null;
+                  const grossVal = holeScoreOrNull(playerSc?.gross?.[i]);
+                  const netVal = holeScoreOrNull(playerSc?.net?.[i]);
                   const shotVal = Number.isFinite(Number(playerSc?.handicapShots?.[i])) ? Number(playerSc.handicapShots[i]) : 0;
                   if (grossVal == null || netVal == null) {
                     allPresent = false;
@@ -762,8 +763,8 @@ export function materializePublicFromState(state){
               let shotBest = 0;
               for (const player of gPlayers){
                 const playerSc = outRound.player[player.playerId];
-                const grossVal = Number.isFinite(Number(playerSc?.gross?.[i])) ? Number(playerSc.gross[i]) : null;
-                const netVal = Number.isFinite(Number(playerSc?.net?.[i])) ? Number(playerSc.net[i]) : null;
+                const grossVal = holeScoreOrNull(playerSc?.gross?.[i]);
+                const netVal = holeScoreOrNull(playerSc?.net?.[i]);
                 const shotVal = Number.isFinite(Number(playerSc?.handicapShots?.[i])) ? Number(playerSc.handicapShots[i]) : 0;
                 if (grossVal != null && (grossBest == null || grossVal < grossBest)) grossBest = grossVal;
                 if (netVal != null && (netBest == null || netVal < netBest)) {
@@ -962,12 +963,16 @@ export function materializePublicFromState(state){
       const sc = outRound.team[teamId];
       if (!sc) return null;
       const strokes = sc.grossTotal;
+      const points = useHandicap ? sc.netStablefordTotal : sc.grossStablefordTotal;
       const grossToPar = toParStrFromDiff(sc.grossToParTotal);
       const netToPar = toParStrFromDiff(sc.netToParTotal);
       const thru = Number.isFinite(sc.thru) && sc.thru > 0 ? sc.thru : null;
       return {
         teamId, teamName: tname,
         strokes: Number.isFinite(strokes) ? Number(strokes.toFixed(2)) : 0,
+        points: Number.isFinite(points) ? Number(points.toFixed(2)) : 0,
+        grossPoints: Number.isFinite(sc.grossStablefordTotal) ? Number(sc.grossStablefordTotal.toFixed(2)) : 0,
+        netPoints: Number.isFinite(sc.netStablefordTotal) ? Number(sc.netStablefordTotal.toFixed(2)) : 0,
         toPar: grossToPar,
         grossToPar,
         netToPar,
@@ -980,10 +985,14 @@ export function materializePublicFromState(state){
           netTotal: Number.isFinite(sc.netTotal) ? Number(sc.netTotal.toFixed(2)) : 0,
           grossToParTotal: Number.isFinite(sc.grossToParTotal) ? Number(sc.grossToParTotal.toFixed(2)) : 0,
           netToParTotal: Number.isFinite(sc.netToParTotal) ? Number(sc.netToParTotal.toFixed(2)) : 0,
+          grossStableford: Array.isArray(sc.grossStableford) ? sc.grossStableford.slice() : Array(18).fill(null),
+          netStableford: Array.isArray(sc.netStableford) ? sc.netStableford.slice() : Array(18).fill(null),
+          grossStablefordTotal: Number.isFinite(sc.grossStablefordTotal) ? Number(sc.grossStablefordTotal.toFixed(2)) : 0,
+          netStablefordTotal: Number.isFinite(sc.netStablefordTotal) ? Number(sc.netStablefordTotal.toFixed(2)) : 0,
           thru
         }
       };
-    }).filter(Boolean).sort((a,b)=>a.strokes - b.strokes);
+    }).filter(Boolean).sort((a,b)=> scoring === "stableford" ? b.points - a.points : a.strokes - b.strokes);
 
     // Players
     const playerRows = Object.keys(players).map(pid => {
@@ -991,6 +1000,7 @@ export function materializePublicFromState(state){
       const sc = outRound.player[pid];
       if (!sc) return null;
       const strokes = useHandicap ? sc.netTotal : sc.grossTotal;
+      const points = useHandicap ? sc.netStablefordTotal : sc.grossStablefordTotal;
       const toParTotal = useHandicap ? sc.netToParTotal : sc.grossToParTotal;
       const teamName = teams[p.teamId]?.teamName || "";
       return {
@@ -998,11 +1008,14 @@ export function materializePublicFromState(state){
         name: p.name,
         teamName,
         strokes: Number.isFinite(strokes) ? Number(strokes.toFixed(2)) : 0,
+        points: Number.isFinite(points) ? Number(points.toFixed(2)) : 0,
+        grossPoints: Number.isFinite(sc.grossStablefordTotal) ? Number(sc.grossStablefordTotal.toFixed(2)) : 0,
+        netPoints: Number.isFinite(sc.netStablefordTotal) ? Number(sc.netStablefordTotal.toFixed(2)) : 0,
         toPar: toParStrFromDiff(toParTotal),
         thru: sc.thru,
         scores: sc
       };
-    }).filter(Boolean).sort((a,b)=>a.strokes - b.strokes);
+    }).filter(Boolean).sort((a,b)=> scoring === "stableford" ? b.points - a.points : a.strokes - b.strokes);
 
     outRound.leaderboard.teams = teamRows;
     outRound.leaderboard.players = playerRows;
@@ -1022,8 +1035,20 @@ export function materializePublicFromState(state){
   const weightScale = rawWeightSum > 0 ? (roundCount / rawWeightSum) : 1;
   const normalizedWeights = rawWeights.map(w => w * weightScale);
 
-  const teamTotals = new Map(Object.keys(teams).map(id => [id, { strokes:0, par:0 }]));
-  const playerTotals = new Map(Object.keys(players).map(id => [id, { strokes:0, par:0 }]));
+  const teamTotals = new Map(Object.keys(teams).map(id => [id, {
+    metric: 0,
+    strokes: 0,
+    par: 0,
+    grossPoints: 0,
+    netPoints: 0
+  }]));
+  const playerTotals = new Map(Object.keys(players).map(id => [id, {
+    metric: 0,
+    strokes: 0,
+    par: 0,
+    grossPoints: 0,
+    netPoints: 0
+  }]));
 
   for (let r=0;r<rounds.length;r++){
     const round = rounds[r] || {};
@@ -1032,6 +1057,9 @@ export function materializePublicFromState(state){
     const isScramble = round.format === "scramble";
     const isTwoMan = isTwoManFormat(round.format);
     const useHandicap = !!round.useHandicap;
+    const roundMetricKey = scoring === "stableford"
+      ? (useHandicap ? "netStablefordTotal" : "grossStablefordTotal")
+      : (useHandicap ? "netTotal" : "grossTotal");
 
     const derived = score_data.rounds[r];
 
@@ -1039,12 +1067,15 @@ export function materializePublicFromState(state){
       for (const teamId of Object.keys(teams)){
         const sc = derived.team[teamId];
         if (!sc) continue;
-        // par played is grossTotal - grossToParTotal
         const parPlayed = sc.grossTotal - sc.grossToParTotal;
         const strokes = useHandicap ? sc.netTotal : sc.grossTotal;
+        const points = useHandicap ? sc.netStablefordTotal : sc.grossStablefordTotal;
         const cur = teamTotals.get(teamId);
+        cur.metric += Number((sc?.[roundMetricKey]) || 0) * weight;
         cur.strokes += Number(strokes || 0) * weight;
         cur.par += Number(parPlayed || 0) * weight;
+        cur.grossPoints += Number(sc?.grossStablefordTotal || 0) * weight;
+        cur.netPoints += Number(sc?.netStablefordTotal || 0) * weight;
       }
       for (const pid of Object.keys(players)){
         const p = players[pid];
@@ -1053,24 +1084,36 @@ export function materializePublicFromState(state){
         const parPlayed = sc.grossTotal - sc.grossToParTotal;
         const strokes = useHandicap ? sc.netTotal : sc.grossTotal;
         const cur = playerTotals.get(pid);
+        cur.metric += Number((sc?.[roundMetricKey]) || 0) * weight;
         cur.strokes += Number(strokes || 0) * weight;
         cur.par += Number(parPlayed || 0) * weight;
+        cur.grossPoints += Number(sc?.grossStablefordTotal || 0) * weight;
+        cur.netPoints += Number(sc?.netStablefordTotal || 0) * weight;
       }
       continue;
     }
 
-    // player-based rounds: player totals
-    const roundPlayer = new Map(); // pid -> {strokes, par}
+    const roundPlayer = new Map();
     for (const pid of Object.keys(players)){
       const sc = derived.player[pid];
       if (!sc || !Number.isFinite(sc.thru) || sc.thru <= 0) continue;
       const strokes = useHandicap ? sc.netTotal : sc.grossTotal;
       const parPlayed = sc.grossTotal - sc.grossToParTotal;
-      roundPlayer.set(pid, { strokes, par: parPlayed });
+      const metric = Number(sc?.[roundMetricKey] || 0);
+      roundPlayer.set(pid, {
+        strokes,
+        par: parPlayed,
+        grossPoints: Number(sc?.grossStablefordTotal || 0),
+        netPoints: Number(sc?.netStablefordTotal || 0),
+        metric
+      });
 
       const cur = playerTotals.get(pid);
+      cur.metric += metric * weight;
       cur.strokes += Number(strokes || 0) * weight;
       cur.par += Number(parPlayed || 0) * weight;
+      cur.grossPoints += Number(sc?.grossStablefordTotal || 0) * weight;
+      cur.netPoints += Number(sc?.netStablefordTotal || 0) * weight;
     }
 
     if (isTwoMan){
@@ -1086,28 +1129,44 @@ export function materializePublicFromState(state){
           const thru = thruFromHoles(gross);
           if (!Number.isFinite(thru) || thru <= 0) return null;
 
-          const parPlayed = gross.reduce((acc, v, i) => {
-            return acc + (v == null ? 0 : Number(roundCourse.pars[i] || 0));
-          }, 0);
+          const parPlayed = Array.isArray(groupSc?.par)
+            ? groupSc.par.reduce((acc, v, i) => acc + ((gross[i] == null && net[i] == null) ? 0 : Number(v || 0)), 0)
+            : gross.reduce((acc, v, i) => acc + (v == null ? 0 : Number(roundCourse.pars[i] || 0)), 0);
           const strokes = useHandicap ? sumPlayed(net) : sumPlayed(gross);
-          return { strokes, par: parPlayed };
+          const grossPoints = Number(groupSc?.grossStablefordTotal || 0);
+          const netPoints = Number(groupSc?.netStablefordTotal || 0);
+          return {
+            strokes,
+            par: parPlayed,
+            grossPoints,
+            netPoints,
+            metric: scoring === "stableford" ? (useHandicap ? netPoints : grossPoints) : strokes
+          };
         }).filter(Boolean);
 
         const cur = teamTotals.get(teamId);
         if (groupPairs.length){
           const groupCount = groupPairs.length;
+          const avgMetric = groupPairs.reduce((a, p) => a + Number(p.metric || 0), 0) / groupCount;
           const avgStrokes = groupPairs.reduce((a, p) => a + Number(p.strokes || 0), 0) / groupCount;
           const avgPar = groupPairs.reduce((a, p) => a + Number(p.par || 0), 0) / groupCount;
+          const avgGrossPoints = groupPairs.reduce((a, p) => a + Number(p.grossPoints || 0), 0) / groupCount;
+          const avgNetPoints = groupPairs.reduce((a, p) => a + Number(p.netPoints || 0), 0) / groupCount;
+          cur.metric += avgMetric * weight;
           cur.strokes += avgStrokes * weight;
           cur.par += avgPar * weight;
+          cur.grossPoints += avgGrossPoints * weight;
+          cur.netPoints += avgNetPoints * weight;
           continue;
         }
 
-        // Legacy fallback when group detail is unavailable.
         const parPlayed = sc.grossTotal - sc.grossToParTotal;
         const strokes = useHandicap ? sc.netTotal : sc.grossTotal;
+        cur.metric += Number((sc?.[roundMetricKey]) || 0) * weight;
         cur.strokes += Number(strokes || 0) * weight;
         cur.par += Number(parPlayed || 0) * weight;
+        cur.grossPoints += Number(sc?.grossStablefordTotal || 0) * weight;
+        cur.netPoints += Number(sc?.netStablefordTotal || 0) * weight;
       }
       continue;
     }
@@ -1116,30 +1175,64 @@ export function materializePublicFromState(state){
     for (const teamId of Object.keys(teams)){
       const pids = Object.keys(players).filter(pid => players[pid].teamId === teamId);
       const pairs = pids.map(pid => roundPlayer.get(pid)).filter(Boolean);
-      const aggOut = bestXAggregateWithPar(pairs, agg);
-      if (!aggOut) continue;
+      const selected = selectEntriesByMetric(
+        pairs,
+        "metric",
+        agg.topX,
+        scoring === "stableford" ? "high" : "low"
+      );
+      if (!selected.length) continue;
       const cur = teamTotals.get(teamId);
-      cur.strokes += Number(aggOut.strokes || 0) * weight;
-      cur.par += Number(aggOut.par || 0) * weight;
+      const totalMetric = selected.reduce((sum, entry) => sum + Number(entry.metric || 0), 0);
+      const totalStrokes = selected.reduce((sum, entry) => sum + Number(entry.strokes || 0), 0);
+      const totalPar = selected.reduce((sum, entry) => sum + Number(entry.par || 0), 0);
+      const totalGrossPoints = selected.reduce((sum, entry) => sum + Number(entry.grossPoints || 0), 0);
+      const totalNetPoints = selected.reduce((sum, entry) => sum + Number(entry.netPoints || 0), 0);
+      const divisor = selected.length || 1;
+      cur.metric += (totalMetric / divisor) * weight;
+      cur.strokes += (totalStrokes / divisor) * weight;
+      cur.par += (totalPar / divisor) * weight;
+      cur.grossPoints += (totalGrossPoints / divisor) * weight;
+      cur.netPoints += (totalNetPoints / divisor) * weight;
     }
   }
 
   const teamLb = Object.keys(teams).map(teamId => {
     const tname = teams[teamId]?.teamName || "";
-    const v = teamTotals.get(teamId) || { strokes:0, par:0 };
+    const v = teamTotals.get(teamId) || { metric:0, strokes:0, par:0, grossPoints:0, netPoints:0 };
     const strokes = Number(v.strokes.toFixed(2));
+    const points = Number(v.metric.toFixed(2));
     const toPar = (v.par === 0 && strokes === 0) ? "E" : toParStrFromDiff(strokes - v.par);
-    return { teamId, teamName: tname, strokes, toPar, thru: null };
-  }).sort((a,b)=>a.strokes - b.strokes);
+    return {
+      teamId,
+      teamName: tname,
+      strokes,
+      points,
+      grossPoints: Number(v.grossPoints.toFixed(2)),
+      netPoints: Number(v.netPoints.toFixed(2)),
+      toPar,
+      thru: null
+    };
+  }).sort((a,b)=> scoring === "stableford" ? b.points - a.points : a.strokes - b.strokes);
 
   const playerLb = Object.keys(players).map(pid => {
     const p = players[pid];
-    const v = playerTotals.get(pid) || { strokes:0, par:0 };
+    const v = playerTotals.get(pid) || { metric:0, strokes:0, par:0, grossPoints:0, netPoints:0 };
     const strokes = Number(v.strokes.toFixed(2));
     const toPar = (v.par === 0 && strokes === 0) ? "E" : toParStrFromDiff(strokes - v.par);
     const teamName = teams[p.teamId]?.teamName || "";
-    return { playerId: pid, name: p.name, teamName, strokes, toPar, thru: null };
-  }).sort((a,b)=>a.strokes - b.strokes);
+    return {
+      playerId: pid,
+      name: p.name,
+      teamName,
+      strokes,
+      points: Number(v.metric.toFixed(2)),
+      grossPoints: Number(v.grossPoints.toFixed(2)),
+      netPoints: Number(v.netPoints.toFixed(2)),
+      toPar,
+      thru: null
+    };
+  }).sort((a,b)=> scoring === "stableford" ? b.points - a.points : a.strokes - b.strokes);
 
   score_data.leaderboard_all.teams = teamLb;
   score_data.leaderboard_all.players = playerLb;
@@ -1165,7 +1258,7 @@ export function materializePublicFromState(state){
   });
 
   return {
-    tournament: { tournamentId: t.tournamentId, name: t.name, dates: t.dates, rounds },
+    tournament: { tournamentId: t.tournamentId, name: t.name, dates: t.dates, scoring, rounds },
     course,
     courses,
     teams: publicTeams,
@@ -1251,7 +1344,11 @@ export async function writePublicObjectsFromState(state){
     const enterObj = {
       code: p.code,
       tournamentId: tid,
-      tournament: { name: state.tournament.name, dates: state.tournament.dates },
+      tournament: {
+        name: state.tournament.name,
+        dates: state.tournament.dates,
+        scoring: normalizeTournamentScoring(state?.tournament?.scoring)
+      },
       rounds,
       course,
       courses,

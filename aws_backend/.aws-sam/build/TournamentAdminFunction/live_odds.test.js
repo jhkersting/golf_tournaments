@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { computeLiveOdds } from "./live_odds.js";
 import { appendCompactLiveOddsHistory, compactLiveOddsPayload } from "./live_odds_compact.js";
+import { materializePublicFromState } from "./utils.js";
 
 let nodeTest = null;
 try {
@@ -228,6 +229,64 @@ registerTest("handicap rounds publish net-aware projections", () => {
   assert.equal(teamOdds.get("A")?.lowestNetProbability, 100);
   assert.ok(Number.isFinite(teamOdds.get("A")?.projectedNet));
   assert.ok(Number(teamOdds.get("A")?.projectedNet || 0) < Number(teamOdds.get("A")?.projectedGross || 0));
+});
+
+registerTest("materialization leaves empty two-man best ball rounds unplayed", () => {
+  const state = {
+    tournament: {
+      tournamentId: "fixture-two-man-empty",
+      name: "Fixture two-man empty",
+      scoring: "stableford"
+    },
+    rounds: [
+      {
+        name: "Round 1",
+        format: "two_man_best_ball",
+        useHandicap: true,
+        weight: 1,
+        courseIndex: 0,
+        teamAggregation: { topX: 4 }
+      }
+    ],
+    course: {
+      pars: PARS.slice(),
+      strokeIndex: STROKE_INDEX.slice()
+    },
+    courses: [{
+      pars: PARS.slice(),
+      strokeIndex: STROKE_INDEX.slice()
+    }],
+    teams: {
+      A: { teamId: "A", teamName: "Alpha" },
+      B: { teamId: "B", teamName: "Beta" }
+    },
+    players: {
+      A1: { playerId: "A1", name: "Alice", teamId: "A", handicap: 6, groups: ["A"], group: "A" },
+      A2: { playerId: "A2", name: "Avery", teamId: "A", handicap: 8, groups: ["A"], group: "A" },
+      B1: { playerId: "B1", name: "Blair", teamId: "B", handicap: 12, groups: ["A"], group: "A" },
+      B2: { playerId: "B2", name: "Bailey", teamId: "B", handicap: 14, groups: ["A"], group: "A" }
+    },
+    scores: {
+      rounds: [{}]
+    },
+    updatedAt: Date.parse(FIXED_NOW),
+    version: 1
+  };
+
+  const materialized = materializePublicFromState(state);
+  const round = materialized.score_data.rounds[0];
+  const team = round.team.A;
+  const leaderboardRow = round.leaderboard.teams.find((row) => row.teamId === "A");
+
+  assert.deepEqual(team.gross, grossArray(null));
+  assert.deepEqual(team.net, grossArray(null));
+  assert.equal(team.grossStablefordTotal, 0);
+  assert.equal(team.netStablefordTotal, 0);
+  assert.equal(team.thru, 0);
+  assert.equal(leaderboardRow?.points, 0);
+  assert.equal(leaderboardRow?.grossPoints, 0);
+  assert.equal(leaderboardRow?.netPoints, 0);
+  assert.equal(leaderboardRow?.thru, null);
 });
 
 registerTest("all-round odds include future unstarted holes", () => {

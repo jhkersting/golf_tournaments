@@ -412,6 +412,17 @@ export async function importBlueGolfCourse(bluegolfUrl) {
       bluegolfCourseSlug: slug,
       bluegolfUrl: urls.canonicalUrl,
       holeCount: Array.isArray(overview?.holes) ? overview.holes.length : 0
+    },
+    mapData: {
+      overviewPayload: overview,
+      courseData: {
+        name: scorecard.name,
+        location: scorecard.location,
+        pars: scorecard.pars,
+        strokeIndex: scorecard.strokeIndex,
+        tees: scorecard.tees,
+        longestTees: scorecard.longestTees
+      }
     }
   };
 }

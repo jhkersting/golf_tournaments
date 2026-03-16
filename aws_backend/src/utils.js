@@ -163,11 +163,18 @@ export function normalizeTournamentScoring(scoring){
   return "stroke";
 }
 
+function holeScoreOrNull(value){
+  if (value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 function stablefordPointsForHole(score, par){
-  if (score == null) return null;
-  const scoreNum = Number(score);
+  const scoreNum = holeScoreOrNull(score);
+  if (scoreNum == null) return null;
   const parNum = Number(par);
-  if (!Number.isFinite(scoreNum) || !Number.isFinite(parNum)) return null;
+  if (!Number.isFinite(parNum) || parNum <= 0) return null;
   return Math.max(0, 2 + parNum - scoreNum);
 }
 
@@ -204,16 +211,10 @@ function selectEntriesByMetric(entries, metricKey, topX, direction = "low"){
 
 function buildScoreEntry(grossIn, netIn, handicapShotsIn, parIn){
   const gross = Array.from({ length: 18 }, (_, i) => {
-    const v = grossIn?.[i];
-    if (v == null) return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
+    return holeScoreOrNull(grossIn?.[i]);
   });
   const net = Array.from({ length: 18 }, (_, i) => {
-    const v = netIn?.[i];
-    if (v == null) return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
+    return holeScoreOrNull(netIn?.[i]);
   });
   const handicapShots = Array.from({ length: 18 }, (_, i) => {
     const n = Number(handicapShotsIn?.[i]);
@@ -738,8 +739,8 @@ export function materializePublicFromState(state){
                 let allPresent = gPlayers.length > 0;
                 for (const player of gPlayers){
                   const playerSc = outRound.player[player.playerId];
-                  const grossVal = Number.isFinite(Number(playerSc?.gross?.[i])) ? Number(playerSc.gross[i]) : null;
-                  const netVal = Number.isFinite(Number(playerSc?.net?.[i])) ? Number(playerSc.net[i]) : null;
+                  const grossVal = holeScoreOrNull(playerSc?.gross?.[i]);
+                  const netVal = holeScoreOrNull(playerSc?.net?.[i]);
                   const shotVal = Number.isFinite(Number(playerSc?.handicapShots?.[i])) ? Number(playerSc.handicapShots[i]) : 0;
                   if (grossVal == null || netVal == null) {
                     allPresent = false;
@@ -762,8 +763,8 @@ export function materializePublicFromState(state){
               let shotBest = 0;
               for (const player of gPlayers){
                 const playerSc = outRound.player[player.playerId];
-                const grossVal = Number.isFinite(Number(playerSc?.gross?.[i])) ? Number(playerSc.gross[i]) : null;
-                const netVal = Number.isFinite(Number(playerSc?.net?.[i])) ? Number(playerSc.net[i]) : null;
+                const grossVal = holeScoreOrNull(playerSc?.gross?.[i]);
+                const netVal = holeScoreOrNull(playerSc?.net?.[i]);
                 const shotVal = Number.isFinite(Number(playerSc?.handicapShots?.[i])) ? Number(playerSc.handicapShots[i]) : 0;
                 if (grossVal != null && (grossBest == null || grossVal < grossBest)) grossBest = grossVal;
                 if (netVal != null && (netBest == null || netVal < netBest)) {

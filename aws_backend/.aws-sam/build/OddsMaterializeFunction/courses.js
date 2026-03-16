@@ -1,6 +1,7 @@
 import { json, parseBody, requireAdmin, uid, getJson, putJson } from "./utils.js";
 import { normalizeCourseRecord, validateCourse } from "./course_data.js";
 import { importBlueGolfCourse } from "./bluegolf_import.js";
+import { publishBlueGolfCourseMap } from "./course_map_publish.js";
 
 async function updateCatalogWithRetry(updater, { maxTries=5 } = {}){
   const bucket = process.env.STATE_BUCKET;
@@ -51,10 +52,12 @@ export async function handler(event){
       ).trim();
 
       let importedMetadata = null;
+      let importedMapData = null;
       let course = body?.course || body || {};
       if (bluegolfUrl) {
         const imported = await importBlueGolfCourse(bluegolfUrl);
         importedMetadata = imported.metadata || null;
+        importedMapData = imported.mapData || null;
         course = {
           ...imported.course,
           ...(course && typeof course === "object" ? course : {})
@@ -63,8 +66,6 @@ export async function handler(event){
 
       const errMsg = validateCourse(course);
       if (errMsg) return json(400, { error: errMsg });
-      const normalizedCourse = normalizeCourseRecord(course);
-      if (!normalizedCourse) return json(400, { error: "Invalid course payload." });
 
       const now = Date.now();
       const givenId = String(course.courseId || body?.courseId || "").trim();
@@ -72,7 +73,11 @@ export async function handler(event){
         ? `bluegolf-${importedMetadata.bluegolfCourseSlug}`
         : "";
       const courseId = givenId || importedId || uid("c");
-
+      const normalizedCourse = normalizeCourseRecord({
+        ...course,
+        ...(importedMetadata ? { dataSlug: courseId, mapSlug: courseId } : {})
+      });
+      if (!normalizedCourse) return json(400, { error: "Invalid course payload." });
       const next = await updateCatalogWithRetry((current) => {
         current.courses = current.courses || {};
         const prev = current.courses[courseId] || {};
@@ -87,6 +92,14 @@ export async function handler(event){
         current.version = Number(current.version || 0) + 1;
         return current;
       });
+
+      if (importedMapData && process.env.PUBLIC_BUCKET) {
+        await publishBlueGolfCourseMap(process.env.PUBLIC_BUCKET, {
+          courseId,
+          courseData: importedMapData.courseData,
+          overviewPayload: importedMapData.overviewPayload
+        });
+      }
 
       return json(200, {
         ok:true,
