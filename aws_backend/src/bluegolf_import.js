@@ -238,24 +238,34 @@ function groupLongestTees(tees, limit = 3) {
       Math.round(Number(tee.totalYards) || 0),
       Array.isArray(tee.holeYardages) ? tee.holeYardages.map((value) => Number(value) || 0) : []
     ]);
-    const ratingEntry = {
-      ...(trimText(tee.gender) ? { gender: trimText(tee.gender).toUpperCase() } : {}),
-      ...(Number.isFinite(Number(tee.rating)) ? { rating: Number(Number(tee.rating).toFixed(1)) } : {}),
-      ...(Number.isFinite(Number(tee.slope)) ? { slope: Math.round(Number(tee.slope)) } : {})
-    };
+    const ratingEntries = Array.isArray(tee.ratings) && tee.ratings.length
+      ? tee.ratings.map((entry) => ({
+          ...(trimText(entry?.gender) ? { gender: trimText(entry.gender).toUpperCase() } : {}),
+          ...(Number.isFinite(Number(entry?.rating)) ? { rating: Number(Number(entry.rating).toFixed(1)) } : {}),
+          ...(Number.isFinite(Number(entry?.slope)) ? { slope: Math.round(Number(entry.slope)) } : {})
+        })).filter((entry) => Object.keys(entry).length)
+      : [
+          {
+            ...(trimText(tee.gender) ? { gender: trimText(tee.gender).toUpperCase() } : {}),
+            ...(Number.isFinite(Number(tee.rating)) ? { rating: Number(Number(tee.rating).toFixed(1)) } : {}),
+            ...(Number.isFinite(Number(tee.slope)) ? { slope: Math.round(Number(tee.slope)) } : {})
+          }
+        ].filter((entry) => Object.keys(entry).length);
     if (!grouped.has(key)) {
       grouped.set(key, {
         teeName: tee.teeName,
         parTotal: tee.parTotal,
         totalYards: Math.round(Number(tee.totalYards) || 0),
         holeYardages: (tee.holeYardages || []).map((value) => Number(value) || 0),
-        ratings: Object.keys(ratingEntry).length ? [ratingEntry] : []
+        ratings: ratingEntries.slice()
       });
       continue;
     }
     const current = grouped.get(key);
-    const exists = current.ratings.some((entry) => entry.gender === ratingEntry.gender && entry.rating === ratingEntry.rating && entry.slope === ratingEntry.slope);
-    if (!exists && Object.keys(ratingEntry).length) current.ratings.push(ratingEntry);
+    for (const ratingEntry of ratingEntries) {
+      const exists = current.ratings.some((entry) => entry.gender === ratingEntry.gender && entry.rating === ratingEntry.rating && entry.slope === ratingEntry.slope);
+      if (!exists) current.ratings.push(ratingEntry);
+    }
   }
 
   return [...grouped.values()]

@@ -111,6 +111,8 @@ registerTest("parseScorecardCourseInfo extracts pars, stroke index, and tee meta
   assert.deepEqual(course.tees[0].holeYardages, BLACK_YARDS);
   assert.equal(course.longestTees.length, 2);
   assert.equal(course.longestTees[0].teeName, "Black");
+  assert.equal(course.longestTees[0].ratings[0].rating, 74.3);
+  assert.equal(course.longestTees[0].ratings[0].slope, 130);
 });
 
 if (!nodeTest) {
