@@ -22,6 +22,9 @@ const parRow = document.getElementById("par_row");
 const siRow = document.getElementById("si_row");
 const courseSelect = document.getElementById("course_select");
 const courseRefreshBtn = document.getElementById("course_refresh");
+const bluegolfUrlEl = document.getElementById("bluegolf_url");
+const courseImportBtn = document.getElementById("course_import_bluegolf");
+const courseImportStatus = document.getElementById("course_import_status");
 const courseNameEl = document.getElementById("course_name");
 const courseSaveBtn = document.getElementById("course_save");
 const courseStatus = document.getElementById("course_status");
@@ -500,6 +503,17 @@ async function saveCourse(){
     name,
     pars,
     strokeIndex: si,
+    ...(existing?.sourceCourseId ? { sourceCourseId: existing.sourceCourseId } : {}),
+    ...(existing?.selectedTeeKey ? { selectedTeeKey: existing.selectedTeeKey } : {}),
+    ...(existing?.teeName ? { teeName: existing.teeName } : {}),
+    ...(existing?.teeLabel ? { teeLabel: existing.teeLabel } : {}),
+    ...(Number.isFinite(existing?.totalYards) ? { totalYards: existing.totalYards } : {}),
+    ...(Array.isArray(existing?.holeYardages) && existing.holeYardages.length === 18
+      ? { holeYardages: existing.holeYardages.slice() }
+      : {}),
+    ...(Array.isArray(existing?.ratings) && existing.ratings.length
+      ? { ratings: existing.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+      : {}),
     ...(Array.isArray(existing?.tees) && existing.tees.length
       ? { tees: existing.tees.map((tee) => serializeTeeForSave(tee)).filter(Boolean) }
       : {})
@@ -527,6 +541,37 @@ async function saveCourse(){
   } catch (e) {
     console.error(e);
     courseStatus.textContent = e.message || String(e);
+  }
+}
+
+async function importBlueGolfCourse(){
+  if (!courseImportStatus) return;
+  const bluegolfUrl = String(bluegolfUrlEl?.value || "").trim();
+  if (!bluegolfUrl) {
+    courseImportStatus.textContent = "Paste a BlueGolf link first.";
+    return;
+  }
+
+  courseImportStatus.textContent = "Importing BlueGolf course…";
+  try {
+    const payload = await api("/courses", {
+      method: "POST",
+      body: { bluegolfUrl }
+    });
+    const importedCourse = normalizeCourse(payload?.course || payload);
+    const importedId = String(importedCourse?.courseId || "").trim();
+    await loadCourses();
+    if (importedId && courseSelect) {
+      selectedCourseId = importedId;
+      courseSelect.value = importedId;
+      await loadCourseById(importedId);
+    }
+    courseImportStatus.textContent = importedCourse?.name
+      ? `Imported ${importedCourse.name}.`
+      : "BlueGolf course imported.";
+  } catch (e) {
+    console.error(e);
+    courseImportStatus.textContent = e.message || String(e);
   }
 }
 
@@ -619,6 +664,7 @@ addRoundBtn.onclick = addRound;
 addRound(); addRound();
 rebuildCourseRows();
 if (courseRefreshBtn) courseRefreshBtn.onclick = () => loadCourses();
+if (courseImportBtn) courseImportBtn.onclick = () => importBlueGolfCourse();
 if (courseSaveBtn) courseSaveBtn.onclick = () => saveCourse();
 if (courseSelect) {
   courseSelect.onchange = async () => {
