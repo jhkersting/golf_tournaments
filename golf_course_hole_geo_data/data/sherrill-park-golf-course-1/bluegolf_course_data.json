@@ -47,5 +47,352 @@
     1,
     7
   ],
-  "fetchedAtUtc": "2026-03-02T17:41:16.562238+00:00"
+  "tees": [
+    {
+      "tabId": "dropdown-tee-0-4",
+      "teeName": "Black",
+      "gender": "L",
+      "parTotal": 72,
+      "totalYards": 7016,
+      "rating": 80.8,
+      "slope": 140,
+      "holeYardages": [
+        524,
+        389,
+        197,
+        336,
+        541,
+        177,
+        423,
+        437,
+        403,
+        412,
+        524,
+        400,
+        174,
+        599,
+        188,
+        436,
+        433,
+        423
+      ]
+    },
+    {
+      "tabId": "dropdown-tee-0-0",
+      "teeName": "Black",
+      "gender": "M",
+      "parTotal": 72,
+      "totalYards": 7016,
+      "rating": 74.3,
+      "slope": 130,
+      "holeYardages": [
+        524,
+        389,
+        197,
+        336,
+        541,
+        177,
+        423,
+        437,
+        403,
+        412,
+        524,
+        400,
+        174,
+        599,
+        188,
+        436,
+        433,
+        423
+      ]
+    },
+    {
+      "tabId": "dropdown-tee-0-5",
+      "teeName": "Blue",
+      "gender": "L",
+      "parTotal": 72,
+      "totalYards": 6462,
+      "rating": 77.6,
+      "slope": 134,
+      "holeYardages": [
+        504,
+        345,
+        177,
+        311,
+        504,
+        156,
+        386,
+        407,
+        361,
+        362,
+        488,
+        375,
+        148,
+        564,
+        167,
+        401,
+        411,
+        395
+      ]
+    },
+    {
+      "tabId": "dropdown-tee-0-1",
+      "teeName": "Blue",
+      "gender": "M",
+      "parTotal": 72,
+      "totalYards": 6462,
+      "rating": 71.2,
+      "slope": 128,
+      "holeYardages": [
+        504,
+        345,
+        177,
+        311,
+        504,
+        156,
+        386,
+        407,
+        361,
+        362,
+        488,
+        375,
+        148,
+        564,
+        167,
+        401,
+        411,
+        395
+      ]
+    },
+    {
+      "tabId": "dropdown-tee-0-6",
+      "teeName": "White",
+      "gender": "L",
+      "parTotal": 72,
+      "totalYards": 5726,
+      "rating": 73.3,
+      "slope": 127,
+      "holeYardages": [
+        484,
+        303,
+        142,
+        295,
+        466,
+        139,
+        350,
+        321,
+        328,
+        332,
+        459,
+        330,
+        123,
+        515,
+        125,
+        342,
+        351,
+        321
+      ]
+    },
+    {
+      "tabId": "dropdown-tee-0-2",
+      "teeName": "White",
+      "gender": "M",
+      "parTotal": 72,
+      "totalYards": 5726,
+      "rating": 68.0,
+      "slope": 119,
+      "holeYardages": [
+        484,
+        303,
+        142,
+        295,
+        466,
+        139,
+        350,
+        321,
+        328,
+        332,
+        459,
+        330,
+        123,
+        515,
+        125,
+        342,
+        351,
+        321
+      ]
+    },
+    {
+      "tabId": "dropdown-tee-0-7",
+      "teeName": "Red",
+      "gender": "L",
+      "parTotal": 72,
+      "totalYards": 5010,
+      "rating": 69.0,
+      "slope": 116,
+      "holeYardages": [
+        441,
+        274,
+        95,
+        261,
+        440,
+        109,
+        326,
+        298,
+        295,
+        247,
+        408,
+        275,
+        101,
+        412,
+        105,
+        316,
+        326,
+        281
+      ]
+    },
+    {
+      "tabId": "dropdown-tee-0-3",
+      "teeName": "Red",
+      "gender": "M",
+      "parTotal": 72,
+      "totalYards": 5010,
+      "rating": 64.6,
+      "slope": 109,
+      "holeYardages": [
+        441,
+        274,
+        95,
+        261,
+        440,
+        109,
+        326,
+        298,
+        295,
+        247,
+        408,
+        275,
+        101,
+        412,
+        105,
+        316,
+        326,
+        281
+      ]
+    }
+  ],
+  "longestTees": [
+    {
+      "teeName": "Black",
+      "parTotal": 72,
+      "totalYards": 7016,
+      "holeYardages": [
+        524,
+        389,
+        197,
+        336,
+        541,
+        177,
+        423,
+        437,
+        403,
+        412,
+        524,
+        400,
+        174,
+        599,
+        188,
+        436,
+        433,
+        423
+      ],
+      "ratings": [
+        {
+          "gender": "L",
+          "rating": 80.8,
+          "slope": 140
+        },
+        {
+          "gender": "M",
+          "rating": 74.3,
+          "slope": 130
+        }
+      ]
+    },
+    {
+      "teeName": "Blue",
+      "parTotal": 72,
+      "totalYards": 6462,
+      "holeYardages": [
+        504,
+        345,
+        177,
+        311,
+        504,
+        156,
+        386,
+        407,
+        361,
+        362,
+        488,
+        375,
+        148,
+        564,
+        167,
+        401,
+        411,
+        395
+      ],
+      "ratings": [
+        {
+          "gender": "L",
+          "rating": 77.6,
+          "slope": 134
+        },
+        {
+          "gender": "M",
+          "rating": 71.2,
+          "slope": 128
+        }
+      ]
+    },
+    {
+      "teeName": "White",
+      "parTotal": 72,
+      "totalYards": 5726,
+      "holeYardages": [
+        484,
+        303,
+        142,
+        295,
+        466,
+        139,
+        350,
+        321,
+        328,
+        332,
+        459,
+        330,
+        123,
+        515,
+        125,
+        342,
+        351,
+        321
+      ],
+      "ratings": [
+        {
+          "gender": "L",
+          "rating": 73.3,
+          "slope": 127
+        },
+        {
+          "gender": "M",
+          "rating": 68.0,
+          "slope": 119
+        }
+      ]
+    }
+  ],
+  "fetchedAtUtc": "2026-03-16T14:56:27.852367+00:00"
 }

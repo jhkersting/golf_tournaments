@@ -273,6 +273,13 @@ header {
   flex-wrap: wrap;
 }
 
+.scoreboard-head-toggles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .scoreboard-enter-card {
   display: flex;
   align-items: center;

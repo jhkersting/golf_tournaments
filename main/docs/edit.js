@@ -59,6 +59,7 @@ let currentData = null;
 let loadedScoresCsvText = "";
 let scoreInputIndex = new Map();
 let scoreRowMetaByKey = new Map();
+let scoreGridRowsByRound = new Map();
 let tournamentCourses = [];
 let savedCourses = [];
 
@@ -297,6 +298,86 @@ function parseCsv(text) {
   return rows.filter((r) => r.some((c) => String(c || "").trim() !== ""));
 }
 
+function parseScorePasteGrid(text) {
+  const normalized = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n+$/, "");
+  if (!normalized) return [];
+  if (normalized.includes("\t")) {
+    return normalized.split("\n").map((line) => line.split("\t"));
+  }
+  return parseCsv(normalized);
+}
+
+function applyScorePasteGrid(anchorInput, clipboardText) {
+  const grid = parseScorePasteGrid(clipboardText);
+  const isMultiCell = grid.length > 1 || grid.some((row) => row.length > 1);
+  if (!isMultiCell) return { handled: false, applied: 0, skipped: 0 };
+
+  const roundIndex = Number(anchorInput?.dataset?.scoreRound);
+  const rowIndex = Number(anchorInput?.dataset?.scoreRow);
+  const holeIndex = Number(anchorInput?.dataset?.scoreHole);
+  const roundRows = scoreGridRowsByRound.get(roundIndex);
+  if (
+    !Number.isInteger(roundIndex) ||
+    !Number.isInteger(rowIndex) ||
+    !Number.isInteger(holeIndex) ||
+    !Array.isArray(roundRows)
+  ) {
+    return { handled: false, applied: 0, skipped: 0 };
+  }
+
+  const assignments = [];
+  let skipped = 0;
+  for (let r = 0; r < grid.length; r++) {
+    const targetRow = roundRows[rowIndex + r];
+    if (!targetRow) {
+      skipped += grid[r].length;
+      continue;
+    }
+    for (let c = 0; c < grid[r].length; c++) {
+      const targetInput = targetRow[holeIndex + c];
+      if (!targetInput) {
+        skipped += 1;
+        continue;
+      }
+      const rawValue = String(grid[r][c] ?? "").trim();
+      const parsedValue = rawValue ? scoreCellToNumber(rawValue, `Pasted cell row ${r + 1}, column ${c + 1}`) : null;
+      assignments.push({ input: targetInput, value: parsedValue == null ? "" : String(parsedValue) });
+    }
+  }
+
+  assignments.forEach(({ input, value }) => {
+    input.value = value;
+  });
+
+  return { handled: true, applied: assignments.length, skipped };
+}
+
+function handleScoresEditorPaste(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || !target.dataset.scoreRow) return;
+
+  const text = String(event.clipboardData?.getData("text/plain") || "");
+  if (!text) return;
+
+  try {
+    const result = applyScorePasteGrid(target, text);
+    if (!result.handled) return;
+    event.preventDefault();
+    if (scoresStatus) {
+      scoresStatus.textContent =
+        `Pasted ${result.applied} cell${result.applied === 1 ? "" : "s"} from Excel.` +
+        `${result.skipped ? ` ${result.skipped} skipped outside the table.` : ""} Save changes to persist.`;
+    }
+  } catch (e) {
+    event.preventDefault();
+    console.error(e);
+    if (scoresStatus) scoresStatus.textContent = e.message || String(e);
+  }
+}
+
 function parseTwoManGroupId(groupId) {
   const raw = String(groupId || "").trim();
   const idx = raw.indexOf("::");
@@ -414,6 +495,7 @@ function renderScoresEditor() {
   scoresEditorWrap.innerHTML = "";
   scoreInputIndex = new Map();
   scoreRowMetaByKey = new Map();
+  scoreGridRowsByRound = new Map();
 
   const roundDraft = collectRoundsSafe();
   const rounds = roundDraft.length ? roundDraft : (Array.isArray(currentData?.rounds) ? currentData.rounds : []);
@@ -430,6 +512,7 @@ function renderScoresEditor() {
   rounds.forEach((round, roundIndex) => {
     const scoreRound = scores.rounds[roundIndex] || { teams: {}, players: {}, groups: {} };
     const { targetType, targets } = buildScoreTargetsForRound(roundIndex, round, scoreRound, players, teams);
+    const roundGridRows = [];
 
     const section = document.createElement("div");
     section.className = "card";
@@ -456,7 +539,7 @@ function renderScoresEditor() {
     table.appendChild(thead);
 
     const tbody = document.createElement("tbody");
-    targets.forEach((target) => {
+    targets.forEach((target, targetRowIndex) => {
       const tr = document.createElement("tr");
       const nameCell = document.createElement("td");
       nameCell.className = "left";
@@ -477,6 +560,7 @@ function renderScoresEditor() {
         const v = target.holes?.[h];
         inp.value = v == null ? "" : String(v);
         inp.dataset.scoreRound = String(roundIndex);
+        inp.dataset.scoreRow = String(targetRowIndex);
         inp.dataset.scoreType = targetType;
         inp.dataset.scoreTarget = target.id;
         inp.dataset.scoreHole = String(h);
@@ -486,6 +570,7 @@ function renderScoresEditor() {
       }
 
       scoreInputIndex.set(key, rowInputs);
+      roundGridRows.push(rowInputs);
       scoreRowMetaByKey.set(key, {
         roundIndex,
         roundName: round?.name || `Round ${roundIndex + 1}`,
@@ -501,6 +586,7 @@ function renderScoresEditor() {
     tableWrap.appendChild(table);
     section.appendChild(tableWrap);
     scoresEditorWrap.appendChild(section);
+    scoreGridRowsByRound.set(roundIndex, roundGridRows);
   });
 }
 
@@ -692,10 +778,160 @@ function fillCourseRows(pars, strokeIndex) {
   updateParTotal();
 }
 
+function normalizeRatingEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const gender = String(raw.gender || "").trim().toUpperCase();
+  const rating = Number(raw.rating);
+  const slope = Number(raw.slope);
+  if (!gender && !Number.isFinite(rating) && !Number.isFinite(slope)) return null;
+  return {
+    ...(gender ? { gender } : {}),
+    ...(Number.isFinite(rating) ? { rating } : {}),
+    ...(Number.isFinite(slope) ? { slope: Math.round(slope) } : {})
+  };
+}
+
+function ratingSummary(ratings) {
+  if (!Array.isArray(ratings) || !ratings.length) return "";
+  return ratings
+    .map((entry) => {
+      const parts = [];
+      if (entry?.gender) parts.push(String(entry.gender));
+      if (Number.isFinite(entry?.rating)) {
+        const slopeText = Number.isFinite(entry?.slope) ? `/${Math.round(entry.slope)}` : "";
+        parts.push(`${Number(entry.rating).toFixed(1)}${slopeText}`);
+      } else if (Number.isFinite(entry?.slope)) {
+        parts.push(String(Math.round(entry.slope)));
+      }
+      return parts.join(" ");
+    })
+    .filter(Boolean)
+    .join(" • ");
+}
+
+function teeKeyForMeta(teeName, totalYards, holeYardages) {
+  const nameKey = String(teeName || "tee")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "tee";
+  const yardsKey = Number.isFinite(Number(totalYards)) ? String(Math.round(Number(totalYards))) : "0";
+  return `${nameKey}-${yardsKey}`;
+}
+
+function normalizeTeeForUi(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const teeName = String(raw.teeName || raw.name || "").trim();
+  const totalYardsRaw = Number(raw.totalYards);
+  const totalYards = Number.isFinite(totalYardsRaw) ? Math.round(totalYardsRaw) : null;
+  const parTotalRaw = Number(raw.parTotal);
+  const parTotal = Number.isFinite(parTotalRaw) ? Math.round(parTotalRaw) : null;
+  const holeYardages = Array.isArray(raw.holeYardages) && raw.holeYardages.length === 18
+    ? raw.holeYardages.map((value) => Number(value) || 0)
+    : [];
+  const ratings = Array.isArray(raw.ratings) && raw.ratings.length
+    ? raw.ratings.map((entry) => normalizeRatingEntry(entry)).filter(Boolean)
+    : [normalizeRatingEntry(raw)].filter(Boolean);
+  if (!teeName && !Number.isFinite(totalYards) && !holeYardages.length && !ratings.length) return null;
+
+  const key = String(raw.teeKey || raw.selectedTeeKey || "").trim()
+    || teeKeyForMeta(teeName, totalYards, holeYardages);
+  const baseLabelParts = [];
+  if (teeName) baseLabelParts.push(teeName);
+  if (Number.isFinite(totalYards)) baseLabelParts.push(`${totalYards} yds`);
+  const ratingsText = ratingSummary(ratings);
+  return {
+    key,
+    teeName: teeName || "Tee",
+    ...(Number.isFinite(totalYards) ? { totalYards } : {}),
+    ...(Number.isFinite(parTotal) ? { parTotal } : {}),
+    ...(holeYardages.length === 18 ? { holeYardages } : {}),
+    ratings,
+    ratingsText,
+    label: [...baseLabelParts, ratingsText].filter(Boolean).join(" • ")
+  };
+}
+
+function teeListFromCourse(course) {
+  const grouped = new Map();
+  const rawList = Array.isArray(course?.longestTees) && course.longestTees.length
+    ? course.longestTees
+    : Array.isArray(course?.tees) ? course.tees : [];
+
+  rawList.forEach((entry) => {
+    const tee = normalizeTeeForUi(entry);
+    if (!tee) return;
+    const existing = grouped.get(tee.key);
+    if (!existing) {
+      grouped.set(tee.key, tee);
+      return;
+    }
+    const mergedRatings = [...(existing.ratings || [])];
+    for (const rating of tee.ratings || []) {
+      const alreadyPresent = mergedRatings.some((candidate) =>
+        candidate?.gender === rating?.gender
+          && candidate?.rating === rating?.rating
+          && candidate?.slope === rating?.slope
+      );
+      if (!alreadyPresent) mergedRatings.push(rating);
+    }
+    grouped.set(tee.key, {
+      ...existing,
+      ratings: mergedRatings,
+      ratingsText: ratingSummary(mergedRatings),
+      label: [
+        existing.teeName,
+        Number.isFinite(existing.totalYards) ? `${existing.totalYards} yds` : "",
+        ratingSummary(mergedRatings)
+      ].filter(Boolean).join(" • ")
+    });
+  });
+
+  if (!grouped.size) {
+    const single = normalizeTeeForUi({
+      teeKey: course?.selectedTeeKey,
+      teeName: course?.teeName,
+      totalYards: course?.totalYards,
+      parTotal: course?.parTotal,
+      holeYardages: course?.holeYardages,
+      ratings: course?.ratings
+    });
+    if (single) grouped.set(single.key, single);
+  }
+
+  return [...grouped.values()].sort((a, b) => {
+    const yardsDiff = (Number(b?.totalYards) || 0) - (Number(a?.totalYards) || 0);
+    if (yardsDiff !== 0) return yardsDiff;
+    return String(a?.teeName || "").localeCompare(String(b?.teeName || ""));
+  });
+}
+
+function serializeRatingEntry(entry) {
+  return normalizeRatingEntry(entry);
+}
+
+function serializeTeeForSave(tee) {
+  const normalized = normalizeTeeForUi(tee);
+  if (!normalized) return null;
+  return {
+    teeKey: normalized.key,
+    teeName: normalized.teeName,
+    ...(Number.isFinite(normalized.parTotal) ? { parTotal: normalized.parTotal } : {}),
+    ...(Number.isFinite(normalized.totalYards) ? { totalYards: normalized.totalYards } : {}),
+    ...(Array.isArray(normalized.holeYardages) && normalized.holeYardages.length === 18
+      ? { holeYardages: normalized.holeYardages.slice() }
+      : {}),
+    ...(Array.isArray(normalized.ratings) && normalized.ratings.length
+      ? { ratings: normalized.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+      : {})
+  };
+}
+
 function normalizeCourseForUi(course) {
   const defaultPars = Array(18).fill(4);
   const defaultSi = Array.from({ length: 18 }, (_, i) => i + 1);
   const courseId = String(course?.courseId || course?.id || "").trim();
+  const sourceCourseId = String(course?.sourceCourseId || "").trim();
   const pars = Array.isArray(course?.pars) && course.pars.length === 18
     ? course.pars.map((v) => Number(v) || 4)
     : defaultPars;
@@ -703,11 +939,31 @@ function normalizeCourseForUi(course) {
     ? course.strokeIndex.map((v) => Number(v) || 0)
     : defaultSi;
   const siErr = validateStrokeIndex(strokeIndex);
+  const tees = teeListFromCourse(course);
+  let selectedTeeKey = String(course?.selectedTeeKey || course?.teeKey || "").trim();
+  if (!selectedTeeKey && tees.length === 1) selectedTeeKey = tees[0].key;
+  const selectedTee = tees.find((tee) => tee.key === selectedTeeKey) || null;
   return {
     courseId,
+    ...(sourceCourseId ? { sourceCourseId } : {}),
     name: String(course?.name || "").trim(),
     pars,
-    strokeIndex: siErr ? defaultSi : strokeIndex
+    strokeIndex: siErr ? defaultSi : strokeIndex,
+    tees,
+    ...(selectedTeeKey ? { selectedTeeKey } : {}),
+    ...(selectedTee?.teeName ? { teeName: selectedTee.teeName } : String(course?.teeName || "").trim() ? { teeName: String(course?.teeName || "").trim() } : {}),
+    ...(selectedTee?.label ? { teeLabel: selectedTee.label } : String(course?.teeLabel || "").trim() ? { teeLabel: String(course?.teeLabel || "").trim() } : {}),
+    ...(Number.isFinite(selectedTee?.totalYards) ? { totalYards: selectedTee.totalYards } : Number.isFinite(Number(course?.totalYards)) ? { totalYards: Math.round(Number(course.totalYards)) } : {}),
+    ...(Array.isArray(selectedTee?.holeYardages) && selectedTee.holeYardages.length === 18
+      ? { holeYardages: selectedTee.holeYardages.slice() }
+      : Array.isArray(course?.holeYardages) && course.holeYardages.length === 18
+        ? { holeYardages: course.holeYardages.map((value) => Number(value) || 0) }
+        : {}),
+    ...(Array.isArray(selectedTee?.ratings) && selectedTee.ratings.length
+      ? { ratings: selectedTee.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+      : Array.isArray(course?.ratings) && course.ratings.length
+        ? { ratings: course.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+        : {})
   };
 }
 
@@ -732,6 +988,12 @@ function normalizeTournamentCourses(data) {
   return [normalizeCourseForUi(data?.course || null)];
 }
 
+function courseOptionLabel(course, fallbackLabel) {
+  const base = String(course?.name || "").trim() || fallbackLabel;
+  const teeSuffix = String(course?.teeLabel || "").trim();
+  return teeSuffix ? `${base} (${teeSuffix})` : base;
+}
+
 function roundCourseOptionsHtml(selectedRef = "tournament:0") {
   const selected = String(selectedRef || "tournament:0");
   const out = [];
@@ -740,17 +1002,59 @@ function roundCourseOptionsHtml(selectedRef = "tournament:0") {
     : [normalizeCourseForUi(null)];
   sourceCourses.forEach((course, idx) => {
     const ref = `tournament:${idx}`;
-    const label = course?.name || `Course ${idx + 1}`;
+    const label = courseOptionLabel(course, `Course ${idx + 1}`);
     out.push(`<option value="${ref}" ${selected === ref ? "selected" : ""}>Tournament: ${escapeHtml(label)}</option>`);
   });
   savedCourses.forEach((course) => {
     const id = String(course?.courseId || "").trim();
     if (!id) return;
     const ref = `saved:${id}`;
-    const label = course?.name || id;
+    const label = courseOptionLabel(course, id);
     out.push(`<option value="${ref}" ${selected === ref ? "selected" : ""}>Saved: ${escapeHtml(label)}</option>`);
   });
   return out.join("");
+}
+
+function resolveRoundCourseRef(ref) {
+  const value = String(ref || "tournament:0").trim() || "tournament:0";
+  if (value.startsWith("saved:")) {
+    const id = value.slice("saved:".length).trim();
+    return savedCourses.find((course) => String(course?.courseId || "").trim() === id) || null;
+  }
+  const idx = Number(value.slice("tournament:".length));
+  if (Number.isInteger(idx) && idx >= 0 && idx < tournamentCourses.length) {
+    return tournamentCourses[idx] || null;
+  }
+  return tournamentCourses[0] || normalizeCourseForUi(null);
+}
+
+function syncRoundTeeSelect(row) {
+  const courseSelect = row?.querySelector("[data-field='course']");
+  const teeSelect = row?.querySelector("[data-field='tee']");
+  if (!courseSelect || !teeSelect) return;
+
+  const course = normalizeCourseForUi(resolveRoundCourseRef(courseSelect.value));
+  const tees = Array.isArray(course?.tees) ? course.tees : [];
+  const previous = String(teeSelect.value || row?.dataset?.teeRef || "").trim();
+
+  if (!tees.length) {
+    teeSelect.innerHTML = `<option value="">—</option>`;
+    teeSelect.value = "";
+    teeSelect.disabled = true;
+    row.dataset.teeRef = "";
+    return;
+  }
+
+  teeSelect.disabled = false;
+  teeSelect.innerHTML = tees
+    .map((tee) => `<option value="${escapeHtml(tee.key)}">${escapeHtml(tee.label || tee.teeName || tee.key)}</option>`)
+    .join("");
+
+  let next = previous;
+  if (!tees.some((tee) => tee.key === next)) next = String(course?.selectedTeeKey || "").trim();
+  if (!tees.some((tee) => tee.key === next)) next = tees[0].key;
+  teeSelect.value = next;
+  row.dataset.teeRef = next;
 }
 
 function refreshRoundCourseSelects() {
@@ -760,6 +1064,7 @@ function refreshRoundCourseSelects() {
     const hasPrev = [...select.options].some((opt) => opt.value === prev);
     select.value = hasPrev ? prev : "tournament:0";
   });
+  roundRows.querySelectorAll("tr").forEach((row) => syncRoundTeeSelect(row));
 }
 
 async function loadSavedCourses() {
@@ -778,7 +1083,10 @@ async function ensureSavedCourseDetails(courseId) {
   const id = String(courseId || "").trim();
   if (!id) return null;
   const fromList = savedCourses.find((course) => String(course?.courseId || "").trim() === id);
-  if (isValidCourseShape(fromList)) return normalizeCourseForUi(fromList);
+  const normalizedFromList = normalizeCourseForUi(fromList);
+  if (isValidCourseShape(normalizedFromList) && Array.isArray(normalizedFromList?.tees) && normalizedFromList.tees.length) {
+    return normalizedFromList;
+  }
 
   const payload = await api(`/courses/${encodeURIComponent(id)}`);
   const loaded = normalizeCourseForUi(payload?.course || payload);
@@ -792,10 +1100,19 @@ async function ensureSavedCourseDetails(courseId) {
 }
 
 function collectCourse() {
+  const base = normalizeCourseForUi(tournamentCourses[0] || null);
   const strokeIndex = getStrokeIndex();
   const siErr = validateStrokeIndex(strokeIndex);
   if (siErr) throw new Error(siErr);
   const out = {
+    ...(base?.sourceCourseId ? { sourceCourseId: base.sourceCourseId } : {}),
+    ...(base?.selectedTeeKey ? { selectedTeeKey: base.selectedTeeKey } : {}),
+    ...(base?.teeName ? { teeName: base.teeName } : {}),
+    ...(base?.teeLabel ? { teeLabel: base.teeLabel } : {}),
+    ...(Number.isFinite(base?.totalYards) ? { totalYards: base.totalYards } : {}),
+    ...(Array.isArray(base?.holeYardages) && base.holeYardages.length === 18 ? { holeYardages: base.holeYardages.slice() } : {}),
+    ...(Array.isArray(base?.ratings) && base.ratings.length ? { ratings: base.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) } : {}),
+    ...(Array.isArray(base?.tees) && base.tees.length ? { tees: base.tees.map((tee) => serializeTeeForSave(tee)).filter(Boolean) } : {}),
     pars: getPars(),
     strokeIndex
   };
@@ -812,7 +1129,10 @@ function renderRounds(rounds) {
     const currentFmt = currentFmtRaw === "two_man" ? "two_man_scramble" : currentFmtRaw;
     const fallbackCourseIdx = Number.isInteger(Number(round?.courseIndex)) ? Number(round.courseIndex) : 0;
     const currentCourseRef = String(round?.courseRef || `tournament:${Math.max(0, fallbackCourseIdx)}`);
+    const fallbackCourse = tournamentCourses[fallbackCourseIdx] || null;
+    const currentTeeRef = String(round?.teeRef || fallbackCourse?.selectedTeeKey || "");
     const tr = document.createElement("tr");
+    tr.dataset.teeRef = currentTeeRef;
     tr.innerHTML = `
       <td class="left"><input data-field="name" value="${escapeHtml(round?.name || "Round")}" /></td>
       <td>
@@ -833,12 +1153,29 @@ function renderRounds(rounds) {
           ${roundCourseOptionsHtml(currentCourseRef)}
         </select>
       </td>
+      <td>
+        <select data-field="tee"></select>
+      </td>
       <td><input data-field="remove" type="checkbox" /></td>
     `;
     roundRows.appendChild(tr);
+    syncRoundTeeSelect(tr);
+  });
+
+  roundRows.querySelectorAll("tr").forEach((tr) => {
+    const courseSelect = tr.querySelector("[data-field='course']");
+    if (courseSelect) {
+      courseSelect.addEventListener("change", () => {
+        syncRoundTeeSelect(tr);
+        const nextCount = Math.max(1, collectRoundsSafe().length || 1);
+        renderPlayers(collectPlayersSafe(), nextCount);
+        renderScoresEditor();
+      });
+    }
   });
 
   roundRows.querySelectorAll("input,select").forEach((node) => {
+    if (node.dataset.field === "course") return;
     node.addEventListener("change", () => {
       const nextCount = Math.max(1, collectRoundsSafe().length || 1);
       renderPlayers(collectPlayersSafe(), nextCount);
@@ -926,11 +1263,13 @@ function collectRounds() {
       const weight = Number(tr.querySelector("[data-field='weight']")?.value || 1);
       const topX = Number(tr.querySelector("[data-field='topX']")?.value || 4);
       const courseRef = String(tr.querySelector("[data-field='course']")?.value || "tournament:0").trim();
+      const teeRef = String(tr.querySelector("[data-field='tee']")?.value || "").trim();
       return {
         name,
         format,
         useHandicap,
         courseRef: courseRef || "tournament:0",
+        teeRef,
         weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
         teamAggregation: { mode: "avg", topX: Math.max(1, Math.min(4, Math.floor(topX || 4))) }
       };
@@ -1039,6 +1378,7 @@ function addRoundRow() {
     format: "singles",
     useHandicap: false,
     courseRef: "tournament:0",
+    teeRef: "",
     weight: 1,
     teamAggregation: { mode: "avg", topX: 4 }
   });
@@ -1157,13 +1497,59 @@ async function resolveCoursesAndRoundsForSave(roundsDraft, primaryCourse) {
     : [normalizeCourseForUi(primaryCourse)];
   baseCourses[0] = normalizeCourseForUi(primaryCourse);
 
-  const courses = baseCourses.map((course) => ({
-    ...(course?.name ? { name: course.name } : {}),
-    pars: Array.isArray(course?.pars) ? course.pars.slice() : Array(18).fill(4),
-    strokeIndex: Array.isArray(course?.strokeIndex)
-      ? course.strokeIndex.slice()
-      : Array.from({ length: 18 }, (_, i) => i + 1)
-  }));
+  function serializeCourseForSave(course) {
+    const normalized = normalizeCourseForUi(course);
+    return {
+      ...(normalized?.name ? { name: normalized.name } : {}),
+      ...(normalized?.sourceCourseId ? { sourceCourseId: normalized.sourceCourseId } : {}),
+      ...(normalized?.selectedTeeKey ? { selectedTeeKey: normalized.selectedTeeKey } : {}),
+      ...(normalized?.teeName ? { teeName: normalized.teeName } : {}),
+      ...(normalized?.teeLabel ? { teeLabel: normalized.teeLabel } : {}),
+      ...(Number.isFinite(normalized?.totalYards) ? { totalYards: normalized.totalYards } : {}),
+      ...(Array.isArray(normalized?.holeYardages) && normalized.holeYardages.length === 18
+        ? { holeYardages: normalized.holeYardages.slice() }
+        : {}),
+      ...(Array.isArray(normalized?.ratings) && normalized.ratings.length
+        ? { ratings: normalized.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+        : {}),
+      ...(Array.isArray(normalized?.tees) && normalized.tees.length
+        ? { tees: normalized.tees.map((tee) => serializeTeeForSave(tee)).filter(Boolean) }
+        : {}),
+      pars: Array.isArray(normalized?.pars) ? normalized.pars.slice() : Array(18).fill(4),
+      strokeIndex: Array.isArray(normalized?.strokeIndex)
+        ? normalized.strokeIndex.slice()
+        : Array.from({ length: 18 }, (_, i) => i + 1)
+    };
+  }
+
+  function materializeCourseForRound(course, teeRef = "") {
+    const normalized = normalizeCourseForUi(course);
+    const selectedTee = normalized.tees.find((tee) => tee.key === teeRef)
+      || normalized.tees.find((tee) => tee.key === normalized.selectedTeeKey)
+      || null;
+    const out = serializeCourseForSave({
+      ...normalized,
+      selectedTeeKey: selectedTee?.key || normalized.selectedTeeKey || ""
+    });
+    delete out.tees;
+    if (!selectedTee) return out;
+    return {
+      ...out,
+      selectedTeeKey: selectedTee.key,
+      teeName: selectedTee.teeName,
+      teeLabel: selectedTee.label,
+      ...(Number.isFinite(selectedTee.totalYards) ? { totalYards: selectedTee.totalYards } : {}),
+      ...(Number.isFinite(selectedTee.parTotal) ? { parTotal: selectedTee.parTotal } : {}),
+      ...(Array.isArray(selectedTee.holeYardages) && selectedTee.holeYardages.length === 18
+        ? { holeYardages: selectedTee.holeYardages.slice() }
+        : {}),
+      ...(Array.isArray(selectedTee.ratings) && selectedTee.ratings.length
+        ? { ratings: selectedTee.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+        : {})
+    };
+  }
+
+  const courses = baseCourses.map((course) => serializeCourseForSave(course));
 
   const refToIndex = new Map();
   courses.forEach((_, idx) => refToIndex.set(`tournament:${idx}`, idx));
@@ -1171,28 +1557,43 @@ async function resolveCoursesAndRoundsForSave(roundsDraft, primaryCourse) {
   const rounds = [];
   for (const round of roundsDraft) {
     const ref = String(round?.courseRef || "tournament:0").trim() || "tournament:0";
+    const teeRef = String(round?.teeRef || "").trim();
     let courseIndex = 0;
 
     if (ref.startsWith("saved:")) {
       const id = ref.slice("saved:".length).trim();
       if (!id) throw new Error(`Unknown course selection "${ref}".`);
-      const key = `saved:${id}`;
+      const detail = await ensureSavedCourseDetails(id);
+      if (!detail || !isValidCourseShape(detail)) {
+        throw new Error(`Saved course "${id}" was not found.`);
+      }
+      const effectiveTeeRef = teeRef || detail.selectedTeeKey || detail.tees?.[0]?.key || "";
+      const key = `saved:${id}|${effectiveTeeRef}`;
       if (!refToIndex.has(key)) {
-        const detail = await ensureSavedCourseDetails(id);
-        if (!detail || !isValidCourseShape(detail)) {
-          throw new Error(`Saved course "${id}" was not found.`);
-        }
         refToIndex.set(key, courses.length);
-        courses.push({
-          ...(detail?.name ? { name: detail.name } : {}),
-          pars: detail.pars.slice(),
-          strokeIndex: detail.strokeIndex.slice()
-        });
+        courses.push(materializeCourseForRound(
+          {
+            ...detail,
+            sourceCourseId: detail.courseId || detail.sourceCourseId || id
+          },
+          effectiveTeeRef
+        ));
       }
       courseIndex = refToIndex.get(key);
     } else if (ref.startsWith("tournament:")) {
       const idx = Number(ref.slice("tournament:".length));
-      courseIndex = Number.isInteger(idx) && idx >= 0 && idx < courses.length ? idx : 0;
+      const safeIdx = Number.isInteger(idx) && idx >= 0 && idx < baseCourses.length ? idx : 0;
+      const sourceCourse = baseCourses[safeIdx] || baseCourses[0];
+      if (!teeRef || !Array.isArray(sourceCourse?.tees) || !sourceCourse.tees.length || teeRef === sourceCourse.selectedTeeKey) {
+        courseIndex = Number.isInteger(idx) && idx >= 0 && idx < courses.length ? idx : 0;
+      } else {
+        const key = `${ref}|${teeRef}`;
+        if (!refToIndex.has(key)) {
+          refToIndex.set(key, courses.length);
+          courses.push(materializeCourseForRound(sourceCourse, teeRef));
+        }
+        courseIndex = refToIndex.get(key);
+      }
     }
 
     rounds.push({
@@ -1203,7 +1604,7 @@ async function resolveCoursesAndRoundsForSave(roundsDraft, primaryCourse) {
 
   return {
     courses,
-    rounds: rounds.map(({ courseRef, ...rest }) => rest)
+    rounds
   };
 }
 
@@ -1437,6 +1838,7 @@ if (loadCsvFileBtn) loadCsvFileBtn.addEventListener("click", loadSelectedImportF
 if (loadScoresCsvFileBtn) loadScoresCsvFileBtn.addEventListener("click", loadSelectedScoresCsvFile);
 if (uploadScoresCsvBtn) uploadScoresCsvBtn.addEventListener("click", uploadScoresCsvToTable);
 if (downloadScoresCsvBtn) downloadScoresCsvBtn.addEventListener("click", downloadScoresCsv);
+if (scoresEditorWrap) scoresEditorWrap.addEventListener("paste", handleScoresEditorPaste);
 
 const tidFromQuery = String(qs("t") || "").trim();
 const rememberedTid = getRememberedTournamentId();

@@ -171,6 +171,187 @@ def parse_row_values(table_html: str, row_labels: str | list[str]) -> list[int] 
     return None
 
 
+def parse_scorecard_summary_items(summary_html: str) -> dict[str, str]:
+    items: dict[str, str] = {}
+    item_pattern = re.compile(
+        r"<li[^>]*>\s*<span>(.*?)</span>\s*<p>(.*?)</p>\s*</li>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for value_html, label_html in item_pattern.findall(summary_html or ""):
+        label = clean_html_text(label_html).lower()
+        value = clean_html_text(value_html)
+        if label:
+            items[label] = value
+    return items
+
+
+def parse_tee_menu_entries(scorecard_html: str) -> list[dict[str, Any]]:
+    menu_match = re.search(
+        r'<ul class="dropdown-menu">(.*?)</ul>',
+        scorecard_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not menu_match:
+        return []
+
+    entries: list[dict[str, Any]] = []
+    entry_pattern = re.compile(
+        r'<a[^>]+href="#(?P<tab_id>dropdown-tee-[^"]+)".*?>'
+        r'.*?<span class="ddm-first ddm-mid ddm-center">(.*?)</span>'
+        r'.*?<span class="stat[^"]*">\((.*?)\)</span>',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for tab_id, tee_name_html, stat_html in entry_pattern.findall(menu_match.group(1)):
+        tee_name = clean_html_text(tee_name_html)
+        if tee_name.lower() == "show all":
+            continue
+
+        stat_text = clean_html_text(stat_html)
+        gender = None
+        rating = None
+        slope = None
+        stat_match = re.match(r"([A-Za-z])\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+)", stat_text)
+        if stat_match:
+            gender = stat_match.group(1).upper()
+            rating = float(stat_match.group(2))
+            slope = int(stat_match.group(3))
+
+        entries.append(
+            {
+                "tabId": tab_id,
+                "teeName": tee_name,
+                "gender": gender,
+                "rating": rating,
+                "slope": slope,
+            }
+        )
+    return entries
+
+
+def parse_scorecard_tees(scorecard_html: str) -> list[dict[str, Any]]:
+    tee_menu_entries = parse_tee_menu_entries(scorecard_html)
+    tee_menu_by_tab = {entry["tabId"]: entry for entry in tee_menu_entries}
+
+    tee_tab_pattern = re.compile(
+        r'<div class="text-uppercase tab-pane\s+tee-tab(?: active in)?" id="(?P<tab_id>dropdown-tee-[^"]+)">'
+        r'(?P<body>.*?<ul class="scorecard d-table-cell w-100">.*?</ul>.*?<table[^>]*>.*?</table>)',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    tees: list[dict[str, Any]] = []
+    for match in tee_tab_pattern.finditer(scorecard_html):
+        tab_id = match.group("tab_id")
+        body_html = match.group("body")
+
+        scorecard_match = re.search(
+            r'<ul class="scorecard d-table-cell w-100">(.*?)</ul>',
+            body_html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        table_match = re.search(
+            r"(<table[^>]*>.*?</table>)",
+            body_html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not scorecard_match or not table_match:
+            continue
+
+        summary_items = parse_scorecard_summary_items(scorecard_match.group(1))
+        table_html = table_match.group(1)
+        hole_yardages = parse_row_values(table_html, ["yds", "yards", "yardage"])
+        if not hole_yardages:
+            continue
+
+        total_yards = to_int(summary_items.get("yards")) or sum(hole_yardages)
+        rating_text = summary_items.get("rating")
+        slope_text = summary_items.get("slope")
+
+        menu_entry = tee_menu_by_tab.get(tab_id, {})
+        tee_name = menu_entry.get("teeName")
+        if not tee_name:
+            tee_name_match = re.search(
+                r'<span class="ddm-cell ddm-word text-uppercase">(.*?)</span>',
+                body_html,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            tee_name = clean_html_text(tee_name_match.group(1)) if tee_name_match else tab_id
+
+        tee_data = {
+            "tabId": tab_id,
+            "teeName": tee_name,
+            "gender": menu_entry.get("gender"),
+            "parTotal": to_int(summary_items.get("par")),
+            "totalYards": total_yards,
+            "rating": float(rating_text) if rating_text and re.search(r"\d", rating_text) else None,
+            "slope": to_int(slope_text),
+            "holeYardages": hole_yardages,
+        }
+
+        # Keep dropdown metadata when the summary strip omits a value.
+        if tee_data["rating"] is None:
+            tee_data["rating"] = menu_entry.get("rating")
+        if tee_data["slope"] is None:
+            tee_data["slope"] = menu_entry.get("slope")
+
+        tees.append(tee_data)
+
+    unique_tees: list[dict[str, Any]] = []
+    seen_tab_ids: set[str] = set()
+    for tee in tees:
+        tab_id = str(tee.get("tabId") or "")
+        if tab_id in seen_tab_ids:
+            continue
+        seen_tab_ids.add(tab_id)
+        unique_tees.append(tee)
+
+    unique_tees.sort(
+        key=lambda tee: (
+            -int(tee.get("totalYards") or 0),
+            str(tee.get("teeName") or ""),
+            str(tee.get("gender") or ""),
+        )
+    )
+    return unique_tees
+
+
+def select_longest_tee_sets(tees: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:
+    grouped: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for tee in tees:
+        key = (
+            tee.get("teeName"),
+            int(tee.get("totalYards") or 0),
+            tuple(int(value) for value in tee.get("holeYardages") or []),
+        )
+        rating_entry = {
+            "gender": tee.get("gender"),
+            "rating": tee.get("rating"),
+            "slope": tee.get("slope"),
+        }
+        group = grouped.get(key)
+        if group is None:
+            grouped[key] = {
+                "teeName": tee.get("teeName"),
+                "parTotal": tee.get("parTotal"),
+                "totalYards": tee.get("totalYards"),
+                "holeYardages": list(tee.get("holeYardages") or []),
+                "ratings": [rating_entry],
+            }
+            continue
+
+        existing_ratings = group["ratings"]
+        if rating_entry not in existing_ratings:
+            existing_ratings.append(rating_entry)
+
+    tee_sets = list(grouped.values())
+    tee_sets.sort(
+        key=lambda tee: (
+            -int(tee.get("totalYards") or 0),
+            str(tee.get("teeName") or ""),
+        )
+    )
+    return tee_sets[:limit]
+
+
 def parse_scorecard_course_info(scorecard_html: str) -> dict[str, Any]:
     title_match = re.search(
         r"<title>(.*?)</title>", scorecard_html, flags=re.IGNORECASE | re.DOTALL
@@ -226,11 +407,15 @@ def parse_scorecard_course_info(scorecard_html: str) -> dict[str, Any]:
             "Parsed stroke index from scorecard is invalid (must be unique 1..18)."
         )
 
+    tees = parse_scorecard_tees(scorecard_html)
+
     return {
         "name": course_name,
         "location": location,
         "pars": pars,
         "strokeIndex": stroke_index,
+        "tees": tees,
+        "longestTees": select_longest_tee_sets(tees, limit=3),
     }
 
 
@@ -274,6 +459,16 @@ def build_tee_green_rows(overview_payload: dict[str, Any]) -> list[dict[str, Any
             gc_lat, gc_lon = projected_point_to_lon_lat(hole, points_by_name["green_center"])
         if gb_lat is None and points_by_name.get("green_back"):
             gb_lat, gb_lon = projected_point_to_lon_lat(hole, points_by_name["green_back"])
+
+        # Keep downstream consumers stable when BlueGolf omits front/back targets.
+        if gc_lat is None and gf_lat is not None:
+            gc_lat, gc_lon = gf_lat, gf_lon
+        if gc_lat is None and gb_lat is not None:
+            gc_lat, gc_lon = gb_lat, gb_lon
+        if gf_lat is None and gc_lat is not None:
+            gf_lat, gf_lon = gc_lat, gc_lon
+        if gb_lat is None and gc_lat is not None:
+            gb_lat, gb_lon = gc_lat, gc_lon
 
         rows.append(
             {
@@ -399,6 +594,8 @@ def main() -> int:
         "name": scorecard_info["name"],
         "pars": scorecard_info["pars"],
         "strokeIndex": scorecard_info["strokeIndex"],
+        "tees": scorecard_info["longestTees"],
+        "longestTees": scorecard_info["longestTees"],
     }
 
     course_data = {
@@ -412,6 +609,8 @@ def main() -> int:
         },
         "pars": scorecard_info["pars"],
         "strokeIndex": scorecard_info["strokeIndex"],
+        "tees": scorecard_info["tees"],
+        "longestTees": scorecard_info["longestTees"],
         "fetchedAtUtc": datetime.now(timezone.utc).isoformat(),
     }
 

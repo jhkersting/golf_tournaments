@@ -1,10 +1,41 @@
-const MODEL_VERSION = "live-odds-latency-v1";
+const MODEL_VERSION = "live-odds-latency-v6";
 const LATENCY_MODE = "latency_first";
 const HOLE_COUNT = 18;
-const PAR_BIAS = { 3: 0.05, 4: 0.10, 5: 0.20 };
 const PAR_SIGMA = { 3: 0.55, 4: 0.75, 5: 0.95 };
+const HOLE_SIGMA_MULTIPLIER = 1.35;
 const STROKE_Z_MEAN = 9.5;
 const STROKE_Z_STD = 5.188127472091127;
+const BASELINE_REFERENCE_HANDICAP = 10;
+const BASELINE_HANDICAP_ANCHORS = [0, 5, 10, 15, 20];
+const LIVE_HOLE_SHRINKAGE = 8;
+const FORM_SHRINKAGE = 6;
+const HARDY_PARAM_EPSILON = 0.002;
+const MAX_HARDY_PARAM_SUM = 0.97;
+const LIVE_SHIFT_SCALES = { p: 0.7, q: 0.6 };
+const FORM_SHIFT_SCALES = { p: 0.6, q: 0.5 };
+const ROUND_SHOCK_SHIFT_SCALES = { p: 0.45, q: 0.35 };
+const BASELINE_OVER_PAR_BY_STROKE_INDEX = [
+  [0.35, 0.69, 0.98, 1.28, 1.58],
+  [0.30, 0.64, 0.93, 1.22, 1.50],
+  [0.28, 0.60, 0.89, 1.18, 1.46],
+  [0.27, 0.58, 0.85, 1.14, 1.42],
+  [0.25, 0.56, 0.83, 1.11, 1.40],
+  [0.21, 0.54, 0.81, 1.09, 1.35],
+  [0.22, 0.52, 0.79, 1.06, 1.33],
+  [0.20, 0.50, 0.76, 1.03, 1.29],
+  [0.20, 0.50, 0.76, 1.02, 1.27],
+  [0.18, 0.48, 0.73, 0.99, 1.25],
+  [0.17, 0.46, 0.72, 0.98, 1.23],
+  [0.14, 0.44, 0.69, 0.95, 1.18],
+  [0.17, 0.44, 0.68, 0.92, 1.17],
+  [0.14, 0.43, 0.66, 0.91, 1.14],
+  [0.17, 0.44, 0.65, 0.88, 1.10],
+  [0.15, 0.42, 0.64, 0.86, 1.07],
+  [0.14, 0.39, 0.60, 0.80, 1.01],
+  [0.13, 0.37, 0.57, 0.78, 0.98]
+];
+const HARDY_CANDIDATE_CACHE = new Map();
+const HARDY_TARGET_CACHE = new Map();
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -14,6 +45,203 @@ function round2(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100) / 100;
+}
+
+function quantize(value, step) {
+  const safeStep = Math.max(Number(step) || 0, 0.0001);
+  return Math.round((Number(value) || 0) / safeStep) * safeStep;
+}
+
+function logitProb(value) {
+  const safe = clamp(Number(value) || 0, HARDY_PARAM_EPSILON, 1 - HARDY_PARAM_EPSILON);
+  return Math.log(safe / (1 - safe));
+}
+
+function logistic(value) {
+  const safe = Number(value) || 0;
+  if (safe >= 0) {
+    const expNeg = Math.exp(-safe);
+    return 1 / (1 + expNeg);
+  }
+  const expPos = Math.exp(safe);
+  return expPos / (1 + expPos);
+}
+
+function normalizeHardyParams(p, q) {
+  let safeP = clamp(Number(p) || 0, HARDY_PARAM_EPSILON, 0.4);
+  let safeQ = clamp(Number(q) || 0, HARDY_PARAM_EPSILON, 0.7);
+  const total = safeP + safeQ;
+  if (total > MAX_HARDY_PARAM_SUM) {
+    const scale = MAX_HARDY_PARAM_SUM / total;
+    safeP *= scale;
+    safeQ *= scale;
+  }
+  return { p: safeP, q: safeQ };
+}
+
+function shiftHardyParams(baseParams, shifts = {}) {
+  const normalizedBase = normalizeHardyParams(baseParams?.p, baseParams?.q);
+  const nextP = logistic(logitProb(normalizedBase.p) + Number(shifts?.pShift || 0));
+  const nextQ = logistic(logitProb(normalizedBase.q) + Number(shifts?.qShift || 0));
+  return normalizeHardyParams(nextP, nextQ);
+}
+
+function mergeHardyShifts(...shifts) {
+  return shifts.reduce((out, shift) => ({
+    pShift: out.pShift + Number(shift?.pShift || 0),
+    qShift: out.qShift + Number(shift?.qShift || 0)
+  }), { pShift: 0, qShift: 0 });
+}
+
+function hardyShiftFromStrokeDelta(delta, scales) {
+  const safeDelta = clamp(Number(delta) || 0, -1.75, 1.75);
+  return {
+    pShift: clamp(-safeDelta * Number(scales?.p || 0), -1.8, 1.8),
+    qShift: clamp(safeDelta * Number(scales?.q || 0), -1.8, 1.8)
+  };
+}
+
+function sampleDiscrete(values, weights, rng) {
+  let threshold = rng.next();
+  for (let i = 0; i < values.length; i++) {
+    threshold -= Number(weights[i] || 0);
+    if (threshold <= 0 || i === values.length - 1) return Number(values[i]);
+  }
+  return Number(values[values.length - 1] || 0);
+}
+
+function hardyScoreDistribution(par, p, q, maxScore = holeUpperBound(par)) {
+  const safePar = clamp(Math.round(Number(par) || 4), 3, 5);
+  const safeP = clamp(Number(p) || 0, 0, 0.4);
+  const safeQ = clamp(Number(q) || 0, 0, 0.7);
+  const ordinary = Math.max(0, 1 - safeP - safeQ);
+  const cap = Math.max(safePar + 2, Math.round(Number(maxScore) || holeUpperBound(safePar)));
+  const key = `${safePar}|${safeP.toFixed(3)}|${safeQ.toFixed(3)}|${cap}`;
+  const cached = HARDY_CANDIDATE_CACHE.get(key);
+  if (cached) return cached;
+
+  const finish = Array(cap + 1).fill(0);
+  let states = Array(safePar).fill(0);
+  states[0] = 1;
+
+  const transitions = [
+    { advance: 2, prob: safeP },
+    { advance: 1, prob: ordinary },
+    { advance: 0, prob: safeQ }
+  ].filter((item) => item.prob > 0);
+
+  for (let stroke = 1; stroke <= cap; stroke++) {
+    const nextStates = Array(safePar).fill(0);
+    for (let progress = 0; progress < safePar; progress++) {
+      const stateProb = Number(states[progress] || 0);
+      if (stateProb <= 0) continue;
+      for (const transition of transitions) {
+        const nextProgress = progress + transition.advance;
+        const nextProb = stateProb * transition.prob;
+        if (nextProgress >= safePar) finish[stroke] += nextProb;
+        else nextStates[nextProgress] += nextProb;
+      }
+    }
+
+    if (stroke === cap) {
+      finish[stroke] += nextStates.reduce((sum, value) => sum + Number(value || 0), 0);
+    } else {
+      states = nextStates;
+    }
+  }
+
+  const values = Array.from({ length: cap }, (_, idx) => idx + 1);
+  const weights = finish.slice(1);
+  const mean = values.reduce((sum, value, idx) => sum + (value * Number(weights[idx] || 0)), 0);
+  const variance = values.reduce((sum, value, idx) => {
+    const prob = Number(weights[idx] || 0);
+    return sum + (((value - mean) ** 2) * prob);
+  }, 0);
+  const distribution = {
+    values,
+    weights,
+    mean,
+    stdDev: Math.sqrt(Math.max(variance, 0.0001))
+  };
+  HARDY_CANDIDATE_CACHE.set(key, distribution);
+  return distribution;
+}
+
+function buildHardyCandidatesForPar(par) {
+  const safePar = clamp(Math.round(Number(par) || 4), 3, 5);
+  const candidates = [];
+  const cap = holeUpperBound(safePar);
+  for (let pBasis = 0; pBasis <= 22; pBasis++) {
+    const p = pBasis / 100;
+    for (let qBasis = 0; qBasis <= 55; qBasis++) {
+      const q = qBasis / 100;
+      if ((p + q) >= 0.98) continue;
+      const distribution = hardyScoreDistribution(safePar, p, q, cap);
+      candidates.push({
+        p,
+        q,
+        values: distribution.values,
+        weights: distribution.weights,
+        mean: distribution.mean,
+        stdDev: distribution.stdDev
+      });
+    }
+  }
+  return candidates;
+}
+
+const HARDY_CANDIDATES_BY_PAR = {
+  3: buildHardyCandidatesForPar(3),
+  4: buildHardyCandidatesForPar(4),
+  5: buildHardyCandidatesForPar(5)
+};
+
+function hardyCandidateForTarget(par, targetMean, targetSigma) {
+  const safePar = Number(par) === 3 || Number(par) === 5 ? Number(par) : 4;
+  const meanKey = quantize(targetMean, 0.05).toFixed(2);
+  const sigmaKey = quantize(targetSigma, 0.05).toFixed(2);
+  const key = `${safePar}|${meanKey}|${sigmaKey}`;
+  const cached = HARDY_TARGET_CACHE.get(key);
+  if (cached) return cached;
+
+  const candidates = HARDY_CANDIDATES_BY_PAR[safePar] || HARDY_CANDIDATES_BY_PAR[4];
+  const goalMean = Math.max(1, Number(targetMean) || safePar);
+  const goalSigma = Math.max(0.2, Number(targetSigma) || 0.8);
+  let best = candidates[0];
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const candidate of candidates) {
+    const meanError = (candidate.mean - goalMean) / 0.08;
+    const sigmaError = (candidate.stdDev - goalSigma) / 0.14;
+    const score = (meanError * meanError * 5) + (sigmaError * sigmaError);
+    if (score < bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+
+  HARDY_TARGET_CACHE.set(key, best);
+  return best;
+}
+
+function hardyDistributionFromParams(par, params) {
+  const safePar = Number(par) || 4;
+  const normalized = normalizeHardyParams(params?.p, params?.q);
+  const distribution = hardyScoreDistribution(safePar, normalized.p, normalized.q, holeUpperBound(safePar));
+  return {
+    ...distribution,
+    p: normalized.p,
+    q: normalized.q
+  };
+}
+
+function sampleGolfHoleGross(par, params, rng) {
+  const distribution = hardyDistributionFromParams(par, params);
+  return clamp(
+    sampleDiscrete(distribution.values, distribution.weights, rng),
+    1,
+    holeUpperBound(par)
+  );
 }
 
 function sumPlayed(arr) {
@@ -248,6 +476,96 @@ function difficultyZ(strokeIndex) {
   return (difficultyRank - STROKE_Z_MEAN) / STROKE_Z_STD;
 }
 
+function holeSigmaTarget(par, effectiveHandicap, strokeIndex) {
+  const z = difficultyZ(strokeIndex);
+  return (
+    (Number(PAR_SIGMA[par] || 0.8) + (0.02 * Number(effectiveHandicap || 0)) + (0.05 * Math.abs(z))) *
+    HOLE_SIGMA_MULTIPLIER
+  );
+}
+
+function baselineOverParFromLookup(handicapIndex, strokeIndex) {
+  const normalizedHandicap = Math.max(0, Number(handicapIndex) || 0);
+  const rowIndex = clamp(Math.round(Number(strokeIndex) || 1), 1, HOLE_COUNT) - 1;
+  const row = BASELINE_OVER_PAR_BY_STROKE_INDEX[rowIndex] || BASELINE_OVER_PAR_BY_STROKE_INDEX[HOLE_COUNT - 1];
+
+  if (normalizedHandicap <= BASELINE_HANDICAP_ANCHORS[0]) return Number(row[0] || 0);
+  const lastAnchorIndex = BASELINE_HANDICAP_ANCHORS.length - 1;
+  if (normalizedHandicap >= BASELINE_HANDICAP_ANCHORS[lastAnchorIndex]) {
+    const loAnchor = BASELINE_HANDICAP_ANCHORS[lastAnchorIndex - 1];
+    const hiAnchor = BASELINE_HANDICAP_ANCHORS[lastAnchorIndex];
+    const loValue = Number(row[lastAnchorIndex - 1] || 0);
+    const hiValue = Number(row[lastAnchorIndex] || 0);
+    const slope = (hiValue - loValue) / Math.max(hiAnchor - loAnchor, 1);
+    return hiValue + ((normalizedHandicap - hiAnchor) * slope);
+  }
+
+  for (let idx = 1; idx < BASELINE_HANDICAP_ANCHORS.length; idx++) {
+    const loAnchor = BASELINE_HANDICAP_ANCHORS[idx - 1];
+    const hiAnchor = BASELINE_HANDICAP_ANCHORS[idx];
+    if (normalizedHandicap > hiAnchor) continue;
+    const loValue = Number(row[idx - 1] || 0);
+    const hiValue = Number(row[idx] || 0);
+    const ratio = (normalizedHandicap - loAnchor) / Math.max(hiAnchor - loAnchor, 1);
+    return loValue + ((hiValue - loValue) * ratio);
+  }
+
+  return Number(row[lastAnchorIndex] || 0);
+}
+
+function buildHoleBaselines(course) {
+  return Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
+    const par = Number(course?.pars?.[holeIndex] || 4);
+    const strokeIndex = Number(course?.strokeIndex?.[holeIndex] || holeIndex + 1);
+    const targetMean = par + baselineOverParFromLookup(BASELINE_REFERENCE_HANDICAP, strokeIndex);
+    const targetSigma = holeSigmaTarget(par, BASELINE_REFERENCE_HANDICAP, strokeIndex);
+    const candidate = hardyCandidateForTarget(par, targetMean, targetSigma);
+    return {
+      par,
+      strokeIndex,
+      referenceMean: candidate.mean,
+      referenceSigma: candidate.stdDev,
+      params: { p: candidate.p, q: candidate.q }
+    };
+  });
+}
+
+function skillShiftByPar(course, holeBaselines, effectiveHandicap) {
+  const shifts = new Map();
+  for (const par of [3, 4, 5]) {
+    const parHoles = holeBaselines.filter((hole) => hole.par === par);
+    if (!parHoles.length) {
+      shifts.set(par, { pShift: 0, qShift: 0 });
+      continue;
+    }
+
+    const targetMean = parHoles.reduce(
+      (sum, hole) => sum + (par + baselineOverParFromLookup(effectiveHandicap, hole.strokeIndex)),
+      0
+    ) / parHoles.length;
+    const targetSigma = parHoles.reduce(
+      (sum, hole) => sum + holeSigmaTarget(par, effectiveHandicap, hole.strokeIndex),
+      0
+    ) / parHoles.length;
+    const referenceMean = parHoles.reduce((sum, hole) => sum + hole.referenceMean, 0) / parHoles.length;
+    const referenceSigma = parHoles.reduce((sum, hole) => sum + hole.referenceSigma, 0) / parHoles.length;
+
+    const referenceCandidate = hardyCandidateForTarget(par, referenceMean, referenceSigma);
+    const handicapCandidate = hardyCandidateForTarget(par, targetMean, targetSigma);
+    shifts.set(par, {
+      pShift: logitProb(handicapCandidate.p) - logitProb(referenceCandidate.p),
+      qShift: logitProb(handicapCandidate.q) - logitProb(referenceCandidate.q)
+    });
+  }
+  return shifts;
+}
+
+function buildHoleDistribution(holeBaseline, parSkillShift, extraShift) {
+  const combinedShift = mergeHardyShifts(parSkillShift, extraShift);
+  const params = shiftHardyParams(holeBaseline.params, combinedShift);
+  return hardyDistributionFromParams(holeBaseline.par, params);
+}
+
 function holeUpperBound(par) {
   const safePar = Number(par) || 4;
   return Math.max(safePar + 5, 8);
@@ -309,31 +627,59 @@ function createSeededRng(seedText) {
 }
 
 function buildUnitPriors(units, course) {
-  const liveHoleTotals = Array(HOLE_COUNT).fill(0);
+  const holeBaselines = buildHoleBaselines(course);
+  const liveHoleActualTotals = Array(HOLE_COUNT).fill(0);
+  const liveHoleExpectedTotals = Array(HOLE_COUNT).fill(0);
   const liveHoleCounts = Array(HOLE_COUNT).fill(0);
-  for (const unit of units) {
-    for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
-      const gross = unit.gross[holeIndex];
-      if (!hasPlayedScore(gross)) continue;
-      liveHoleTotals[holeIndex] += Number(gross);
-      liveHoleCounts[holeIndex] += 1;
-    }
-  }
 
   for (const unit of units) {
     const effectiveHandicap = strokesFromHandicapShots(unit.handicapShots);
+    const parSkillShift = skillShiftByPar(course, holeBaselines, effectiveHandicap);
+    const baselineMeans = Array(HOLE_COUNT).fill(0);
+
+    for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
+      const holeBaseline = holeBaselines[holeIndex];
+      const distribution = buildHoleDistribution(
+        holeBaseline,
+        parSkillShift.get(holeBaseline.par),
+        null
+      );
+      baselineMeans[holeIndex] = distribution.mean;
+
+      const gross = unit.gross[holeIndex];
+      if (!hasPlayedScore(gross)) continue;
+      liveHoleActualTotals[holeIndex] += Number(gross);
+      liveHoleExpectedTotals[holeIndex] += distribution.mean;
+      liveHoleCounts[holeIndex] += 1;
+    }
+
+    unit.effectiveHandicap = effectiveHandicap;
+    unit.parSkillShift = parSkillShift;
+    unit.baselineMeans = baselineMeans;
+  }
+
+  const liveHoleShift = Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
+    const count = liveHoleCounts[holeIndex];
+    if (!count) return { pShift: 0, qShift: 0 };
+    const residual = (liveHoleActualTotals[holeIndex] - liveHoleExpectedTotals[holeIndex]) / count;
+    const shrinkResidual = residual * (count / (count + LIVE_HOLE_SHRINKAGE));
+    return hardyShiftFromStrokeDelta(shrinkResidual, LIVE_SHIFT_SCALES);
+  });
+
+  for (const unit of units) {
     const priorGrossMeans = Array(HOLE_COUNT).fill(0);
     const priorGrossSigmas = Array(HOLE_COUNT).fill(0);
+    const priorHoleParams = Array(HOLE_COUNT).fill(null);
+    const preFormMeans = Array(HOLE_COUNT).fill(0);
+
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
-      const par = Number(course?.pars?.[holeIndex] || 4);
-      const strokeIndex = Number(course?.strokeIndex?.[holeIndex] || holeIndex + 1);
-      const z = difficultyZ(strokeIndex);
-      const baseline = par + Number(PAR_BIAS[par] || 0.1) + (effectiveHandicap / HOLE_COUNT) + (0.22 * z);
-      const n = liveHoleCounts[holeIndex];
-      const weight = n > 0 ? (n / (n + 6)) : 0;
-      const liveMean = n > 0 ? (liveHoleTotals[holeIndex] / n) : baseline;
-      priorGrossMeans[holeIndex] = (weight * liveMean) + ((1 - weight) * baseline);
-      priorGrossSigmas[holeIndex] = Number(PAR_SIGMA[par] || 0.8) + (0.02 * effectiveHandicap) + (0.05 * Math.abs(z));
+      const holeBaseline = holeBaselines[holeIndex];
+      const distribution = buildHoleDistribution(
+        holeBaseline,
+        unit.parSkillShift.get(holeBaseline.par),
+        liveHoleShift[holeIndex]
+      );
+      preFormMeans[holeIndex] = distribution.mean;
     }
 
     let playedHoles = 0;
@@ -344,18 +690,32 @@ function buildUnitPriors(units, course) {
       if (!hasPlayedScore(gross)) continue;
       const par = Number(course?.pars?.[holeIndex] || 4);
       actualToPar += Number(gross) - par;
-      priorToPar += priorGrossMeans[holeIndex] - par;
+      priorToPar += preFormMeans[holeIndex] - par;
       playedHoles += 1;
     }
 
-    const formDelta = playedHoles > 0
+    const rawFormDelta = playedHoles > 0
       ? (actualToPar - priorToPar) / playedHoles
       : 0;
+    const shrunkenFormDelta = rawFormDelta * (playedHoles / (playedHoles + FORM_SHRINKAGE));
+    const formShift = hardyShiftFromStrokeDelta(shrunkenFormDelta, FORM_SHIFT_SCALES);
 
-    unit.effectiveHandicap = effectiveHandicap;
+    for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
+      const holeBaseline = holeBaselines[holeIndex];
+      const distribution = buildHoleDistribution(
+        holeBaseline,
+        unit.parSkillShift.get(holeBaseline.par),
+        mergeHardyShifts(liveHoleShift[holeIndex], formShift)
+      );
+      priorHoleParams[holeIndex] = { p: distribution.p, q: distribution.q };
+      priorGrossMeans[holeIndex] = distribution.mean;
+      priorGrossSigmas[holeIndex] = distribution.stdDev;
+    }
+
+    unit.priorHoleParams = priorHoleParams;
     unit.priorGrossMeans = priorGrossMeans;
     unit.priorGrossSigmas = priorGrossSigmas;
-    unit.formAdjustment = clamp(0.15 * formDelta, -0.25, 0.25);
+    unit.formAdjustment = clamp(shrunkenFormDelta, -0.35, 0.35);
   }
 }
 
@@ -381,16 +741,12 @@ function sampleUnplayedHoles(context, rng) {
   for (const unit of context.units) {
     const nextUnit = cloneUnitState(unit);
     const roundShock = rng.normal() * 0.18;
+    const roundShockShift = hardyShiftFromStrokeDelta(roundShock, ROUND_SHOCK_SHIFT_SCALES);
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
       if (hasPlayedScore(nextUnit.gross[holeIndex])) continue;
       const par = Number(context.course?.pars?.[holeIndex] || 4);
-      const mu = unit.priorGrossMeans[holeIndex] + unit.formAdjustment + roundShock;
-      const sigma = unit.priorGrossSigmas[holeIndex];
-      const sampledGross = clamp(
-        Math.round(mu + (rng.normal() * sigma)),
-        1,
-        holeUpperBound(par)
-      );
+      const params = shiftHardyParams(unit.priorHoleParams?.[holeIndex], roundShockShift);
+      const sampledGross = sampleGolfHoleGross(par, params, rng);
       nextUnit.gross[holeIndex] = sampledGross;
       nextUnit.net[holeIndex] = sampledGross - Number(nextUnit.handicapShots?.[holeIndex] || 0);
     }

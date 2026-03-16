@@ -230,8 +230,35 @@ function normalizeCourseShape(course) {
     ? course.strokeIndex.map((v) => Number(v) || 0)
     : null;
   if (!pars || !strokeIndex) return null;
+  const totalYardsRaw = Number(course?.totalYards);
+  const totalYards = Number.isFinite(totalYardsRaw) ? Math.round(totalYardsRaw) : null;
+  const holeYardages = Array.isArray(course?.holeYardages) && course.holeYardages.length === 18
+    ? course.holeYardages.map((v) => Number(v) || 0)
+    : null;
+  const ratings = Array.isArray(course?.ratings)
+    ? course.ratings
+        .map((entry) => {
+          const gender = String(entry?.gender || "").trim().toUpperCase();
+          const rating = Number(entry?.rating);
+          const slope = Number(entry?.slope);
+          if (!gender && !Number.isFinite(rating) && !Number.isFinite(slope)) return null;
+          return {
+            ...(gender ? { gender } : {}),
+            ...(Number.isFinite(rating) ? { rating } : {}),
+            ...(Number.isFinite(slope) ? { slope: Math.round(slope) } : {})
+          };
+        })
+        .filter(Boolean)
+    : [];
   return {
     ...(course?.name ? { name: String(course.name) } : {}),
+    ...(course?.sourceCourseId ? { sourceCourseId: String(course.sourceCourseId) } : {}),
+    ...(course?.selectedTeeKey ? { selectedTeeKey: String(course.selectedTeeKey) } : {}),
+    ...(course?.teeName ? { teeName: String(course.teeName) } : {}),
+    ...(course?.teeLabel ? { teeLabel: String(course.teeLabel) } : {}),
+    ...(Number.isFinite(totalYards) ? { totalYards } : {}),
+    ...(holeYardages ? { holeYardages } : {}),
+    ...(ratings.length ? { ratings } : {}),
     pars,
     strokeIndex
   };

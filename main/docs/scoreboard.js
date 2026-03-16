@@ -25,6 +25,10 @@ const raw = document.getElementById("raw");
 const oddsPanel = document.getElementById("odds_panel");
 const oddsMeta = document.getElementById("odds_meta");
 const oddsSections = document.getElementById("odds_sections");
+const btnOddsGross = document.getElementById("btn_odds_gross");
+const btnOddsNet = document.getElementById("btn_odds_net");
+const btnOddsPct = document.getElementById("btn_odds_pct");
+const btnOddsAmerican = document.getElementById("btn_odds_american");
 const statsMeta = document.getElementById("stats_meta");
 const statsKpis = document.getElementById("stats_kpis");
 const statsHoleTbl = document.getElementById("stats_hole_tbl");
@@ -44,6 +48,8 @@ let mode = "player"; // "team" | "player"
 let currentRound = "all"; // "all" | number
 let TOURN = null;
 let graphMetric = "gross"; // "gross" | "net"
+let oddsMetric = "gross"; // "gross" | "net"
+let oddsValueMode = "percent"; // "percent" | "american"
 
 let openInlineKey = null;
 let openInlineRow = null;
@@ -73,6 +79,18 @@ function syncTrendMetricButtons() {
   if (!btnTrendGross || !btnTrendNet) return;
   btnTrendGross.classList.toggle("active", graphMetric === "gross");
   btnTrendNet.classList.toggle("active", graphMetric === "net");
+}
+
+function syncOddsMetricButtons() {
+  if (!btnOddsGross || !btnOddsNet) return;
+  btnOddsGross.classList.toggle("active", oddsMetric === "gross");
+  btnOddsNet.classList.toggle("active", oddsMetric === "net");
+}
+
+function syncOddsValueButtons() {
+  if (!btnOddsPct || !btnOddsAmerican) return;
+  btnOddsPct.classList.toggle("active", oddsValueMode === "percent");
+  btnOddsAmerican.classList.toggle("active", oddsValueMode === "american");
 }
 
 function setBrandDotColor(color) {
@@ -147,14 +165,35 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function formatPercent(value) {
+function formatPercent(value, { exactExtremes = false } = {}) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
-  if (n <= 0) return "0%";
-  if (n >= 100) return "100%";
+  if (exactExtremes && n <= 0) return "0%";
+  if (exactExtremes && n >= 100) return "100%";
   if (n < 1) return "<1%";
   if (n > 99) return ">99%";
   return `${Math.round(n)}%`;
+}
+
+function formatAmericanOdds(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  const p = n / 100;
+  if (p <= 0) return "+10000";
+  if (p >= 1) return "-10000";
+  if (Math.abs(p - 0.5) < 0.0000001) return "+100";
+  if (p > 0.5) {
+    const odds = -Math.round((p / (1 - p)) * 100);
+    return String(Math.max(-10000, odds));
+  }
+  const odds = Math.round(((1 - p) / p) * 100);
+  return `+${Math.min(10000, odds)}`;
+}
+
+function formatOddsValue(value, options) {
+  return oddsValueMode === "american"
+    ? formatAmericanOdds(value)
+    : formatPercent(value, options);
 }
 
 function toParStrFromTenths(diff) {
@@ -379,8 +418,35 @@ function normalizeCourseShape(course) {
     ? course.strokeIndex.map((v) => Number(v) || 0)
     : null;
   if (!pars || !strokeIndex) return null;
+  const totalYardsRaw = Number(course?.totalYards);
+  const totalYards = Number.isFinite(totalYardsRaw) ? Math.round(totalYardsRaw) : null;
+  const holeYardages = Array.isArray(course?.holeYardages) && course.holeYardages.length === 18
+    ? course.holeYardages.map((v) => Number(v) || 0)
+    : null;
+  const ratings = Array.isArray(course?.ratings)
+    ? course.ratings
+        .map((entry) => {
+          const gender = String(entry?.gender || "").trim().toUpperCase();
+          const rating = Number(entry?.rating);
+          const slope = Number(entry?.slope);
+          if (!gender && !Number.isFinite(rating) && !Number.isFinite(slope)) return null;
+          return {
+            ...(gender ? { gender } : {}),
+            ...(Number.isFinite(rating) ? { rating } : {}),
+            ...(Number.isFinite(slope) ? { slope: Math.round(slope) } : {})
+          };
+        })
+        .filter(Boolean)
+    : [];
   return {
     ...(course?.name ? { name: String(course.name) } : {}),
+    ...(course?.sourceCourseId ? { sourceCourseId: String(course.sourceCourseId) } : {}),
+    ...(course?.selectedTeeKey ? { selectedTeeKey: String(course.selectedTeeKey) } : {}),
+    ...(course?.teeName ? { teeName: String(course.teeName) } : {}),
+    ...(course?.teeLabel ? { teeLabel: String(course.teeLabel) } : {}),
+    ...(Number.isFinite(totalYards) ? { totalYards } : {}),
+    ...(holeYardages ? { holeYardages } : {}),
+    ...(ratings.length ? { ratings } : {}),
     pars,
     strokeIndex
   };
@@ -3126,6 +3192,10 @@ function renderOddsTable(title, rows, key) {
 
   const wrap = document.createElement("div");
   wrap.className = "odds-table-wrap";
+  const leadLabel = oddsValueMode === "american" ? "Lead Odds" : "Lead %";
+  const lowOddsLabel = oddsMetric === "net"
+    ? (oddsValueMode === "american" ? "Low N Odds" : "Low N%")
+    : (oddsValueMode === "american" ? "Low G Odds" : "Low G%");
 
   const table = document.createElement("table");
   table.className = "table odds-table";
@@ -3133,12 +3203,9 @@ function renderOddsTable(title, rows, key) {
     <thead>
       <tr>
         <th class="left entity-col">${key === "teams" ? "Team" : key === "groups" ? "Group" : "Player"}</th>
-        <th>Lead %</th>
-        <th>Low G%</th>
-        <th>Low N%</th>
+        <th>${leadLabel}</th>
+        <th>${lowOddsLabel}</th>
         <th>Proj ±</th>
-        <th>Gross ±</th>
-        <th>Net ±</th>
         <th class="remaining-col">Rem</th>
       </tr>
     </thead>
@@ -3155,20 +3222,21 @@ function renderOddsTable(title, rows, key) {
       ? ""
       : String(row?.teamName || "").trim();
     const remTitle = liveOddsTooltip(row);
-    const projectedMetricToPar = projectedScoreToPar(row);
-    const projectedGrossToPar = row?.projectedGrossToPar != null ? toParStrFromTenths(row.projectedGrossToPar) : "—";
-    const projectedNetToPar = row?.projectedNetToPar != null ? toParStrFromTenths(row.projectedNetToPar) : "—";
+    const lowMetricProbability = oddsMetric === "net"
+      ? row?.lowestNetProbability
+      : row?.lowestGrossProbability;
+    const projectedOddsMetricToPar = oddsMetric === "net"
+      ? row?.projectedNetToPar
+      : row?.projectedGrossToPar;
+    const isFinished = Number(row?.holesRemaining || 0) <= 0;
     tr.innerHTML = `
       <td class="left entity-col">
         <div class="entity-name">${escapeHtml(name)}</div>
         ${sub ? `<div class="small muted entity-sub">${escapeHtml(sub)}</div>` : ""}
       </td>
-      <td class="mono">${escapeHtml(formatPercent(row?.leaderProbability))}</td>
-      <td class="mono">${escapeHtml(formatPercent(row?.lowestGrossProbability))}</td>
-      <td class="mono">${escapeHtml(formatPercent(row?.lowestNetProbability))}</td>
-      <td class="mono"><b>${escapeHtml(projectedMetricToPar == null ? "—" : toParStrFromTenths(projectedMetricToPar))}</b></td>
-      <td class="mono"><b>${escapeHtml(projectedGrossToPar)}</b></td>
-      <td class="mono"><b>${escapeHtml(projectedNetToPar)}</b></td>
+      <td class="mono">${escapeHtml(formatOddsValue(row?.leaderProbability, { exactExtremes: isFinished }))}</td>
+      <td class="mono">${escapeHtml(formatOddsValue(lowMetricProbability, { exactExtremes: isFinished }))}</td>
+      <td class="mono"><b>${escapeHtml(projectedOddsMetricToPar == null ? "—" : toParStrFromTenths(projectedOddsMetricToPar))}</b></td>
       <td class="mono remaining-col" title="${escapeHtml(remTitle)}">${escapeHtml(String(Number(row?.holesRemaining || 0)))}</td>
     `;
     tbody.appendChild(tr);
@@ -3181,6 +3249,8 @@ function renderOddsTable(title, rows, key) {
 
 function renderLiveOdds() {
   if (!oddsPanel || !oddsMeta || !oddsSections) return;
+  syncOddsMetricButtons();
+  syncOddsValueButtons();
 
   const tables = oddsTablesForView(currentRound);
   if (!tables.length) {
@@ -3232,6 +3302,16 @@ function buildScoreboardResponse(tournamentJson, viewRound) {
       tournament: tournamentJson.tournament,
       view: { round: "all" },
       course: {
+        ...(allRoundsCourse?.name ? { name: allRoundsCourse.name } : {}),
+        ...(allRoundsCourse?.teeName ? { teeName: allRoundsCourse.teeName } : {}),
+        ...(allRoundsCourse?.teeLabel ? { teeLabel: allRoundsCourse.teeLabel } : {}),
+        ...(Number.isFinite(allRoundsCourse?.totalYards) ? { totalYards: allRoundsCourse.totalYards } : {}),
+        ...(Array.isArray(allRoundsCourse?.holeYardages) && allRoundsCourse.holeYardages.length === 18
+          ? { holeYardages: allRoundsCourse.holeYardages.slice() }
+          : {}),
+        ...(Array.isArray(allRoundsCourse?.ratings) && allRoundsCourse.ratings.length
+          ? { ratings: allRoundsCourse.ratings.slice() }
+          : {}),
         parTotal: allRoundsCourse.pars.reduce((a, b) => a + Number(b || 0), 0),
         pars: allRoundsCourse.pars,
         strokeIndex: allRoundsCourse.strokeIndex
@@ -3256,6 +3336,16 @@ function buildScoreboardResponse(tournamentJson, viewRound) {
     tournament: tournamentJson.tournament,
     view: { round: rIdx },
     course: {
+      ...(roundCourse?.name ? { name: roundCourse.name } : {}),
+      ...(roundCourse?.teeName ? { teeName: roundCourse.teeName } : {}),
+      ...(roundCourse?.teeLabel ? { teeLabel: roundCourse.teeLabel } : {}),
+      ...(Number.isFinite(roundCourse?.totalYards) ? { totalYards: roundCourse.totalYards } : {}),
+      ...(Array.isArray(roundCourse?.holeYardages) && roundCourse.holeYardages.length === 18
+        ? { holeYardages: roundCourse.holeYardages.slice() }
+        : {}),
+      ...(Array.isArray(roundCourse?.ratings) && roundCourse.ratings.length
+        ? { ratings: roundCourse.ratings.slice() }
+        : {}),
       parTotal: roundCourse.pars.reduce((a, b) => a + Number(b || 0), 0),
       pars: roundCourse.pars,
       strokeIndex: roundCourse.strokeIndex
@@ -3430,6 +3520,38 @@ if (btnTrendNet) {
   };
 }
 
+if (btnOddsGross) {
+  btnOddsGross.onclick = () => {
+    oddsMetric = "gross";
+    syncOddsMetricButtons();
+    render();
+  };
+}
+
+if (btnOddsNet) {
+  btnOddsNet.onclick = () => {
+    oddsMetric = "net";
+    syncOddsMetricButtons();
+    render();
+  };
+}
+
+if (btnOddsPct) {
+  btnOddsPct.onclick = () => {
+    oddsValueMode = "percent";
+    syncOddsValueButtons();
+    render();
+  };
+}
+
+if (btnOddsAmerican) {
+  btnOddsAmerican.onclick = () => {
+    oddsValueMode = "american";
+    syncOddsValueButtons();
+    render();
+  };
+}
+
 roundFilter.onchange = () => {
   const v = roundFilter.value;
   const nextRound = v === "all" ? "all" : Number(v);
@@ -3461,7 +3583,10 @@ roundFilter.onchange = () => {
     const roundCount = (TOURN.tournament.rounds || []).length;
     currentRound = roundCount > 0 ? newestRoundWithDataIndex(TOURN) : "all";
     graphMetric = isHandicapRound(currentRound) ? "net" : "gross";
+    oddsMetric = isHandicapRound(currentRound) ? "net" : "gross";
     syncTrendMetricButtons();
+    syncOddsMetricButtons();
+    syncOddsValueButtons();
     syncRoundFilterOptions();
 
     status.textContent = "";

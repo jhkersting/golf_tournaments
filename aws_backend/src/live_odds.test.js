@@ -237,6 +237,79 @@ registerTest("all-round odds include future unstarted holes", () => {
   assert.ok(Number(allRoundTeamOdds.get("A")?.projectedScore || 0) > Number(roundTeamOdds.get("A")?.projectedScore || 0));
 });
 
+registerTest("baseline modeling respects stroke index difficulty and handicap lookup", () => {
+  const tournamentJson = materializedFixture("singles", { useHandicap: true });
+  const playerHandicaps = new Map((tournamentJson.players || []).map((player) => [player.playerId, Number(player.handicap || 0)]));
+  for (const playerId of Object.keys(tournamentJson.score_data.rounds[0].player || {})) {
+    const handicap = playerHandicaps.get(playerId) || 0;
+    tournamentJson.score_data.rounds[0].player[playerId] = {
+      gross: grossArray(null),
+      net: grossArray(null),
+      handicapShots: strokesPerHole(handicap, STROKE_INDEX),
+      grossTotal: 0,
+      netTotal: 0,
+      grossToParTotal: 0,
+      netToParTotal: 0,
+      thru: 0
+    };
+  }
+
+  const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
+  const playerOdds = new Map((odds.rounds?.[0]?.players || []).map((row) => [row.playerId, row]));
+  const lowHandicap = playerOdds.get("A1");
+  const highHandicap = playerOdds.get("B2");
+  assert.ok(lowHandicap);
+  assert.ok(highHandicap);
+
+  const lowHandicapHole1 = Number(lowHandicap.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+  const lowHandicapHole18 = Number(lowHandicap.remainingHoleExpectations?.find((item) => item.holeIndex === 17)?.projectedGross || 0);
+  const highHandicapHole1 = Number(highHandicap.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+
+  assert.ok(lowHandicapHole1 > lowHandicapHole18, `expected hardest hole to project higher than easiest hole: ${lowHandicapHole1} vs ${lowHandicapHole18}`);
+  assert.ok(highHandicapHole1 > lowHandicapHole1, `expected higher handicap hardest-hole projection to be worse: ${highHandicapHole1} vs ${lowHandicapHole1}`);
+});
+
+registerTest("live hole scoring feeds future hole projections for players who have not played that hole", () => {
+  const baselineTournament = materializedFixture("singles", { useHandicap: true });
+  const liveTournament = deepClone(baselineTournament);
+
+  for (const player of liveTournament.players || []) {
+    const handicapShots = strokesPerHole(player.handicap, STROKE_INDEX);
+    liveTournament.score_data.rounds[0].player[player.playerId] = {
+      gross: grossArray(null),
+      net: grossArray(null),
+      handicapShots,
+      grossTotal: 0,
+      netTotal: 0,
+      grossToParTotal: 0,
+      netToParTotal: 0,
+      thru: 0
+    };
+  }
+
+  for (const [playerId, grossScore] of [["A1", 7], ["A2", 8]]) {
+    const playerMeta = liveTournament.players.find((player) => player.playerId === playerId);
+    const entry = liveTournament.score_data.rounds[0].player[playerId];
+    const handicapShots = strokesPerHole(playerMeta.handicap, STROKE_INDEX);
+    entry.gross[0] = grossScore;
+    entry.net[0] = grossScore - Number(handicapShots[0] || 0);
+    entry.grossTotal = grossScore;
+    entry.netTotal = entry.net[0];
+    entry.grossToParTotal = grossScore - PARS[0];
+    entry.netToParTotal = entry.net[0] - PARS[0];
+    entry.thru = 1;
+  }
+
+  const baselineOdds = computeLiveOdds(baselineTournament, { generatedAt: FIXED_NOW });
+  const liveOdds = computeLiveOdds(liveTournament, { generatedAt: FIXED_NOW });
+  const baselineB1 = (baselineOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "B1");
+  const liveB1 = (liveOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "B1");
+  const baselineHole1 = Number(baselineB1?.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+  const liveHole1 = Number(liveB1?.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+
+  assert.ok(liveHole1 > baselineHole1, `expected live-scoring hole effect to raise future projection: ${liveHole1} vs ${baselineHole1}`);
+});
+
 registerTest("compact live odds payload strips names and quantizes output", () => {
   const tournamentJson = materializedFixture("singles", { includeFutureRound: true });
   const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });

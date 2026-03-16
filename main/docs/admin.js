@@ -44,6 +44,14 @@ function normalizeCourseForTournament(course){
   if (!c || !isValidCourseShape(c)) return null;
   return {
     ...(c.name ? { name: c.name } : {}),
+    ...(c.sourceCourseId ? { sourceCourseId: c.sourceCourseId } : {}),
+    ...(c.selectedTeeKey ? { selectedTeeKey: c.selectedTeeKey } : {}),
+    ...(c.teeName ? { teeName: c.teeName } : {}),
+    ...(c.teeLabel ? { teeLabel: c.teeLabel } : {}),
+    ...(Number.isFinite(c.totalYards) ? { totalYards: c.totalYards } : {}),
+    ...(Array.isArray(c.holeYardages) && c.holeYardages.length === 18 ? { holeYardages: c.holeYardages.slice() } : {}),
+    ...(Array.isArray(c.ratings) && c.ratings.length ? { ratings: c.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) } : {}),
+    ...(Array.isArray(c.tees) && c.tees.length ? { tees: c.tees.map((tee) => serializeTeeForSave(tee)).filter(Boolean) } : {}),
     pars: c.pars.map((v) => Number(v) || 0),
     strokeIndex: c.strokeIndex.map((v) => Number(v) || 0)
   };
@@ -58,10 +66,57 @@ function roundCourseOptionsHtml(selectedRef = PRIMARY_COURSE_REF){
     const id = String(c.courseId || "").trim();
     if (!id) continue;
     const ref = `saved:${id}`;
-    const label = c.name || id;
+    const label = c.teeLabel ? `${c.name || id} (${c.teeLabel})` : (c.name || id);
     options.push(`<option value="${ref}" ${selected === ref ? "selected" : ""}>Saved: ${label}</option>`);
   }
   return options.join("");
+}
+
+function resolveCourseRef(ref) {
+  const value = String(ref || PRIMARY_COURSE_REF).trim() || PRIMARY_COURSE_REF;
+  if (value === PRIMARY_COURSE_REF) {
+    try {
+      return normalizeCourse(collectPrimaryCourseForTournament());
+    } catch {
+      return normalizeCourse({
+        name: String(courseNameEl?.value || "").trim(),
+        pars: getPars(),
+        strokeIndex: Array.from({ length: 18 }, (_, idx) => idx + 1)
+      });
+    }
+  }
+  const id = value.startsWith("saved:") ? value.slice("saved:".length).trim() : "";
+  if (!id) return normalizeCourse(collectPrimaryCourseForTournament());
+  return savedCourses.find((course) => String(course?.courseId || "").trim() === id) || null;
+}
+
+function syncRoundTeeSelect(card) {
+  const courseSelectEl = card?.querySelector("[data-course-ref]");
+  const teeSelectEl = card?.querySelector("[data-tee-ref]");
+  if (!courseSelectEl || !teeSelectEl) return;
+
+  const course = normalizeCourse(resolveCourseRef(courseSelectEl.value));
+  const tees = Array.isArray(course?.tees) ? course.tees : [];
+  const previous = String(teeSelectEl.value || card?.dataset?.teeRef || "").trim();
+
+  if (!tees.length) {
+    teeSelectEl.innerHTML = `<option value="">—</option>`;
+    teeSelectEl.value = "";
+    teeSelectEl.disabled = true;
+    card.dataset.teeRef = "";
+    return;
+  }
+
+  teeSelectEl.disabled = false;
+  teeSelectEl.innerHTML = tees
+    .map((tee) => `<option value="${tee.key}">${tee.label || tee.teeName || tee.key}</option>`)
+    .join("");
+
+  let next = previous;
+  if (!tees.some((tee) => tee.key === next)) next = String(course?.selectedTeeKey || "").trim();
+  if (!tees.some((tee) => tee.key === next)) next = tees[0].key;
+  teeSelectEl.value = next;
+  card.dataset.teeRef = next;
 }
 
 function refreshRoundCourseSelects(){
@@ -72,13 +127,17 @@ function refreshRoundCourseSelects(){
     const exists = [...select.options].some((opt) => opt.value === prev);
     select.value = exists ? prev : PRIMARY_COURSE_REF;
   });
+  roundsEl.querySelectorAll(".card").forEach((card) => syncRoundTeeSelect(card));
 }
 
 async function ensureSavedCourseDetails(courseId){
   const id = String(courseId || "").trim();
   if (!id) return null;
   const fromList = savedCourses.find((c) => String(c?.courseId || "").trim() === id);
-  if (isValidCourseShape(fromList)) return normalizeCourseForTournament(fromList);
+  const normalizedFromList = normalizeCourse(fromList);
+  if (isValidCourseShape(normalizedFromList) && Array.isArray(normalizedFromList?.tees) && normalizedFromList.tees.length) {
+    return normalizeCourseForTournament(normalizedFromList);
+  }
 
   const payload = await api(`/courses/${encodeURIComponent(id)}`);
   const loaded = normalizeCourse(payload?.course || payload);
@@ -161,15 +220,190 @@ function validateStrokeIndex(si){
   return null;
 }
 
+function normalizeRatingEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const gender = String(raw.gender || "").trim().toUpperCase();
+  const rating = Number(raw.rating);
+  const slope = Number(raw.slope);
+  if (!gender && !Number.isFinite(rating) && !Number.isFinite(slope)) return null;
+  return {
+    ...(gender ? { gender } : {}),
+    ...(Number.isFinite(rating) ? { rating } : {}),
+    ...(Number.isFinite(slope) ? { slope: Math.round(slope) } : {})
+  };
+}
+
+function ratingSummary(ratings) {
+  if (!Array.isArray(ratings) || !ratings.length) return "";
+  return ratings
+    .map((entry) => {
+      const parts = [];
+      if (entry?.gender) parts.push(String(entry.gender));
+      if (Number.isFinite(entry?.rating)) {
+        const slopeText = Number.isFinite(entry?.slope) ? `/${Math.round(entry.slope)}` : "";
+        parts.push(`${Number(entry.rating).toFixed(1)}${slopeText}`);
+      } else if (Number.isFinite(entry?.slope)) {
+        parts.push(String(Math.round(entry.slope)));
+      }
+      return parts.join(" ");
+    })
+    .filter(Boolean)
+    .join(" • ");
+}
+
+function teeKeyForMeta(teeName, totalYards, holeYardages) {
+  const nameKey = String(teeName || "tee")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "tee";
+  const yardsKey = Number.isFinite(Number(totalYards)) ? String(Math.round(Number(totalYards))) : "0";
+  return `${nameKey}-${yardsKey}`;
+}
+
+function normalizeTeeForUi(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const teeName = String(raw.teeName || raw.name || "").trim();
+  const totalYardsRaw = Number(raw.totalYards);
+  const totalYards = Number.isFinite(totalYardsRaw) ? Math.round(totalYardsRaw) : null;
+  const parTotalRaw = Number(raw.parTotal);
+  const parTotal = Number.isFinite(parTotalRaw) ? Math.round(parTotalRaw) : null;
+  const holeYardages = Array.isArray(raw.holeYardages) && raw.holeYardages.length === 18
+    ? raw.holeYardages.map((value) => Number(value) || 0)
+    : [];
+  const ratings = Array.isArray(raw.ratings) && raw.ratings.length
+    ? raw.ratings.map((entry) => normalizeRatingEntry(entry)).filter(Boolean)
+    : [normalizeRatingEntry(raw)].filter(Boolean);
+  if (!teeName && !Number.isFinite(totalYards) && !holeYardages.length && !ratings.length) return null;
+  const key = String(raw.teeKey || raw.selectedTeeKey || "").trim()
+    || teeKeyForMeta(teeName, totalYards, holeYardages);
+  const ratingsText = ratingSummary(ratings);
+  return {
+    key,
+    teeName: teeName || "Tee",
+    ...(Number.isFinite(totalYards) ? { totalYards } : {}),
+    ...(Number.isFinite(parTotal) ? { parTotal } : {}),
+    ...(holeYardages.length === 18 ? { holeYardages } : {}),
+    ratings,
+    ratingsText,
+    label: [
+      teeName || "Tee",
+      Number.isFinite(totalYards) ? `${totalYards} yds` : "",
+      ratingsText
+    ].filter(Boolean).join(" • ")
+  };
+}
+
+function teeListFromCourse(course) {
+  const grouped = new Map();
+  const rawList = Array.isArray(course?.longestTees) && course.longestTees.length
+    ? course.longestTees
+    : Array.isArray(course?.tees) ? course.tees : [];
+
+  rawList.forEach((entry) => {
+    const tee = normalizeTeeForUi(entry);
+    if (!tee) return;
+    const existing = grouped.get(tee.key);
+    if (!existing) {
+      grouped.set(tee.key, tee);
+      return;
+    }
+    const mergedRatings = [...(existing.ratings || [])];
+    for (const rating of tee.ratings || []) {
+      const alreadyPresent = mergedRatings.some((candidate) =>
+        candidate?.gender === rating?.gender
+          && candidate?.rating === rating?.rating
+          && candidate?.slope === rating?.slope
+      );
+      if (!alreadyPresent) mergedRatings.push(rating);
+    }
+    grouped.set(tee.key, {
+      ...existing,
+      ratings: mergedRatings,
+      ratingsText: ratingSummary(mergedRatings),
+      label: [
+        existing.teeName,
+        Number.isFinite(existing.totalYards) ? `${existing.totalYards} yds` : "",
+        ratingSummary(mergedRatings)
+      ].filter(Boolean).join(" • ")
+    });
+  });
+
+  if (!grouped.size) {
+    const single = normalizeTeeForUi({
+      teeKey: course?.selectedTeeKey,
+      teeName: course?.teeName,
+      totalYards: course?.totalYards,
+      parTotal: course?.parTotal,
+      holeYardages: course?.holeYardages,
+      ratings: course?.ratings
+    });
+    if (single) grouped.set(single.key, single);
+  }
+
+  return [...grouped.values()].sort((a, b) => {
+    const yardsDiff = (Number(b?.totalYards) || 0) - (Number(a?.totalYards) || 0);
+    if (yardsDiff !== 0) return yardsDiff;
+    return String(a?.teeName || "").localeCompare(String(b?.teeName || ""));
+  });
+}
+
+function serializeRatingEntry(entry) {
+  return normalizeRatingEntry(entry);
+}
+
+function serializeTeeForSave(tee) {
+  const normalized = normalizeTeeForUi(tee);
+  if (!normalized) return null;
+  return {
+    teeKey: normalized.key,
+    teeName: normalized.teeName,
+    ...(Number.isFinite(normalized.parTotal) ? { parTotal: normalized.parTotal } : {}),
+    ...(Number.isFinite(normalized.totalYards) ? { totalYards: normalized.totalYards } : {}),
+    ...(Array.isArray(normalized.holeYardages) && normalized.holeYardages.length === 18
+      ? { holeYardages: normalized.holeYardages.slice() }
+      : {}),
+    ...(Array.isArray(normalized.ratings) && normalized.ratings.length
+      ? { ratings: normalized.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+      : {})
+  };
+}
+
 function normalizeCourse(course){
   if (!course || typeof course !== "object") return null;
   const courseId = String(course.courseId || course.id || "").trim();
+  const sourceCourseId = String(course.sourceCourseId || "").trim();
   const name = String(course.name || "").trim();
   const pars = Array.isArray(course.pars) ? course.pars.map((v) => Number(v) || 0) : null;
   const strokeIndex = Array.isArray(course.strokeIndex)
     ? course.strokeIndex.map((v) => Number(v) || 0)
     : null;
-  return { courseId, name, pars, strokeIndex };
+  const tees = teeListFromCourse(course);
+  let selectedTeeKey = String(course.selectedTeeKey || course.teeKey || "").trim();
+  if (!selectedTeeKey && tees.length === 1) selectedTeeKey = tees[0].key;
+  const selectedTee = tees.find((tee) => tee.key === selectedTeeKey) || null;
+  return {
+    courseId,
+    ...(sourceCourseId ? { sourceCourseId } : {}),
+    name,
+    pars,
+    strokeIndex,
+    tees,
+    ...(selectedTeeKey ? { selectedTeeKey } : {}),
+    ...(selectedTee?.teeName ? { teeName: selectedTee.teeName } : String(course.teeName || "").trim() ? { teeName: String(course.teeName || "").trim() } : {}),
+    ...(selectedTee?.label ? { teeLabel: selectedTee.label } : String(course.teeLabel || "").trim() ? { teeLabel: String(course.teeLabel || "").trim() } : {}),
+    ...(Number.isFinite(selectedTee?.totalYards) ? { totalYards: selectedTee.totalYards } : Number.isFinite(Number(course.totalYards)) ? { totalYards: Math.round(Number(course.totalYards)) } : {}),
+    ...(Array.isArray(selectedTee?.holeYardages) && selectedTee.holeYardages.length === 18
+      ? { holeYardages: selectedTee.holeYardages.slice() }
+      : Array.isArray(course.holeYardages) && course.holeYardages.length === 18
+        ? { holeYardages: course.holeYardages.map((value) => Number(value) || 0) }
+        : {}),
+    ...(Array.isArray(selectedTee?.ratings) && selectedTee.ratings.length
+      ? { ratings: selectedTee.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+      : Array.isArray(course.ratings) && course.ratings.length
+        ? { ratings: course.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+        : {})
+  };
 }
 
 function extractCourseList(payload){
@@ -237,6 +471,7 @@ async function loadCourseById(courseId){
     fillCourseRows(c.pars, c.strokeIndex);
     courseNameEl.value = c.name || "";
     selectedCourseId = id;
+    refreshRoundCourseSelects();
     courseStatus.textContent = `Loaded course: ${c.name || id}`;
   } catch (e) {
     console.error(e);
@@ -258,7 +493,17 @@ async function saveCourse(){
     return;
   }
 
-  const course = { name, pars, strokeIndex: si };
+  const existing = selectedCourseId
+    ? savedCourses.find((course) => String(course?.courseId || "").trim() === selectedCourseId)
+    : null;
+  const course = {
+    name,
+    pars,
+    strokeIndex: si,
+    ...(Array.isArray(existing?.tees) && existing.tees.length
+      ? { tees: existing.tees.map((tee) => serializeTeeForSave(tee)).filter(Boolean) }
+      : {})
+  };
   if (selectedCourseId) course.courseId = selectedCourseId;
 
   courseStatus.textContent = selectedCourseId ? "Updating course…" : "Saving course…";
@@ -328,6 +573,10 @@ function roundCard(){
           ${roundCourseOptionsHtml(PRIMARY_COURSE_REF)}
         </select>
       </div>
+      <div class="col">
+        <label>Tee</label>
+        <select data-tee-ref></select>
+      </div>
     </div>
 
     <div class="row" style="margin-top:8px;" data-aggrow>
@@ -354,6 +603,11 @@ function roundCard(){
   fmt.addEventListener("change", syncAggVisibility);
   syncAggVisibility();
 
+  const courseSelectEl = div.querySelector("[data-course-ref]");
+  if (courseSelectEl) {
+    courseSelectEl.addEventListener("change", () => syncRoundTeeSelect(div));
+  }
+  syncRoundTeeSelect(div);
   div.querySelector("[data-remove]").onclick = () => div.remove();
   return div;
 }
@@ -371,6 +625,7 @@ if (courseSelect) {
     const id = String(courseSelect.value || "").trim();
     if (!id) {
       selectedCourseId = "";
+      refreshRoundCourseSelects();
       courseStatus.textContent = "Using custom/current course values.";
       return;
     }
@@ -390,6 +645,7 @@ function getRounds(){
     const weight = Number.isFinite(parsedWeight) && parsedWeight > 0 ? parsedWeight : null;
     const topX = Number(c.querySelector("[data-topx]")?.value || 4);
     const courseRef = String(c.querySelector("[data-course-ref]")?.value || PRIMARY_COURSE_REF).trim();
+    const teeRef = String(c.querySelector("[data-tee-ref]")?.value || "").trim();
 
     return {
       name: c.querySelector("[data-name]")?.value.trim() || "Round",
@@ -397,6 +653,7 @@ function getRounds(){
       useHandicap,
       weight,
       courseRef: courseRef || PRIMARY_COURSE_REF,
+      teeRef,
       teamAggregation: {
         mode: "avg",
         topX: Math.max(1, Math.min(4, Math.floor(topX || 4)))
@@ -412,12 +669,21 @@ function getRounds(){
 }
 
 function collectPrimaryCourseForTournament(){
+  const base = normalizeCourse(savedCourses.find((course) => String(course?.courseId || "").trim() === selectedCourseId) || null);
   const courseName = document.getElementById("course_name").value.trim();
   const pars = getPars();
   const strokeIndex = getStrokeIndex();
   const siErr = validateStrokeIndex(strokeIndex);
   if (siErr) throw new Error(siErr);
   return {
+    ...(base?.sourceCourseId ? { sourceCourseId: base.sourceCourseId } : {}),
+    ...(base?.selectedTeeKey ? { selectedTeeKey: base.selectedTeeKey } : {}),
+    ...(base?.teeName ? { teeName: base.teeName } : {}),
+    ...(base?.teeLabel ? { teeLabel: base.teeLabel } : {}),
+    ...(Number.isFinite(base?.totalYards) ? { totalYards: base.totalYards } : {}),
+    ...(Array.isArray(base?.holeYardages) && base.holeYardages.length === 18 ? { holeYardages: base.holeYardages.slice() } : {}),
+    ...(Array.isArray(base?.ratings) && base.ratings.length ? { ratings: base.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) } : {}),
+    ...(Array.isArray(base?.tees) && base.tees.length ? { tees: base.tees.map((tee) => serializeTeeForSave(tee)).filter(Boolean) } : {}),
     ...(courseName ? { name: courseName } : {}),
     pars,
     strokeIndex
@@ -425,22 +691,82 @@ function collectPrimaryCourseForTournament(){
 }
 
 async function resolveCoursesAndRounds(rounds, primaryCourse){
-  const courses = [primaryCourse];
+  function serializeCourseForSave(course) {
+    const normalized = normalizeCourse(course);
+    return {
+      ...(normalized?.name ? { name: normalized.name } : {}),
+      ...(normalized?.sourceCourseId ? { sourceCourseId: normalized.sourceCourseId } : {}),
+      ...(normalized?.selectedTeeKey ? { selectedTeeKey: normalized.selectedTeeKey } : {}),
+      ...(normalized?.teeName ? { teeName: normalized.teeName } : {}),
+      ...(normalized?.teeLabel ? { teeLabel: normalized.teeLabel } : {}),
+      ...(Number.isFinite(normalized?.totalYards) ? { totalYards: normalized.totalYards } : {}),
+      ...(Array.isArray(normalized?.holeYardages) && normalized.holeYardages.length === 18
+        ? { holeYardages: normalized.holeYardages.slice() }
+        : {}),
+      ...(Array.isArray(normalized?.ratings) && normalized.ratings.length
+        ? { ratings: normalized.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+        : {}),
+      ...(Array.isArray(normalized?.tees) && normalized.tees.length
+        ? { tees: normalized.tees.map((tee) => serializeTeeForSave(tee)).filter(Boolean) }
+        : {}),
+      pars: Array.isArray(normalized?.pars) ? normalized.pars.slice() : Array(18).fill(4),
+      strokeIndex: Array.isArray(normalized?.strokeIndex)
+        ? normalized.strokeIndex.slice()
+        : Array.from({ length: 18 }, (_, i) => i + 1)
+    };
+  }
+
+  function materializeCourseForRound(course, teeRef = "") {
+    const normalized = normalizeCourse(course);
+    const selectedTee = normalized?.tees?.find((tee) => tee.key === teeRef)
+      || normalized?.tees?.find((tee) => tee.key === normalized?.selectedTeeKey)
+      || null;
+    const out = serializeCourseForSave({
+      ...normalized,
+      selectedTeeKey: selectedTee?.key || normalized?.selectedTeeKey || ""
+    });
+    delete out.tees;
+    if (!selectedTee) return out;
+    return {
+      ...out,
+      selectedTeeKey: selectedTee.key,
+      teeName: selectedTee.teeName,
+      teeLabel: selectedTee.label,
+      ...(Number.isFinite(selectedTee.totalYards) ? { totalYards: selectedTee.totalYards } : {}),
+      ...(Number.isFinite(selectedTee.parTotal) ? { parTotal: selectedTee.parTotal } : {}),
+      ...(Array.isArray(selectedTee.holeYardages) && selectedTee.holeYardages.length === 18
+        ? { holeYardages: selectedTee.holeYardages.slice() }
+        : {}),
+      ...(Array.isArray(selectedTee.ratings) && selectedTee.ratings.length
+        ? { ratings: selectedTee.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+        : {})
+    };
+  }
+
+  const courses = [serializeCourseForSave(primaryCourse)];
   const refToIndex = new Map([[PRIMARY_COURSE_REF, 0]]);
   const roundOut = [];
 
   for (const round of rounds) {
     const ref = String(round?.courseRef || PRIMARY_COURSE_REF).trim() || PRIMARY_COURSE_REF;
+    const teeRef = String(round?.teeRef || "").trim();
     let courseIndex = 0;
     if (ref !== PRIMARY_COURSE_REF) {
       const id = ref.startsWith("saved:") ? ref.slice("saved:".length).trim() : "";
       if (!id) throw new Error(`Unknown course selection "${ref}".`);
-      const key = `saved:${id}`;
+      const detail = await ensureSavedCourseDetails(id);
+      if (!detail) throw new Error(`Saved course "${id}" was not found.`);
+      const effectiveTeeRef = teeRef || detail.selectedTeeKey || detail.tees?.[0]?.key || "";
+      const key = `saved:${id}|${effectiveTeeRef}`;
       if (!refToIndex.has(key)) {
-        const detail = await ensureSavedCourseDetails(id);
-        if (!detail) throw new Error(`Saved course "${id}" was not found.`);
         refToIndex.set(key, courses.length);
-        courses.push(detail);
+        courses.push(materializeCourseForRound(
+          {
+            ...detail,
+            sourceCourseId: detail.courseId || detail.sourceCourseId || id
+          },
+          effectiveTeeRef
+        ));
       }
       courseIndex = refToIndex.get(key);
     }
@@ -452,7 +778,7 @@ async function resolveCoursesAndRounds(rounds, primaryCourse){
 
   return {
     courses,
-    rounds: roundOut.map(({ courseRef, ...rest }) => rest)
+    rounds: roundOut
   };
 }
 

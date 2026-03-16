@@ -40,12 +40,6 @@
   <div class="container">
 
     <div class="card">
-      <h1 style="margin:0;">Scoreboard</h1>
-    </div>
-
-    <a href="./enter.html" data-enter-link class="main-action-link">Enter Scores</a>
-
-    <div class="card">
       <div class="row" style="align-items:flex-end;">
         <div class="col">
           <label for="round_filter">View</label>
@@ -118,6 +112,16 @@
         <div>
           <h2 style="margin-top:0;">Odds &amp; Projections</h2>
           <div class="small" id="odds_meta">—</div>
+        </div>
+        <div class="scoreboard-head-toggles">
+          <div class="toggle" id="odds_metric_toggle" aria-label="Odds metric">
+            <button type="button" id="btn_odds_gross" class="active">Gross</button>
+            <button type="button" id="btn_odds_net">Net</button>
+          </div>
+          <div class="toggle" id="odds_value_toggle" aria-label="Odds display">
+            <button type="button" id="btn_odds_pct" class="active">%</button>
+            <button type="button" id="btn_odds_american">Odds</button>
+          </div>
         </div>
       </div>
       <div id="odds_sections"></div>
