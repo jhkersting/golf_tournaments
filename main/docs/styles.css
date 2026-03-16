@@ -1,7 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&display=swap");
 
 :root {
   color-scheme: light;
+  --font-sans: "IBM Plex Sans", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
   --bg: #eef3f9;
   --text: #14212f;
   --WHITE: #ffffff;
@@ -81,7 +83,7 @@ body {
 
 body {
   margin: 0;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-sans);
   color: var(--text);
   background-color: var(--bg);
   background-image: none;
@@ -162,7 +164,7 @@ header {
 
 .theme-toggle {
   min-height: 40px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-sans);
   cursor: pointer;
 }
 
@@ -181,7 +183,7 @@ header {
   border-radius: 5px;
   background: var(--link-bg);
   color: var(--text);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 12px;
   line-height: 1;
   align-items: center;
@@ -356,7 +358,7 @@ textarea {
   border-radius: 12px;
   background: var(--field-bg);
   color: var(--text);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 14px;
   transition:
     border-color 120ms ease,
@@ -389,7 +391,7 @@ button {
   border-radius: 12px;
   background: var(--brand);
   color: var(--brand-contrast);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 700;
   padding: 10px 14px;
@@ -638,6 +640,64 @@ hr {
 
 #lb_tbl .name-col .sort-head-btn {
   justify-content: flex-start;
+}
+
+.odds-sections {
+  display: grid;
+  gap: 14px;
+}
+
+.odds-block {
+  display: grid;
+  gap: 8px;
+}
+
+.odds-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.odds-block-head h3 {
+  margin: 0;
+}
+
+.odds-table-wrap {
+  overflow-x: auto;
+}
+
+.odds-table {
+  width: 100%;
+  min-width: 720px;
+}
+
+.odds-table .entity-col {
+  min-width: 180px;
+  text-align: left;
+}
+
+.odds-table .entity-name {
+  font-weight: 700;
+}
+
+.odds-table .entity-sub {
+  margin-top: 2px;
+}
+
+.odds-table .metric-stack {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+}
+
+.odds-table .metric-stack .small {
+  line-height: 1.2;
+}
+
+.odds-table .remaining-col {
+  width: 76px;
 }
 
 .score-hole-cell {
@@ -897,6 +957,121 @@ hr {
   gap: 8px;
 }
 
+.trend-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.trend-graph-shell {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--link-bg) 26%, var(--surface-strong));
+  overflow: hidden;
+}
+
+.trend-graph {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+}
+
+.trend-graph .trend-grid-line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.trend-graph .trend-grid-line-light {
+  stroke: color-mix(in srgb, var(--border) 62%, transparent);
+  stroke-width: 1;
+}
+
+.trend-graph .trend-zero-line {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.trend-graph .trend-axis-label,
+.trend-graph .trend-hole-label {
+  fill: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+
+.trend-graph .trend-axis-label-even {
+  fill: var(--text);
+}
+
+.trend-graph .trend-series-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.trend-graph .trend-series-dot {
+  stroke: var(--surface-strong);
+  stroke-width: 2;
+}
+
+.trend-empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--link-bg) 24%, transparent);
+}
+
+.trend-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.trend-legend-item {
+  display: grid;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 78%, var(--link-bg));
+}
+
+.trend-legend-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trend-legend-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trend-legend-swatch {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--trend-color, var(--brand));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--trend-color, var(--brand)) 28%, transparent);
+}
+
+.trend-legend-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.trend-legend-score {
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.1;
+}
+
 .stats-kpi {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -909,6 +1084,8 @@ hr {
 .stats-kpi b {
   font-size: 16px;
   line-height: 1.1;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .stats-grid {
@@ -1045,10 +1222,15 @@ hr {
   padding: 6px 8px 4px;
 }
 
-.mono,
-code,
-pre {
-  font-family: "JetBrains Mono", monospace;
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.hole-map-footer-point-value,
+.hole-map-footer-values {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 pre {
@@ -1345,6 +1527,14 @@ th.dots {
   .stats-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
+  }
+
+  .trend-graph {
+    min-height: 260px;
+  }
+
+  .trend-legend {
+    grid-template-columns: 1fr;
   }
 
   .stats-kpi {

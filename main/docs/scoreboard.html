@@ -77,6 +77,30 @@
           </thead>
           <tbody></tbody>
         </table>
+        <div class="trend-panel" id="trend_panel">
+          <div class="scoreboard-main-head">
+            <div>
+              <h3 style="margin-top:0;">Score To Par Through Round</h3>
+              <div class="small" id="trend_meta">—</div>
+            </div>
+            <div class="toggle" id="trend_metric_toggle" aria-label="Graph metric">
+              <button type="button" id="btn_trend_gross" class="active">Gross</button>
+              <button type="button" id="btn_trend_net">Net</button>
+            </div>
+          </div>
+          <div class="trend-empty small" id="trend_empty" hidden></div>
+          <div class="trend-graph-shell" id="trend_graph_shell">
+            <svg
+              id="trend_svg"
+              class="trend-graph"
+              viewBox="0 0 760 320"
+              role="img"
+              aria-label="Score to par trend graph"
+              preserveAspectRatio="none"
+            ></svg>
+          </div>
+          <div class="trend-legend" id="trend_legend"></div>
+        </div>
         <hr />
         <div id="stats_panel">
           <h3 style="margin-top:0;">Stats</h3>
@@ -87,6 +111,16 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="card" id="odds_panel" hidden>
+      <div class="scoreboard-main-head">
+        <div>
+          <h2 style="margin-top:0;">Odds &amp; Projections</h2>
+          <div class="small" id="odds_meta">—</div>
+        </div>
+      </div>
+      <div id="odds_sections"></div>
     </div>
 
     <div class="card" id="scorecard_card" style="display:none;">

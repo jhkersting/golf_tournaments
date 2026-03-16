@@ -2052,7 +2052,7 @@ async function main() {
           `<b>${name}</b>${groupLabel ? ` <span class="small">(${groupLabel})</span>` : ""}`
         );
         frontRow.appendChild(nameCell);
-        frontRow.appendChild(el("td", { class: "mono bulk-side" }, "Front 9"));
+        frontRow.appendChild(el("td", { class: "bulk-side" }, "Front 9"));
 
         for (let i = 0; i < 9; i++) {
           const td = el("td");
@@ -2084,7 +2084,7 @@ async function main() {
         }
 
         const backRow = el("tr");
-        backRow.appendChild(el("td", { class: "mono bulk-side" }, "Back 9"));
+        backRow.appendChild(el("td", { class: "bulk-side" }, "Back 9"));
         for (let i = 9; i < 18; i++) {
           const td = el("td");
           const inputWrap = el("div", { style: "display:inline-flex; align-items:center; gap:4px;" });

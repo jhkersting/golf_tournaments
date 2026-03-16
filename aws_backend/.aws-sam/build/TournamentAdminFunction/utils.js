@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import zlib from "zlib";
 import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { computeLiveOdds } from "./live_odds.js";
+import { appendCompactLiveOddsHistory, compactLiveOddsPayload } from "./live_odds_compact.js";
 
 export const s3 = new S3Client({});
 
@@ -219,14 +221,22 @@ function aggregateValuesByMode(values, mode = "avg"){
   return mode === "sum" ? total : total / clean.length;
 }
 
+function cappedGroupHandicap(rawValue, lowestHandicap){
+  const rounded = Math.max(0, Math.round(Number(rawValue) || 0));
+  const cap = Math.max(0, Math.floor(Number(lowestHandicap) || 0));
+  return Math.min(rounded, cap);
+}
+
 function scrambleTeamHandicap(teamPlayers){
   const vals = (teamPlayers || [])
     .map(p => Number(p?.handicap ?? 0))
     .filter(Number.isFinite)
-    .map(v => Math.max(0, v));
+    .map(v => Math.max(0, v))
+    .sort((a, b) => a - b);
   if (!vals.length) return 0;
+  const lowest = vals[0] || 0;
   const avg = vals.reduce((a,b)=>a+b,0) / vals.length;
-  return Math.round(avg);
+  return cappedGroupHandicap(avg, lowest);
 }
 
 function effectiveHandicap(value, multiplier = 1){
@@ -244,7 +254,7 @@ function twoManScrambleHandicap(groupPlayers){
   if (!vals.length) return 0;
   const lower = vals[0] || 0;
   const upper = vals[1] ?? vals[0] ?? 0;
-  return Math.max(0, Math.round((lower * 0.35) + (upper * 0.15)));
+  return cappedGroupHandicap((lower * 0.35) + (upper * 0.15), lower);
 }
 
 function getPlayersByTeamMap(players){
@@ -430,7 +440,11 @@ function splitTwoManGroups(teamPlayers, roundIndex = 0){
 export async function getJson(bucket, key){
   try{
     const r = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    const txt = await r.Body.transformToString();
+    const raw = await r.Body.transformToByteArray();
+    const bytes = Buffer.from(raw);
+    const txt = String(r?.ContentEncoding || "").toLowerCase().includes("gzip")
+      ? zlib.gunzipSync(bytes).toString("utf8")
+      : bytes.toString("utf8");
     return { json: JSON.parse(txt), etag: r.ETag };
   }catch(e){
     if (e?.name === "NoSuchKey" || e?.$metadata?.httpStatusCode === 404) return { json: null, etag: null };
@@ -1230,4 +1244,75 @@ export async function writePublicObjectsFromState(state){
   }
 
   return tournamentJson;
+}
+
+export function materializeLiveOddsPublicFromState(state, previousOddsJson = null){
+  const tournamentJson = materializePublicFromState(state);
+  const liveOdds = computeLiveOdds(tournamentJson, {
+    generatedAt: new Date(Number(state?.updatedAt) || Date.now()).toISOString()
+  });
+  const compactOdds = compactLiveOddsPayload(liveOdds);
+  const previousVersion = Number(previousOddsJson?.v ?? previousOddsJson?.version ?? 0);
+  const currentVersion = Number(state?.version ?? 0);
+  const previousCompactOdds = previousOddsJson?.o || null;
+  const history = currentVersion < previousVersion
+    ? previousOddsJson?.h || null
+    : appendCompactLiveOddsHistory(previousOddsJson?.h, previousCompactOdds, compactOdds, {
+      snapshotTimeMs: Number(state?.updatedAt) || Date.now(),
+      version: currentVersion
+    });
+
+  return {
+    v: state?.version ?? null,
+    u: state?.updatedAt ?? null,
+    o: compactOdds,
+    ...(history ? { h: history } : {})
+  };
+}
+
+export async function writeLiveOddsObjectFromState(state){
+  const pub = process.env.PUBLIC_BUCKET;
+  const tid = state?.tournament?.tournamentId;
+  if (!pub || !tid) {
+    const err = new Error("missing public bucket or tournament id");
+    err.statusCode = 500;
+    throw err;
+  }
+
+  const key = `tournaments/${tid}.live_odds.json`;
+  const targetVersion = Number(state?.version ?? 0);
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const { json: previousOddsJson, etag } = await getJson(pub, key);
+    const previousVersion = Number(previousOddsJson?.v ?? previousOddsJson?.version ?? 0);
+    if (previousVersion > targetVersion) return previousOddsJson;
+
+    const oddsJson = materializeLiveOddsPublicFromState(state, previousOddsJson);
+    try {
+      await putJson(pub, key, oddsJson, {
+        ifMatch: etag,
+        gzip:true,
+        cacheControl:"max-age=5, must-revalidate"
+      });
+      return oddsJson;
+    } catch (error) {
+      const code = error?.$metadata?.httpStatusCode;
+      if (code === 412 || error?.name === "PreconditionFailed") {
+        if (attempt === 5) throw error;
+        continue;
+      }
+      if (!etag && (code === 404 || error?.name === "NoSuchKey")) {
+        await putJson(pub, key, oddsJson, {
+          gzip:true,
+          cacheControl:"max-age=5, must-revalidate"
+        });
+        return oddsJson;
+      }
+      throw error;
+    }
+  }
+
+  const err = new Error("failed to write live odds");
+  err.statusCode = 500;
+  throw err;
 }

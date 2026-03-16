@@ -163,6 +163,30 @@ Resources:
             Path: /tournaments/{tid}/scores
             Method: post
 
+  OddsMaterializeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: odds_materialize.handler
+      CodeUri: src/
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref StateBucketName
+        - S3WritePolicy:
+            BucketName: !Ref PublicBucketName
+      Events:
+        StateObjectCreated:
+          Type: S3
+          Properties:
+            Bucket: !Ref StateBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: state/
+                  - Name: suffix
+                    Value: .json
+
   EnterGetFunction:
     Type: AWS::Serverless::Function
     Properties:

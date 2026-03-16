@@ -188,6 +188,34 @@ Resources:
             Method: post
     Metadata:
       SamResourceId: PostScoresFunction
+  OddsMaterializeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: odds_materialize.handler
+      CodeUri: OddsMaterializeFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: PublicBucketName
+      Events:
+        StateObjectCreated:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: StateBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: prefix
+                  Value: state/
+                - Name: suffix
+                  Value: .json
+    Metadata:
+      SamResourceId: OddsMaterializeFunction
   EnterGetFunction:
     Type: AWS::Serverless::Function
     Properties:
