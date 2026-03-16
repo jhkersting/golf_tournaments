@@ -9,6 +9,14 @@ import {
   rememberPlayerCode,
   rememberTournamentId
 } from "./app.js";
+import {
+  applyPendingScoreSubmissionsToTournament,
+  clearPendingScoreSubmissionsMatching,
+  enqueuePendingScoreSubmission,
+  flushPendingScoreSubmissions,
+  getPendingScoreSummary,
+  isNetworkFailure,
+} from "./offline.js";
 
 function normalizePlayerCode(value) {
   return String(value || "")
@@ -1221,7 +1229,8 @@ async function main() {
   });
 
   // Tournament public JSON (single file)
-  const tjson = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, { cacheKey: `t:${tid}` });
+  let tjson = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, { cacheKey: `t:${tid}` });
+  tjson = await applyPendingScoreSubmissionsToTournament(tjson, { tid, code });
   setHeaderTournamentName(tjson?.tournament?.name);
   const hasTwoManTournament = (tjson?.tournament?.rounds || []).some(
     (round) => {
@@ -1259,6 +1268,7 @@ async function main() {
         ${myGroupSummary ? `<div class="small">${myGroupSummary}</div>` : ""}
         ${myTeeSummary ? `<div class="small">Tee times: ${myTeeSummary}</div>` : ""}
         <div class="small" id="team_current_score" style="margin-top:4px;">Current score: —</div>
+        <div class="small" id="entry_sync_status" style="margin-top:4px;"></div>
       </div>
       <button id="change_code_btn" class="secondary" type="button">Change code</button>
     </div>
@@ -1313,6 +1323,74 @@ async function main() {
   let tickerRoundIndex = defaultOpenRound;
   const roundSections = [];
   let refreshTournamentPromise = null;
+  let pendingSyncPromise = null;
+  const syncStatusEl = document.getElementById("entry_sync_status");
+
+  function replaceTournamentJson(nextJson) {
+    if (!nextJson || nextJson === tjson) return;
+    for (const key of Object.keys(tjson)) delete tjson[key];
+    Object.assign(tjson, nextJson);
+  }
+
+  async function applyPendingScoresToCurrentTournament() {
+    const nextJson = await applyPendingScoreSubmissionsToTournament(tjson, { tid, code });
+    replaceTournamentJson(nextJson);
+    return tjson;
+  }
+
+  async function renderSyncStatus(customMessage = "") {
+    if (!syncStatusEl) return;
+    const summary = await getPendingScoreSummary({ tid, code });
+    let text = String(customMessage || "").trim();
+    let color = "";
+
+    if (!text) {
+      if (summary.conflictCount > 0) {
+        text = `${summary.conflictCount} queued score update${summary.conflictCount === 1 ? "" : "s"} need review before syncing.`;
+        color = "var(--bad)";
+      } else if (summary.pendingCount > 0) {
+        text = navigator.onLine
+          ? `${summary.pendingCount} queued score update${summary.pendingCount === 1 ? "" : "s"} waiting to sync.`
+          : `Offline: ${summary.pendingCount} score update${summary.pendingCount === 1 ? "" : "s"} queued on this device.`;
+      } else if (!navigator.onLine) {
+        text = "Offline: using cached tournament data until the connection returns.";
+      }
+    }
+
+    syncStatusEl.textContent = text;
+    syncStatusEl.style.color = color;
+  }
+
+  async function syncPendingScores({ quiet = false } = {}) {
+    if (pendingSyncPromise) return pendingSyncPromise;
+    pendingSyncPromise = (async () => {
+      const summary = await getPendingScoreSummary({ tid, code });
+      if (!summary.pendingCount || !navigator.onLine) {
+        await renderSyncStatus();
+        return summary;
+      }
+      if (!quiet) {
+        await renderSyncStatus(`Syncing ${summary.pendingCount} queued score update${summary.pendingCount === 1 ? "" : "s"}…`);
+      }
+      const result = await flushPendingScoreSubmissions({
+        tid,
+        code,
+        sendScore: (payload) =>
+          api(`/tournaments/${encodeURIComponent(tid)}/scores`, {
+            method: "POST",
+            body: payload,
+          }),
+      });
+      await refreshTournamentJson({ quietSync: true });
+      await renderSyncStatus();
+      return result;
+    })();
+    try {
+      return await pendingSyncPromise;
+    } finally {
+      pendingSyncPromise = null;
+    }
+  }
 
   function renderTeamCurrentScore() {
     const target = document.getElementById("team_current_score");
@@ -1374,7 +1452,7 @@ async function main() {
   }
 
   // helper: refresh server tjson without clobbering drafts (drafts are in-memory)
-  async function refreshTournamentJson() {
+  async function refreshTournamentJson({ quietSync = false } = {}) {
     if (refreshTournamentPromise) return refreshTournamentPromise;
     refreshTournamentPromise = (async () => {
       const previousTournament = {
@@ -1385,12 +1463,16 @@ async function main() {
         courses: courseListFromTournament(tjson)
       };
       const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
-      const newEvents = collectNewScoreEvents(previousTournament, fresh);
-      Object.assign(tjson, fresh);
+      const nextJson = await applyPendingScoreSubmissionsToTournament(fresh, { tid, code });
+      const newEvents = collectNewScoreEvents(previousTournament, nextJson);
+      replaceTournamentJson(nextJson);
       if (tickerRoundIndex >= rounds.length) tickerRoundIndex = Math.max(0, rounds.length - 1);
       renderTeamCurrentScore();
       if (newEvents.length) showScoreNotifier(newEvents);
-      return fresh;
+      if (!quietSync) {
+        await renderSyncStatus();
+      }
+      return nextJson;
     })();
     try {
       return await refreshTournamentPromise;
@@ -1524,13 +1606,18 @@ async function main() {
     roundBody.appendChild(holePane);
     roundBody.appendChild(bulkPane);
 
+    tabHole.classList.add("active");
     tabHole.onclick = () => {
       holePane.style.display = "";
       bulkPane.style.display = "none";
+      tabHole.classList.add("active");
+      tabBulk.classList.remove("active");
     };
     tabBulk.onclick = () => {
       holePane.style.display = "none";
       bulkPane.style.display = "";
+      tabBulk.classList.add("active");
+      tabHole.classList.remove("active");
     };
 
     if (canGroup) {
@@ -1932,19 +2019,22 @@ async function main() {
           return { skipped: true };
         }
 
+        const payload = {
+          code,
+          roundIndex: r,
+          mode: "hole",
+          holeIndex: submittedHoleIndex,
+          entries,
+          override: withOverride,
+        };
+
         try {
           await api(`/tournaments/${encodeURIComponent(tid)}/scores`, {
             method: "POST",
-            body: {
-              code,
-              roundIndex: r,
-              mode: "hole",
-              holeIndex: submittedHoleIndex,
-              entries,
-              override: withOverride,
-            },
+            body: payload,
           });
 
+          await clearPendingScoreSubmissionsMatching({ tid, code, payload });
           pendingHoleConflict = null;
           status.textContent = "Saved.";
 
@@ -1971,8 +2061,37 @@ async function main() {
 
           renderHoleForm();
           renderBulkTable();
+          await renderSyncStatus();
           return { ok: true };
         } catch (err) {
+          if (isNetworkFailure(err)) {
+            await enqueuePendingScoreSubmission({ tid, code, payload });
+            await applyPendingScoresToCurrentTournament();
+            clearHoleDraftTargets(
+              r,
+              submittedHoleIndex,
+              entries.map((e) => e.targetId)
+            );
+            status.textContent = navigator.onLine
+              ? "Saved locally. Sync will retry automatically."
+              : "Offline: saved locally and queued for sync.";
+            await renderSyncStatus();
+
+            if (advanceMode === "sequential") {
+              currentHole = Math.min(17, submittedHoleIndex + 1);
+              holeManuallySet = true;
+            } else {
+              const nowSaved = getSavedForRound();
+              const progressIds = nowSaved.progressTargetIds?.length ? nowSaved.progressTargetIds : nowSaved.targetIds;
+              currentHole = nextHoleIndexForGroup(nowSaved.savedByTarget, progressIds);
+            }
+
+            renderTeamCurrentScore();
+            renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
+            renderHoleForm();
+            renderBulkTable();
+            return { ok: true, queued: true };
+          }
           if (err?.status === 409 && err?.data) {
             showConflict(err.data);
             return { conflict: true };
@@ -2170,18 +2289,21 @@ async function main() {
           entries.push({ targetId: id, holes });
         }
 
+        const payload = {
+          code,
+          roundIndex: r,
+          mode: "bulk",
+          entries,
+          override: true,
+        };
+
         try {
           await api(`/tournaments/${encodeURIComponent(tid)}/scores`, {
             method: "POST",
-            body: {
-              code,
-              roundIndex: r,
-              mode: "bulk",
-              entries,
-              override: true,
-            },
+            body: payload,
           });
 
+          await clearPendingScoreSubmissionsMatching({ tid, code, payload });
           bulkStatus.textContent = "Saved.";
 
           // bulk submit = clear all drafts for this round (hole + bulk)
@@ -2192,7 +2314,22 @@ async function main() {
 
           renderHoleForm();
           renderBulkTable();
+          await renderSyncStatus();
         } catch (e) {
+          if (isNetworkFailure(e)) {
+            await enqueuePendingScoreSubmission({ tid, code, payload });
+            await applyPendingScoresToCurrentTournament();
+            clearRoundDraft(r);
+            bulkStatus.textContent = navigator.onLine
+              ? "Saved locally. Sync will retry automatically."
+              : "Offline: bulk scores saved locally and queued for sync.";
+            renderTeamCurrentScore();
+            renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
+            renderHoleForm();
+            renderBulkTable();
+            await renderSyncStatus();
+            return;
+          }
           bulkStatus.textContent = `Error: ${e?.message || String(e)}`;
         }
       }
@@ -2207,6 +2344,7 @@ async function main() {
     // Auto-refresh to pick up others' scores quickly (every 10s) without clobbering drafts
     const refreshTimer = setInterval(async () => {
       try {
+        await syncPendingScores({ quiet: true });
         await refreshTournamentJson();
         renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
         const activeInputState = captureActiveInputState();
@@ -2224,6 +2362,18 @@ async function main() {
 
   renderTeamCurrentScore();
   renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
+  await renderSyncStatus();
+
+  window.addEventListener("online", () => {
+    void (async () => {
+      await renderSyncStatus();
+      await syncPendingScores({ quiet: true });
+    })();
+  });
+  window.addEventListener("offline", () => {
+    void renderSyncStatus();
+  });
+  void syncPendingScores({ quiet: true });
 }
 
 main().catch((e) => {

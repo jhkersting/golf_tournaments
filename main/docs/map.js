@@ -9,6 +9,14 @@ import {
   rememberPlayerCode,
   rememberTournamentId,
 } from "./app.js";
+import {
+  applyPendingScoreSubmissionsToTournament,
+  clearPendingScoreSubmissionsMatching,
+  enqueuePendingScoreSubmission,
+  flushPendingScoreSubmissions,
+  getPendingScoreSummary,
+  isNetworkFailure,
+} from "./offline.js";
 
 const DATA_ROOT_CANDIDATES = [
   "../../golf_course_hole_geo_data/data",
@@ -141,6 +149,7 @@ let pinchZoomAnchorMapPoint = null;
 let panTouchActive = false;
 let panTouchLastPoint = null;
 let mapGestureLastMovedAtMs = 0;
+let pendingSyncPromise = null;
 const SCORE_NOTIFIER_SHOW_MS = 2300;
 const SCORE_NOTIFIER_GAP_MS = 200;
 const TICKER_SPEED_PX_PER_SEC = 52;
@@ -189,6 +198,7 @@ const els = {
   roundTabs: null,
   scoreRows: null,
   scoreStatus: null,
+  scoreSyncStatus: null,
   mapInfo: null,
   mapModeToggle: document.getElementById("map_mode_toggle"),
   scoreOverrideInput: null,
@@ -3262,6 +3272,81 @@ function setScoreStatus(message, isError = false) {
   els.scoreStatus.style.color = isError ? "var(--bad)" : "";
 }
 
+function replaceTournamentJson(nextJson) {
+  if (!nextJson || nextJson === entryState.tournament) return;
+  entryState.tournament = nextJson;
+  entryState.rounds = nextJson?.tournament?.rounds || [];
+  entryState.teamsById = Object.create(null);
+  for (const team of nextJson?.teams || []) {
+    const teamId = team?.teamId || team?.id;
+    if (!teamId) continue;
+    entryState.teamsById[teamId] = team;
+  }
+}
+
+async function applyPendingScoresToCurrentTournament() {
+  const nextJson = await applyPendingScoreSubmissionsToTournament(entryState.tournament, {
+    tid: entryState.tid,
+    code: entryState.code,
+  });
+  replaceTournamentJson(nextJson);
+  return entryState.tournament;
+}
+
+async function renderScoreSyncStatus(customMessage = "") {
+  if (!els.scoreSyncStatus) return;
+  const summary = await getPendingScoreSummary({ tid: entryState.tid, code: entryState.code });
+  let text = String(customMessage || "").trim();
+  let color = "";
+
+  if (!text) {
+    if (summary.conflictCount > 0) {
+      text = `${summary.conflictCount} queued score update${summary.conflictCount === 1 ? "" : "s"} need review before syncing.`;
+      color = "var(--bad)";
+    } else if (summary.pendingCount > 0) {
+      text = navigator.onLine
+        ? `${summary.pendingCount} queued score update${summary.pendingCount === 1 ? "" : "s"} waiting to sync.`
+        : `Offline: ${summary.pendingCount} score update${summary.pendingCount === 1 ? "" : "s"} queued on this device.`;
+    } else if (!navigator.onLine && entryState.tid) {
+      text = "Offline: using cached tournament data until the connection returns.";
+    }
+  }
+
+  els.scoreSyncStatus.textContent = text;
+  els.scoreSyncStatus.style.color = color;
+}
+
+async function syncPendingScores({ quiet = false } = {}) {
+  if (pendingSyncPromise) return pendingSyncPromise;
+  pendingSyncPromise = (async () => {
+    const summary = await getPendingScoreSummary({ tid: entryState.tid, code: entryState.code });
+    if (!summary.pendingCount || !navigator.onLine || !entryState.tid) {
+      await renderScoreSyncStatus();
+      return summary;
+    }
+    if (!quiet) {
+      await renderScoreSyncStatus(`Syncing ${summary.pendingCount} queued score update${summary.pendingCount === 1 ? "" : "s"}…`);
+    }
+    const result = await flushPendingScoreSubmissions({
+      tid: entryState.tid,
+      code: entryState.code,
+      sendScore: (payload) =>
+        api(`/tournaments/${encodeURIComponent(entryState.tid)}/scores`, {
+          method: "POST",
+          body: payload,
+        }),
+    });
+    await refreshTournamentJson({ quietSync: true });
+    await renderScoreSyncStatus();
+    return result;
+  })();
+  try {
+    return await pendingSyncPromise;
+  } finally {
+    pendingSyncPromise = null;
+  }
+}
+
 function clearCodeAndReload() {
   try {
     localStorage.removeItem(STORAGE_KEYS.playerCode);
@@ -3301,6 +3386,7 @@ function ensureScoreCard() {
         <button id="map_submit_hole_btn" type="button">Submit hole</button>
       </div>
       <div class="small" id="map_score_status" style="margin-top:8px;"></div>
+      <div class="small" id="map_score_sync_status" style="margin-top:4px;"></div>
     `;
     const mapStageCard = els.container.querySelector(".hole-map-stage-wrap")?.closest(".card");
     if (mapStageCard) {
@@ -3312,6 +3398,7 @@ function ensureScoreCard() {
     els.roundTabs = card.querySelector("#map_round_tabs");
     els.scoreRows = card.querySelector("#map_score_rows");
     els.scoreStatus = card.querySelector("#map_score_status");
+    els.scoreSyncStatus = card.querySelector("#map_score_sync_status");
     els.mapInfo = card.querySelector("#map_course_info");
     els.scoreOverrideInput = card.querySelector("#map_score_override");
     const submitBtn = card.querySelector("#map_submit_hole_btn");
@@ -3348,6 +3435,10 @@ function showCodePrompt() {
   if (!els.scoreRows || !els.roundTabs || !els.mapInfo) return;
   entryState.currentMapMeta = null;
   els.mapInfo.textContent = "Player code required";
+  if (els.scoreSyncStatus) {
+    els.scoreSyncStatus.textContent = "";
+    els.scoreSyncStatus.style.color = "";
+  }
   updateMapModeToggleUi(null, [], "");
   els.roundTabs.innerHTML = "";
   els.scoreRows.innerHTML = `
@@ -3811,26 +3902,26 @@ function renderScoreRows() {
   }
 }
 
-async function refreshTournamentJson() {
+async function refreshTournamentJson({ quietSync = false } = {}) {
   const previousTournament = entryState.tournament;
   const fresh = await staticJson(
     `/tournaments/${encodeURIComponent(entryState.tid)}.json?v=${Date.now()}`,
     { cacheKey: `t:${entryState.tid}` }
   );
-  const newEvents = collectNewScoreEvents(previousTournament, fresh);
-  entryState.tournament = fresh;
-  entryState.rounds = fresh?.tournament?.rounds || [];
-  entryState.teamsById = Object.create(null);
-  for (const team of fresh?.teams || []) {
-    const teamId = team?.teamId || team?.id;
-    if (!teamId) continue;
-    entryState.teamsById[teamId] = team;
-  }
-  seedTeamColors(fresh);
-  updateBrandDotFromTournament(fresh);
-  renderTicker(fresh, entryState.playersById, entryState.teamsById, entryState.selectedRoundIndex);
+  const nextJson = await applyPendingScoreSubmissionsToTournament(fresh, {
+    tid: entryState.tid,
+    code: entryState.code,
+  });
+  const newEvents = collectNewScoreEvents(previousTournament, nextJson);
+  replaceTournamentJson(nextJson);
+  seedTeamColors(nextJson);
+  updateBrandDotFromTournament(nextJson);
+  renderTicker(nextJson, entryState.playersById, entryState.teamsById, entryState.selectedRoundIndex);
   if (newEvents.length) showScoreNotifier(newEvents);
-  return fresh;
+  if (!quietSync) {
+    await renderScoreSyncStatus();
+  }
+  return nextJson;
 }
 
 async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = false, override = null } = {}) {
@@ -3855,17 +3946,23 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
 
   entryState.submitting = true;
   setScoreStatus("Submitting…");
+  const payload = {
+    code: entryState.code,
+    roundIndex,
+    mode: "hole",
+    holeIndex,
+    entries,
+    override: withOverride,
+  };
   try {
     await api(`/tournaments/${encodeURIComponent(entryState.tid)}/scores`, {
       method: "POST",
-      body: {
-        code: entryState.code,
-        roundIndex,
-        mode: "hole",
-        holeIndex,
-        entries,
-        override: withOverride,
-      },
+      body: payload,
+    });
+    await clearPendingScoreSubmissionsMatching({
+      tid: entryState.tid,
+      code: entryState.code,
+      payload,
     });
     clearHoleDraftTargets(
       roundIndex,
@@ -3884,8 +3981,40 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
     }
     setScoreStatus("Saved.");
     renderScoreRows();
+    await renderScoreSyncStatus();
     return { ok: true, submitted: true };
   } catch (error) {
+    if (isNetworkFailure(error)) {
+      await enqueuePendingScoreSubmission({
+        tid: entryState.tid,
+        code: entryState.code,
+        payload,
+      });
+      await applyPendingScoresToCurrentTournament();
+      clearHoleDraftTargets(
+        roundIndex,
+        holeIndex,
+        entries.map((entry) => entry.targetId)
+      );
+      if (advanceToSuggested) {
+        const { targets, savedByTarget, progressTargetIds } = roundTargets(roundIndex);
+        const progressIds = progressTargetIds?.length ? progressTargetIds : targets.map((target) => target.id);
+        entryState.currentHoleIndex = nextHoleIndexForGroup(
+          savedByTarget,
+          progressIds
+        );
+        setHoleByIndex(entryState.currentHoleIndex, { syncEntry: false });
+      }
+      setScoreStatus(
+        navigator.onLine
+          ? "Saved locally. Sync will retry automatically."
+          : "Offline: saved locally and queued for sync."
+      );
+      renderScoreRows();
+      renderTicker(entryState.tournament, entryState.playersById, entryState.teamsById, entryState.selectedRoundIndex);
+      await renderScoreSyncStatus();
+      return { ok: true, submitted: true, queued: true };
+    }
     if (error?.status === 409) {
       if (withOverride) {
         setScoreStatus("Conflict: existing scores could not be overridden for this player code.", true);
@@ -4033,8 +4162,12 @@ async function initializeEntryContext() {
   entryState.mapIndexPromise = null;
   startCourseMapIndexFetch();
 
-  const tournament = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, {
+  let tournament = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json`, {
     cacheKey: `t:${tid}`,
+  });
+  tournament = await applyPendingScoreSubmissionsToTournament(tournament, {
+    tid,
+    code: entryState.code,
   });
   entryState.tournament = tournament;
   entryState.rounds = tournament?.tournament?.rounds || [];
@@ -4060,6 +4193,7 @@ function startAutoRefresh() {
   if (entryState.refreshTimer) clearInterval(entryState.refreshTimer);
   entryState.refreshTimer = window.setInterval(async () => {
     try {
+      await syncPendingScores({ quiet: true });
       await refreshTournamentJson();
       renderScoreRows();
     } catch (_) {
@@ -4090,6 +4224,7 @@ async function init() {
 
   try {
     await initializeEntryContext();
+    await renderScoreSyncStatus();
     const rounds = entryState.rounds || [];
     if (!rounds.length) {
       throw new Error("Tournament has no rounds.");
@@ -4108,6 +4243,17 @@ async function init() {
     await initialRoundLoad;
     await maybeAutoStartTracking();
     startAutoRefresh();
+    window.addEventListener("online", () => {
+      void (async () => {
+        await renderScoreSyncStatus();
+        await syncPendingScores({ quiet: true });
+        renderScoreRows();
+      })();
+    });
+    window.addEventListener("offline", () => {
+      void renderScoreSyncStatus();
+    });
+    void syncPendingScores({ quiet: true });
   } catch (error) {
     console.error(error);
     showPageBody();

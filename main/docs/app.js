@@ -1,3 +1,5 @@
+import { readCachedJson, writeCachedJson } from "./offline.js";
+
 // --------- CONFIG ---------
 export const API_BASE = "https://1rmb4h6ty8.execute-api.us-east-1.amazonaws.com/prod";
 export const STATIC_BASE = "https://golf-public.s3.us-east-1.amazonaws.com";
@@ -44,13 +46,26 @@ export async function api(path, { method="GET", body=null, headers={} } = {}) {
 
 export async function staticJson(path, { cacheKey=null } = {}){
   const url = `${STATIC_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
-  void cacheKey;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok){
-    const txt = await res.text().catch(()=> "");
-    throw new Error(`STATIC ${res.status}: ${txt}`);
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok){
+      const txt = await res.text().catch(()=> "");
+      throw new Error(`STATIC ${res.status}: ${txt}`);
+    }
+    const payload = await res.json();
+    if (cacheKey) {
+      void writeCachedJson(cacheKey, payload);
+    }
+    return payload;
+  } catch (error) {
+    if (error instanceof Error && /^STATIC\s+\d+/.test(error.message || "")) {
+      throw error;
+    }
+    if (!cacheKey) throw error;
+    const cached = await readCachedJson(cacheKey);
+    if (cached != null) return cached;
+    throw error;
   }
-  return res.json();
 }
 
 export function qs(name){ return new URLSearchParams(location.search).get(name); }
