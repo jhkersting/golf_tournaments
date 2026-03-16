@@ -193,6 +193,8 @@ Resources:
     Properties:
       Handler: odds_materialize.handler
       CodeUri: OddsMaterializeFunction
+      Timeout: 120
+      MemorySize: 2048
       Policies:
       - S3ReadPolicy:
           BucketName:

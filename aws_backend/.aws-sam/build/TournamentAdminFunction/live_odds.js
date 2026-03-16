@@ -306,6 +306,88 @@ function hardyDistributionFromParams(par, params) {
   };
 }
 
+function discreteDistributionStats(values, weights) {
+  const cleanValues = [];
+  const cleanWeights = [];
+  let totalWeight = 0;
+
+  for (let idx = 0; idx < (values || []).length; idx++) {
+    const value = Number(values[idx]);
+    const weight = Number(weights?.[idx] || 0);
+    if (!Number.isFinite(value) || !Number.isFinite(weight) || weight <= 0) continue;
+    cleanValues.push(value);
+    cleanWeights.push(weight);
+    totalWeight += weight;
+  }
+
+  if (!cleanValues.length || totalWeight <= 0) return null;
+  const normalizedWeights = cleanWeights.map((weight) => weight / totalWeight);
+  const mean = cleanValues.reduce((sum, value, idx) => sum + (value * normalizedWeights[idx]), 0);
+  const variance = cleanValues.reduce(
+    (sum, value, idx) => sum + (((value - mean) ** 2) * normalizedWeights[idx]),
+    0
+  );
+
+  return {
+    values: cleanValues,
+    weights: normalizedWeights,
+    mean,
+    stdDev: Math.sqrt(Math.max(variance, 0.0001))
+  };
+}
+
+function minScoreDistribution(distributions) {
+  const clean = (distributions || []).filter(
+    (distribution) => Array.isArray(distribution?.values) && Array.isArray(distribution?.weights) && distribution.values.length
+  );
+  if (!clean.length) return null;
+  if (clean.length === 1) return clean[0];
+
+  const supportMax = clean.reduce(
+    (maxValue, distribution) => Math.max(maxValue, ...distribution.values.map((value) => Math.round(Number(value) || 0))),
+    0
+  );
+  const supportMin = clean.reduce(
+    (minValue, distribution) => Math.min(minValue, ...distribution.values.map((value) => Math.round(Number(value) || 0))),
+    Number.POSITIVE_INFINITY
+  );
+  if (!Number.isFinite(supportMin) || !Number.isFinite(supportMax) || supportMin > supportMax) return clean[0];
+
+  const survivalByDistribution = clean.map((distribution) => {
+    const pmf = Array(supportMax + 2).fill(0);
+    distribution.values.forEach((value, idx) => {
+      const score = clamp(Math.round(Number(value) || 0), 0, supportMax + 1);
+      pmf[score] += Number(distribution.weights[idx] || 0);
+    });
+    for (let score = supportMax; score >= 0; score--) {
+      pmf[score] += Number(pmf[score + 1] || 0);
+    }
+    return pmf;
+  });
+
+  const values = [];
+  const weights = [];
+  for (let score = supportMin; score <= supportMax; score++) {
+    const survivalHere = survivalByDistribution.reduce((product, survival) => product * Number(survival[score] || 0), 1);
+    const survivalNext = survivalByDistribution.reduce((product, survival) => product * Number(survival[score + 1] || 0), 1);
+    const probability = Math.max(0, survivalHere - survivalNext);
+    if (probability <= 0) continue;
+    values.push(score);
+    weights.push(probability);
+  }
+
+  return discreteDistributionStats(values, weights) || clean[0];
+}
+
+function sampleHoleFromDistribution(distribution, rng, maxScore = null) {
+  const sampled = sampleDiscrete(distribution?.values || [], distribution?.weights || [], rng);
+  return clamp(
+    sampled,
+    1,
+    Math.max(1, Math.round(Number(maxScore) || Math.max(...(distribution?.values || [1]))))
+  );
+}
+
 function sampleGolfHoleGross(par, params, rng, maxScore = holeUpperBound(par)) {
   const distribution = hardyDistributionFromParams(par, params);
   return clamp(
@@ -820,17 +902,32 @@ function buildUnitPriors(units, course) {
   const liveHoleCounts = Array(HOLE_COUNT).fill(0);
 
   for (const unit of units) {
+    const playerHandicaps = Array.isArray(unit.playerHandicaps)
+      ? unit.playerHandicaps.map((value) => Math.max(0, Number(value) || 0)).filter(Number.isFinite)
+      : [];
+    const useScrambleModel = unit.modelType === "scramble" && playerHandicaps.length > 0;
     const effectiveHandicap = strokesFromHandicapShots(unit.handicapShots);
-    const parSkillShift = skillShiftByPar(course, holeBaselines, courseDifficulty, effectiveHandicap);
+    const parSkillShift = useScrambleModel
+      ? null
+      : skillShiftByPar(course, holeBaselines, courseDifficulty, effectiveHandicap);
+    const scramblePlayerSkillShifts = useScrambleModel
+      ? playerHandicaps.map((handicap) => skillShiftByPar(course, holeBaselines, courseDifficulty, handicap))
+      : [];
     const baselineMeans = Array(HOLE_COUNT).fill(0);
 
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
       const holeBaseline = holeBaselines[holeIndex];
-      const distribution = buildHoleDistribution(
-        holeBaseline,
-        parSkillShift.get(holeBaseline.par),
-        null
-      );
+      const distribution = useScrambleModel
+        ? minScoreDistribution(
+            scramblePlayerSkillShifts.map((shiftMap) =>
+              buildHoleDistribution(holeBaseline, shiftMap.get(holeBaseline.par), null)
+            )
+          )
+        : buildHoleDistribution(
+            holeBaseline,
+            parSkillShift.get(holeBaseline.par),
+            null
+          );
       baselineMeans[holeIndex] = distribution.mean;
 
       const gross = unit.gross[holeIndex];
@@ -842,6 +939,7 @@ function buildUnitPriors(units, course) {
 
     unit.effectiveHandicap = effectiveHandicap;
     unit.parSkillShift = parSkillShift;
+    unit.scramblePlayerSkillShifts = scramblePlayerSkillShifts;
     unit.baselineMeans = baselineMeans;
   }
 
@@ -856,16 +954,29 @@ function buildUnitPriors(units, course) {
   for (const unit of units) {
     const priorGrossMeans = Array(HOLE_COUNT).fill(0);
     const priorGrossSigmas = Array(HOLE_COUNT).fill(0);
+    const priorHoleDistributions = Array(HOLE_COUNT).fill(null);
     const priorHoleParams = Array(HOLE_COUNT).fill(null);
+    const priorPlayerHoleParams = Array(HOLE_COUNT).fill(null);
     const preFormMeans = Array(HOLE_COUNT).fill(0);
+    const useScrambleModel = unit.modelType === "scramble" && Array.isArray(unit.scramblePlayerSkillShifts) && unit.scramblePlayerSkillShifts.length > 0;
 
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
       const holeBaseline = holeBaselines[holeIndex];
-      const distribution = buildHoleDistribution(
-        holeBaseline,
-        unit.parSkillShift.get(holeBaseline.par),
-        liveHoleShift[holeIndex]
-      );
+      const distribution = useScrambleModel
+        ? minScoreDistribution(
+            unit.scramblePlayerSkillShifts.map((shiftMap) =>
+              buildHoleDistribution(
+                holeBaseline,
+                shiftMap.get(holeBaseline.par),
+                liveHoleShift[holeIndex]
+              )
+            )
+          )
+        : buildHoleDistribution(
+            holeBaseline,
+            unit.parSkillShift.get(holeBaseline.par),
+            liveHoleShift[holeIndex]
+          );
       preFormMeans[holeIndex] = distribution.mean;
     }
 
@@ -893,16 +1004,35 @@ function buildUnitPriors(units, course) {
 
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
       const holeBaseline = holeBaselines[holeIndex];
-      const distribution = buildHoleDistribution(
-        holeBaseline,
-        unit.parSkillShift.get(holeBaseline.par),
-        mergeHardyShifts(liveHoleShift[holeIndex], formShift)
-      );
-      priorHoleParams[holeIndex] = { p: distribution.p, q: distribution.q };
+      const playerDistributions = useScrambleModel
+        ? unit.scramblePlayerSkillShifts.map((shiftMap) =>
+            buildHoleDistribution(
+              holeBaseline,
+              shiftMap.get(holeBaseline.par),
+              mergeHardyShifts(liveHoleShift[holeIndex], formShift)
+            )
+          )
+        : null;
+      const distribution = useScrambleModel
+        ? minScoreDistribution(playerDistributions)
+        : buildHoleDistribution(
+            holeBaseline,
+            unit.parSkillShift.get(holeBaseline.par),
+            mergeHardyShifts(liveHoleShift[holeIndex], formShift)
+          );
+      priorHoleParams[holeIndex] = distribution?.p != null && distribution?.q != null
+        ? { p: distribution.p, q: distribution.q }
+        : null;
+      priorPlayerHoleParams[holeIndex] = playerDistributions
+        ? playerDistributions.map((playerDistribution) => ({ p: playerDistribution.p, q: playerDistribution.q }))
+        : null;
+      priorHoleDistributions[holeIndex] = distribution;
       priorGrossMeans[holeIndex] = distribution.mean;
       priorGrossSigmas[holeIndex] = distribution.stdDev;
     }
 
+    unit.priorPlayerHoleParams = priorPlayerHoleParams;
+    unit.priorHoleDistributions = priorHoleDistributions;
     unit.priorHoleParams = priorHoleParams;
     unit.priorGrossMeans = priorGrossMeans;
     unit.priorGrossSigmas = priorGrossSigmas;
@@ -938,8 +1068,17 @@ function sampleUnplayedHoles(context, rng) {
       const par = Number(context.course?.pars?.[holeIndex] || 4);
       const maxGrossRaw = context.maxGrossByHole?.[holeIndex];
       const maxGross = maxGrossRaw == null ? null : Number(maxGrossRaw);
-      const params = shiftHardyParams(unit.priorHoleParams?.[holeIndex], roundShockShift);
-      const sampledGross = sampleGolfHoleGross(par, params, rng, maxGross);
+      const scramblePlayerParams = unit.priorPlayerHoleParams?.[holeIndex];
+      const baseDistribution = Array.isArray(scramblePlayerParams) && scramblePlayerParams.length
+        ? minScoreDistribution(
+            scramblePlayerParams.map((params) =>
+              hardyDistributionFromParams(par, shiftHardyParams(params, roundShockShift))
+            )
+          )
+        : unit.priorHoleDistributions?.[holeIndex];
+      const sampledGross = baseDistribution?.values?.length
+        ? sampleHoleFromDistribution(baseDistribution, rng, maxGross)
+        : sampleGolfHoleGross(par, shiftHardyParams(unit.priorHoleParams?.[holeIndex], roundShockShift), rng, maxGross);
       nextUnit.gross[holeIndex] = sampledGross;
       nextUnit.net[holeIndex] = sampledGross - Number(nextUnit.handicapShots?.[holeIndex] || 0);
     }
@@ -1431,8 +1570,10 @@ function buildRoundContext(tournamentJson, roundIndex) {
       const entry = roundData?.team?.[team.teamId] || {};
       const gross = normalizeGrossArray(entry?.gross);
       const handicapShots = normalizeNumberArray(entry?.handicapShots, 0);
+      const playerIds = players.filter((player) => player.teamId === team.teamId).map((player) => player.playerId);
       units.push({
         id: team.teamId,
+        modelType: "scramble",
         entityType: "team",
         teamId: team.teamId,
         teamName: team.teamName,
@@ -1440,7 +1581,8 @@ function buildRoundContext(tournamentJson, roundIndex) {
         gross,
         handicapShots,
         net: normalizeNetArray(entry?.net, gross, handicapShots),
-        playerIds: players.filter((player) => player.teamId === team.teamId).map((player) => player.playerId)
+        playerIds,
+        playerHandicaps: playerIds.map((playerId) => Number(playerById.get(playerId)?.handicap || 0))
       });
     }
   } else if (isTwoManScrambleFormat(format)) {
@@ -1454,6 +1596,7 @@ function buildRoundContext(tournamentJson, roundIndex) {
         const playerIds = playerIdsForGroup(tournamentJson, roundIndex, team.teamId, groupKey, rawGroup?.playerIds);
         units.push({
           id: twoManGroupId(team.teamId, groupKey),
+          modelType: "scramble",
           entityType: "group",
           groupId: twoManGroupId(team.teamId, groupKey),
           groupKey,
@@ -1463,7 +1606,8 @@ function buildRoundContext(tournamentJson, roundIndex) {
           gross,
           handicapShots,
           net: normalizeNetArray(rawGroup?.net, gross, handicapShots),
-          playerIds
+          playerIds,
+          playerHandicaps: playerIds.map((playerId) => Number(playerById.get(playerId)?.handicap || 0))
         });
       }
     }

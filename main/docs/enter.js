@@ -397,7 +397,6 @@ function hasAnyScore(arr) {
 
 function rowHasAnyData(row) {
   if (!row) return false;
-  if (Number(row.thru || 0) > 0) return true;
   if (Number(row.strokes || 0) > 0) return true;
   if (Number(row.gross || 0) > 0) return true;
   if (Number(row.net || 0) > 0) return true;

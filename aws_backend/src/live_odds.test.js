@@ -231,6 +231,90 @@ registerTest("handicap rounds publish net-aware projections", () => {
   assert.ok(Number(teamOdds.get("A")?.projectedNet || 0) < Number(teamOdds.get("A")?.projectedGross || 0));
 });
 
+registerTest("4-man scramble projections beat a scratch player's singles baseline", () => {
+  const teams = [
+    { teamId: "A", teamName: "Alpha" },
+    { teamId: "B", teamName: "Beta" }
+  ];
+  const players = [
+    { playerId: "A1", name: "Alice", teamId: "A", handicap: 0, groups: ["A"], group: "A" },
+    { playerId: "A2", name: "Avery", teamId: "A", handicap: 8, groups: ["A"], group: "A" },
+    { playerId: "A3", name: "Alex", teamId: "A", handicap: 14, groups: ["A"], group: "A" },
+    { playerId: "A4", name: "Addison", teamId: "A", handicap: 18, groups: ["A"], group: "A" },
+    { playerId: "B1", name: "Blair", teamId: "B", handicap: 8, groups: ["A"], group: "A" },
+    { playerId: "B2", name: "Bailey", teamId: "B", handicap: 12, groups: ["A"], group: "A" },
+    { playerId: "B3", name: "Brett", teamId: "B", handicap: 16, groups: ["A"], group: "A" },
+    { playerId: "B4", name: "Brooke", teamId: "B", handicap: 20, groups: ["A"], group: "A" }
+  ];
+  const course = {
+    name: "Fixture Course",
+    pars: PARS.slice(),
+    strokeIndex: STROKE_INDEX.slice()
+  };
+
+  const scrambleTournament = {
+    tournament: {
+      tournamentId: "fixture-four-man-scramble",
+      name: "Fixture four-man scramble",
+      dates: "2026-03-15",
+      rounds: [{
+        name: "Round 1",
+        format: "scramble",
+        useHandicap: false,
+        weight: 1,
+        courseIndex: 0,
+        teamAggregation: { topX: 4 }
+      }]
+    },
+    course: { ...course },
+    courses: [{ ...course }],
+    teams,
+    players,
+    updatedAt: Date.parse(FIXED_NOW),
+    version: 5,
+    score_data: {
+      rounds: [{
+        roundIndex: 0,
+        format: "scramble",
+        useHandicap: false,
+        player: {},
+        team: {
+          A: teamEntry(null, 0),
+          B: teamEntry(null, 0)
+        },
+        leaderboard: { teams: [], players: [] }
+      }],
+      leaderboard_all: { teams: [], players: [] }
+    }
+  };
+
+  const singlesTournament = deepClone(scrambleTournament);
+  singlesTournament.tournament.tournamentId = "fixture-four-man-singles";
+  singlesTournament.tournament.name = "Fixture four-man singles";
+  singlesTournament.tournament.rounds[0].format = "singles";
+  singlesTournament.score_data.rounds[0].format = "singles";
+  singlesTournament.score_data.rounds[0].team = {};
+  singlesTournament.score_data.rounds[0].player = Object.fromEntries(
+    players.map((player) => [player.playerId, playerEntry(null, player.handicap)])
+  );
+
+  const scrambleOdds = computeLiveOdds(scrambleTournament, { generatedAt: FIXED_NOW });
+  const singlesOdds = computeLiveOdds(singlesTournament, { generatedAt: FIXED_NOW });
+  const scrambleTeamA = (scrambleOdds.rounds?.[0]?.teams || []).find((row) => row.teamId === "A");
+  const singlesScratch = (singlesOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "A1");
+
+  assert.ok(scrambleTeamA);
+  assert.ok(singlesScratch);
+  assert.ok(
+    Number(scrambleTeamA?.projectedGross || 0) < (Number(singlesScratch?.projectedGross || 0) - 2),
+    `expected four-man scramble to beat scratch singles baseline: ${scrambleTeamA?.projectedGross} vs ${singlesScratch?.projectedGross}`
+  );
+  assert.ok(
+    Number(scrambleTeamA?.projectedGrossToPar || 0) < 4,
+    `expected four-man scramble projection to stay well below +4: ${scrambleTeamA?.projectedGrossToPar}`
+  );
+});
+
 registerTest("materialization leaves empty two-man best ball rounds unplayed", () => {
   const state = {
     tournament: {

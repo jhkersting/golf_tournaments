@@ -839,7 +839,6 @@ function hasAnyScore(arr) {
 
 function rowHasAnyData(row) {
   if (!row) return false;
-  if (Number(row.thru || 0) > 0) return true;
   if (Number(row.strokes || 0) > 0) return true;
   if (Number(row.gross || 0) > 0) return true;
   if (Number(row.net || 0) > 0) return true;
@@ -1392,7 +1391,6 @@ function buildStandingRankMap(rows, showGrossNet, data, isTeam) {
 }
 
 function hasPostedScoresForLeaderboard(row, showGrossNet) {
-  if (Number(row?.thru || 0) > 0) return true;
   if (Number(row?.strokes || 0) > 0) return true;
   if (Number(row?.grossTotal || 0) > 0) return true;
   if (Number(row?.netTotal || 0) > 0) return true;
@@ -3076,6 +3074,11 @@ function asPlayedNumber(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizePlayedHoleArray(arr) {
+  if (!Array.isArray(arr) || arr.length !== 18) return Array(18).fill(null);
+  return arr.map((value) => asPlayedNumber(value));
+}
+
 function aggregateNumbers(values) {
   if (!values.length) return null;
   const total = values.reduce((a, v) => a + Number(v || 0), 0);
@@ -3244,11 +3247,19 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
   const rows = [];
   for (const teamId of teamIds) {
     const entry = byTeam[teamId] || {};
+    const gross = normalizePlayedHoleArray(entry?.gross);
+    const netInput = Array.isArray(entry?.net) && entry.net.length === 18 ? entry.net : gross;
+    const net = netInput.map((value, index) => {
+      const normalized = asPlayedNumber(value);
+      return normalized != null ? normalized : gross[index];
+    });
     const scoreBundle = normalizeScoreBundle(
       {},
       {
-        ...entry,
-        par: Array.isArray(entry?.par) ? entry.par : coursePars
+        gross,
+        net,
+        par: Array.isArray(entry?.par) ? entry.par : coursePars,
+        handicapShots: Array.isArray(entry?.handicapShots) ? entry.handicapShots : Array(18).fill(0)
       },
       coursePars
     );
@@ -3411,7 +3422,7 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
   if (format === "scramble" || normalizeTwoManFormat(format)) {
     const fromTeamEntries = buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNames, seedTeamIds);
     if (fromTeamEntries.some((row) => rowHasAnyData(row))) return fromTeamEntries;
-    if (fallbackRows.length) return fallbackRows;
+    if (fallbackRows.some((row) => rowHasAnyData(row))) return fallbackRows;
     return fromTeamEntries;
   }
 
@@ -3480,10 +3491,10 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
       const playerIds = playerIdsForTwoManGroup(teamId, roundIndex, key, entry?.playerIds);
       const pairLabel = twoManPairLabelFromIds(playerIds, nameById, key);
       const gross = Array.isArray(entry?.gross)
-        ? entry.gross
+        ? normalizePlayedHoleArray(entry.gross)
         : aggregateTwoManGroupHoles(roundData, playerIds, twoManFormat, "gross");
       const net = Array.isArray(entry?.net)
-        ? entry.net
+        ? normalizePlayedHoleArray(entry.net)
         : aggregateTwoManGroupHoles(roundData, playerIds, twoManFormat, "net");
       const parMultiplier = twoManFormat === "two_man_shamble"
         ? Math.max(1, playerIds.length)
@@ -3709,10 +3720,12 @@ function oddsTablesForView(viewRound = currentRound) {
     tables.push({ key: "teams", title: "Teams", rows: viewOdds.teams });
   }
 
-  const showPlayersAllRounds = viewRound !== "all" || !tournamentHasAnyScrambleRound();
+  const showPlayerOdds =
+    !isScrambleRound(viewRound) &&
+    (viewRound !== "all" || !tournamentHasAnyScrambleRound());
   if (Array.isArray(viewOdds.groups) && viewOdds.groups.length) {
     tables.push({ key: "groups", title: "Groups", rows: viewOdds.groups });
-  } else if (showPlayersAllRounds && Array.isArray(viewOdds.players) && viewOdds.players.length) {
+  } else if (showPlayerOdds && Array.isArray(viewOdds.players) && viewOdds.players.length) {
     tables.push({ key: "players", title: viewRound === "all" ? "Players" : "Players", rows: viewOdds.players });
   }
 
@@ -4016,11 +4029,13 @@ function renderLiveOdds(data) {
   const simCount = Number(TOURN?.score_data?.live_odds?.simCount || 0);
   const generatedAt = liveOddsTimestampLabel();
   const latencyMode = TOURN?.score_data?.live_odds?.latencyMode || "";
+  const staleLiveOdds = !!TOURN?.score_data?.live_oddsVersionMismatch;
   oddsMeta.textContent = [
     viewRoundLabel(currentRound),
     simCount ? `${simCount.toLocaleString()} sims` : "",
     latencyMode ? latencyMode.replace(/_/g, " ") : "",
-    generatedAt ? `updated ${generatedAt}` : ""
+    generatedAt ? `updated ${generatedAt}` : "",
+    staleLiveOdds ? "stale" : ""
   ].filter(Boolean).join(" • ");
 
   oddsSections.innerHTML = "";
@@ -4122,12 +4137,18 @@ async function loadTournament() {
         cacheKey: `tourn-odds:${tid}`
       }).catch(() => null)
     ]);
-    if (
-      oddsJson &&
-      Number(oddsJson?.version ?? oddsJson?.v) === Number(tournamentJson?.version)
-    ) {
+    const liveOddsPayload = oddsJson?.live_odds || expandCompactLiveOddsPayload(oddsJson, tournamentJson);
+    if (oddsJson && liveOddsPayload) {
+      const oddsVersion = Number(oddsJson?.version ?? oddsJson?.v);
+      const tournamentVersion = Number(tournamentJson?.version);
       tournamentJson.score_data = tournamentJson.score_data || {};
-      tournamentJson.score_data.live_odds = oddsJson?.live_odds || expandCompactLiveOddsPayload(oddsJson, tournamentJson);
+      tournamentJson.score_data.live_odds = liveOddsPayload;
+      tournamentJson.score_data.live_oddsVersionMismatch =
+        Number.isFinite(oddsVersion) &&
+        Number.isFinite(tournamentVersion) &&
+        oddsVersion > 0 &&
+        tournamentVersion > 0 &&
+        oddsVersion !== tournamentVersion;
     }
     return tournamentJson;
   } catch (_) {
