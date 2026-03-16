@@ -26,6 +26,7 @@ const bluegolfUrlEl = document.getElementById("bluegolf_url");
 const courseImportBtn = document.getElementById("course_import_bluegolf");
 const courseImportStatus = document.getElementById("course_import_status");
 const courseNameEl = document.getElementById("course_name");
+const primaryTeeSelect = document.getElementById("primary_tee_select");
 const courseSaveBtn = document.getElementById("course_save");
 const courseStatus = document.getElementById("course_status");
 document.getElementById("par4").onclick = () => { for (let h=1;h<=18;h++) parRow.querySelector(`input[data-hole='${h}']`).value="4"; updateParTotal(); };
@@ -33,6 +34,7 @@ document.getElementById("siReset").onclick = () => { for (let h=1;h<=18;h++) siR
 
 let savedCourses = [];
 let selectedCourseId = "";
+let selectedPrimaryTeeKey = "";
 const PRIMARY_COURSE_REF = "primary";
 
 function isValidCourseShape(course){
@@ -120,6 +122,38 @@ function syncRoundTeeSelect(card) {
   if (!tees.some((tee) => tee.key === next)) next = tees[0].key;
   teeSelectEl.value = next;
   card.dataset.teeRef = next;
+}
+
+function selectedSavedCourse() {
+  return normalizeCourse(
+    savedCourses.find((course) => String(course?.courseId || "").trim() === selectedCourseId) || null
+  );
+}
+
+function syncPrimaryTeeSelect({ preserve = true } = {}) {
+  if (!primaryTeeSelect) return;
+  const baseCourse = selectedSavedCourse();
+  const tees = Array.isArray(baseCourse?.tees) ? baseCourse.tees : [];
+  const previous = preserve ? String(primaryTeeSelect.value || selectedPrimaryTeeKey || "").trim() : "";
+
+  if (!tees.length) {
+    primaryTeeSelect.innerHTML = `<option value="">No tee data</option>`;
+    primaryTeeSelect.value = "";
+    primaryTeeSelect.disabled = true;
+    selectedPrimaryTeeKey = "";
+    return;
+  }
+
+  primaryTeeSelect.disabled = false;
+  primaryTeeSelect.innerHTML = tees
+    .map((tee) => `<option value="${tee.key}">${tee.label || tee.teeName || tee.key}</option>`)
+    .join("");
+
+  let next = previous;
+  if (!tees.some((tee) => tee.key === next)) next = String(baseCourse?.selectedTeeKey || "").trim();
+  if (!tees.some((tee) => tee.key === next)) next = tees[0].key;
+  primaryTeeSelect.value = next;
+  selectedPrimaryTeeKey = next;
 }
 
 function refreshRoundCourseSelects(){
@@ -452,6 +486,7 @@ async function loadCourses(){
       .map(normalizeCourse)
       .filter((c) => c && c.courseId);
     renderCourseOptions();
+    syncPrimaryTeeSelect();
     refreshRoundCourseSelects();
     courseStatus.textContent = `Loaded ${savedCourses.length} course${savedCourses.length === 1 ? "" : "s"}.`;
   } catch (e) {
@@ -471,9 +506,16 @@ async function loadCourseById(courseId){
     if (!c || !Array.isArray(c.pars) || c.pars.length !== 18 || !Array.isArray(c.strokeIndex) || c.strokeIndex.length !== 18) {
       throw new Error("Course response is missing pars/strokeIndex.");
     }
+    const existingIdx = savedCourses.findIndex((course) => String(course?.courseId || "").trim() === id);
+    if (existingIdx >= 0) savedCourses[existingIdx] = c;
+    else savedCourses.push(c);
     fillCourseRows(c.pars, c.strokeIndex);
     courseNameEl.value = c.name || "";
     selectedCourseId = id;
+    if (!String(selectedPrimaryTeeKey || "").trim() || !Array.isArray(c.tees) || !c.tees.some((tee) => tee.key === selectedPrimaryTeeKey)) {
+      selectedPrimaryTeeKey = String(c.selectedTeeKey || c.tees?.[0]?.key || "").trim();
+    }
+    syncPrimaryTeeSelect();
     refreshRoundCourseSelects();
     courseStatus.textContent = `Loaded course: ${c.name || id}`;
   } catch (e) {
@@ -499,20 +541,25 @@ async function saveCourse(){
   const existing = selectedCourseId
     ? savedCourses.find((course) => String(course?.courseId || "").trim() === selectedCourseId)
     : null;
+  const effectiveSelectedTeeKey = String(selectedPrimaryTeeKey || existing?.selectedTeeKey || "").trim();
+  const selectedCourseView = normalizeCourse({
+    ...(existing || {}),
+    ...(effectiveSelectedTeeKey ? { selectedTeeKey: effectiveSelectedTeeKey } : {})
+  });
   const course = {
     name,
     pars,
     strokeIndex: si,
+    ...(effectiveSelectedTeeKey ? { selectedTeeKey: effectiveSelectedTeeKey } : {}),
     ...(existing?.sourceCourseId ? { sourceCourseId: existing.sourceCourseId } : {}),
-    ...(existing?.selectedTeeKey ? { selectedTeeKey: existing.selectedTeeKey } : {}),
-    ...(existing?.teeName ? { teeName: existing.teeName } : {}),
-    ...(existing?.teeLabel ? { teeLabel: existing.teeLabel } : {}),
-    ...(Number.isFinite(existing?.totalYards) ? { totalYards: existing.totalYards } : {}),
-    ...(Array.isArray(existing?.holeYardages) && existing.holeYardages.length === 18
-      ? { holeYardages: existing.holeYardages.slice() }
+    ...(selectedCourseView?.teeName ? { teeName: selectedCourseView.teeName } : {}),
+    ...(selectedCourseView?.teeLabel ? { teeLabel: selectedCourseView.teeLabel } : {}),
+    ...(Number.isFinite(selectedCourseView?.totalYards) ? { totalYards: selectedCourseView.totalYards } : {}),
+    ...(Array.isArray(selectedCourseView?.holeYardages) && selectedCourseView.holeYardages.length === 18
+      ? { holeYardages: selectedCourseView.holeYardages.slice() }
       : {}),
-    ...(Array.isArray(existing?.ratings) && existing.ratings.length
-      ? { ratings: existing.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
+    ...(Array.isArray(selectedCourseView?.ratings) && selectedCourseView.ratings.length
+      ? { ratings: selectedCourseView.ratings.map((entry) => serializeRatingEntry(entry)).filter(Boolean) }
       : {}),
     ...(Array.isArray(existing?.tees) && existing.tees.length
       ? { tees: existing.tees.map((tee) => serializeTeeForSave(tee)).filter(Boolean) }
@@ -652,6 +699,12 @@ function roundCard(){
   if (courseSelectEl) {
     courseSelectEl.addEventListener("change", () => syncRoundTeeSelect(div));
   }
+  const teeSelectEl = div.querySelector("[data-tee-ref]");
+  if (teeSelectEl) {
+    teeSelectEl.addEventListener("change", () => {
+      div.dataset.teeRef = String(teeSelectEl.value || "").trim();
+    });
+  }
   syncRoundTeeSelect(div);
   div.querySelector("[data-remove]").onclick = () => div.remove();
   return div;
@@ -666,11 +719,28 @@ rebuildCourseRows();
 if (courseRefreshBtn) courseRefreshBtn.onclick = () => loadCourses();
 if (courseImportBtn) courseImportBtn.onclick = () => importBlueGolfCourse();
 if (courseSaveBtn) courseSaveBtn.onclick = () => saveCourse();
+if (primaryTeeSelect) {
+  primaryTeeSelect.onchange = () => {
+    const previous = String(selectedPrimaryTeeKey || "").trim();
+    selectedPrimaryTeeKey = String(primaryTeeSelect.value || "").trim();
+    roundsEl.querySelectorAll(".card").forEach((card) => {
+      const courseRef = String(card.querySelector("[data-course-ref]")?.value || PRIMARY_COURSE_REF).trim();
+      if (courseRef !== PRIMARY_COURSE_REF) return;
+      const currentTee = String(card.querySelector("[data-tee-ref]")?.value || "").trim();
+      if (!currentTee || currentTee === previous) {
+        card.dataset.teeRef = selectedPrimaryTeeKey;
+      }
+      syncRoundTeeSelect(card);
+    });
+  };
+}
 if (courseSelect) {
   courseSelect.onchange = async () => {
     const id = String(courseSelect.value || "").trim();
     if (!id) {
       selectedCourseId = "";
+      selectedPrimaryTeeKey = "";
+      syncPrimaryTeeSelect({ preserve: false });
       refreshRoundCourseSelects();
       courseStatus.textContent = "Using custom/current course values.";
       return;
@@ -715,7 +785,10 @@ function getRounds(){
 }
 
 function collectPrimaryCourseForTournament(){
-  const base = normalizeCourse(savedCourses.find((course) => String(course?.courseId || "").trim() === selectedCourseId) || null);
+  const base = normalizeCourse({
+    ...(savedCourses.find((course) => String(course?.courseId || "").trim() === selectedCourseId) || {}),
+    ...(selectedPrimaryTeeKey ? { selectedTeeKey: selectedPrimaryTeeKey } : {})
+  });
   const courseName = document.getElementById("course_name").value.trim();
   const pars = getPars();
   const strokeIndex = getStrokeIndex();

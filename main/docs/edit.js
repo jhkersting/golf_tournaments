@@ -1164,12 +1164,18 @@ function renderRounds(rounds) {
 
   roundRows.querySelectorAll("tr").forEach((tr) => {
     const courseSelect = tr.querySelector("[data-field='course']");
+    const teeSelect = tr.querySelector("[data-field='tee']");
     if (courseSelect) {
       courseSelect.addEventListener("change", () => {
         syncRoundTeeSelect(tr);
         const nextCount = Math.max(1, collectRoundsSafe().length || 1);
         renderPlayers(collectPlayersSafe(), nextCount);
         renderScoresEditor();
+      });
+    }
+    if (teeSelect) {
+      teeSelect.addEventListener("change", () => {
+        tr.dataset.teeRef = String(teeSelect.value || "").trim();
       });
     }
   });
