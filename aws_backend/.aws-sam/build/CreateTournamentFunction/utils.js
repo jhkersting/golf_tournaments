@@ -4,6 +4,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } from 
 import { computeLiveOdds } from "./live_odds.js";
 import { appendCompactLiveOddsHistory, compactLiveOddsPayload } from "./live_odds_compact.js";
 import { normalizeCourseRecord } from "./course_data.js";
+import { normalizeRoundMaxHoleScore } from "./round_rules.js";
 
 export const s3 = new S3Client({});
 
@@ -151,6 +152,101 @@ export function toParStrFromDiff(diff){
   const d = Math.round(diff);
   if (d === 0) return "E";
   return d > 0 ? `+${d}` : `${d}`;
+}
+
+export function normalizeTournamentScoring(scoring){
+  const raw = String(scoring || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  if (raw === "stableford") return "stableford";
+  return "stroke";
+}
+
+function stablefordPointsForHole(score, par){
+  if (score == null) return null;
+  const scoreNum = Number(score);
+  const parNum = Number(par);
+  if (!Number.isFinite(scoreNum) || !Number.isFinite(parNum)) return null;
+  return Math.max(0, 2 + parNum - scoreNum);
+}
+
+function stablefordPointsArray(scores, pars){
+  return Array.from({ length: 18 }, (_, i) => stablefordPointsForHole(scores?.[i], pars?.[i]));
+}
+
+function sumHoleArrays(arrays){
+  const out = Array(18).fill(null);
+  for (let i = 0; i < 18; i++){
+    let total = 0;
+    let count = 0;
+    for (const arr of arrays || []){
+      const value = arr?.[i];
+      if (value == null) continue;
+      total += Number(value);
+      count += 1;
+    }
+    out[i] = count > 0 ? total : null;
+  }
+  return out;
+}
+
+function selectEntriesByMetric(entries, metricKey, topX, direction = "low"){
+  const clean = (entries || [])
+    .filter((entry) => Number.isFinite(Number(entry?.[metricKey])));
+  clean.sort((a, b) => {
+    const delta = Number(a?.[metricKey]) - Number(b?.[metricKey]);
+    if (delta !== 0) return direction === "high" ? -delta : delta;
+    return Number(a?.grossTotal || 0) - Number(b?.grossTotal || 0);
+  });
+  return clean.slice(0, Math.min(Math.max(1, Math.round(Number(topX) || 1)), clean.length));
+}
+
+function buildScoreEntry(grossIn, netIn, handicapShotsIn, parIn){
+  const gross = Array.from({ length: 18 }, (_, i) => {
+    const v = grossIn?.[i];
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  });
+  const net = Array.from({ length: 18 }, (_, i) => {
+    const v = netIn?.[i];
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  });
+  const handicapShots = Array.from({ length: 18 }, (_, i) => {
+    const n = Number(handicapShotsIn?.[i]);
+    return Number.isFinite(n) ? n : 0;
+  });
+  const par = Array.from({ length: 18 }, (_, i) => {
+    const n = Number(parIn?.[i]);
+    return Number.isFinite(n) ? n : 0;
+  });
+  const grossToPar = gross.map((v, i) => v == null ? null : (Number(v) - Number(par[i] || 0)));
+  const netToPar = net.map((v, i) => v == null ? null : (Number(v) - Number(par[i] || 0)));
+  const grossStableford = stablefordPointsArray(gross, par);
+  const netStableford = stablefordPointsArray(net, par);
+  const grossTotal = sumPlayed(gross);
+  const netTotal = sumPlayed(net);
+  const thru = thruFromHoles(gross);
+  return {
+    gross,
+    net,
+    par,
+    grossToPar,
+    netToPar,
+    grossStableford,
+    netStableford,
+    handicapShots,
+    grossTotal,
+    netTotal,
+    grossToParTotal: sumPlayed(grossToPar),
+    netToParTotal: sumPlayed(netToPar),
+    grossStablefordTotal: sumPlayed(grossStableford),
+    netStablefordTotal: sumPlayed(netStableford),
+    thru
+  };
 }
 
 // Handicap shots allocation (same as frontend)
@@ -326,6 +422,7 @@ function normalizeRoundsWithCourses(roundsIn, courseCount){
   const rounds = Array.isArray(roundsIn) ? roundsIn : [];
   return rounds.map((round) => ({
     ...(round || {}),
+    maxHoleScore: normalizeRoundMaxHoleScore(round?.maxHoleScore),
     courseIndex: normalizeRoundCourseIndex(round?.courseIndex, courseCount)
   }));
 }
@@ -513,6 +610,7 @@ export async function appendEvent(tid, payload){
 export function materializePublicFromState(state){
   // Build a single tournament JSON with score_data and leaderboards.
   const t = state.tournament;
+  const scoring = normalizeTournamentScoring(t?.scoring);
   const courses = normalizeCoursesFromState(state);
   const rounds = normalizeRoundsWithCourses(state.rounds || [], courses.length);
   const course = courses[0] || defaultCourseObject();
@@ -542,6 +640,7 @@ export function materializePublicFromState(state){
     const outRound = {
       roundIndex: r,
       format: round.format,
+      scoring,
       useHandicap: !!round.useHandicap,
       player: {},
       team: {},
@@ -556,22 +655,7 @@ export function materializePublicFromState(state){
         const hcp = effectiveHandicap(players[pid]?.handicap, handicapMultiplier);
         const shots = useHandicap ? strokesPerHole(hcp, roundCourse.strokeIndex) : Array(18).fill(0);
         const net = gross.map((v,i)=> v==null ? null : (Number(v) - Number(shots[i]||0)));
-        const grossToPar = gross.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i]||0)));
-        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i]||0)));
-        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(roundCourse.pars[i]||0)),0);
-        const grossTotal = sumPlayed(gross);
-        const netTotal = sumPlayed(net);
-        const thru = thruFromHoles(gross);
-        const grossToParTotal = grossTotal - parPlayed;
-        const netToParTotal = netTotal - parPlayed;
-
-        outRound.player[pid] = {
-          gross, net, grossToPar, netToPar,
-          handicapShots: shots,
-          grossTotal, netTotal,
-          grossToParTotal, netToParTotal,
-          thru
-        };
+        outRound.player[pid] = buildScoreEntry(gross, net, shots, roundCourse.pars);
       }
     }
 
@@ -591,50 +675,36 @@ export function materializePublicFromState(state){
         const teamHcp = useHandicap ? scrambleTeamHandicap(teamPlayers) : 0;
         const shots = useHandicap ? strokesPerHole(teamHcp, roundCourse.strokeIndex) : Array(18).fill(0);
         const net = gross.map((v,i)=> v==null ? null : (Number(v) - Number(shots[i]||0)));
-        const grossToPar = gross.map((v,i)=> v==null?null:(Number(v)-Number(roundCourse.pars[i]||0)));
-        const netToPar = net.map((v,i)=> v==null ? null : (Number(v) - Number(roundCourse.pars[i]||0)));
-        const parPlayed = gross.reduce((acc,v,i)=>acc+(v==null?0:Number(roundCourse.pars[i]||0)),0);
-        const grossTotal = sumPlayed(gross);
-        const netTotal = sumPlayed(net);
-        const thru = thruFromHoles(gross);
-        const grossToParTotal = grossTotal - parPlayed;
-        const netToParTotal = netTotal - parPlayed;
-
-        outRound.team[tid2] = {
-          gross, net, grossToPar, netToPar,
-          handicapShots: shots,
-          grossTotal, netTotal,
-          grossToParTotal, netToParTotal,
-          thru
-        };
+        outRound.team[tid2] = buildScoreEntry(gross, net, shots, roundCourse.pars);
       }
       // For scramble rounds, player rows inherit the team score so player leaderboards remain valid.
       for (const pid of Object.keys(players)){
         const player = players[pid];
         const teamSc = outRound.team[player?.teamId];
         if (!teamSc){
-          outRound.player[pid] = {
-            gross: Array(18).fill(null),
-            net: Array(18).fill(null),
-            grossToPar: Array(18).fill(null),
-            netToPar: Array(18).fill(null),
-            handicapShots: Array(18).fill(0),
-            grossTotal: 0, netTotal: 0,
-            grossToParTotal: 0, netToParTotal: 0,
-            thru: 0
-          };
+          outRound.player[pid] = buildScoreEntry(
+            Array(18).fill(null),
+            Array(18).fill(null),
+            Array(18).fill(0),
+            roundCourse.pars
+          );
           continue;
         }
         outRound.player[pid] = {
           gross: teamSc.gross.slice(),
           net: teamSc.net.slice(),
+          par: teamSc.par.slice(),
           grossToPar: teamSc.grossToPar.slice(),
           netToPar: teamSc.netToPar.slice(),
+          grossStableford: teamSc.grossStableford.slice(),
+          netStableford: teamSc.netStableford.slice(),
           handicapShots: teamSc.handicapShots.slice(),
           grossTotal: teamSc.grossTotal,
           netTotal: teamSc.netTotal,
           grossToParTotal: teamSc.grossToParTotal,
           netToParTotal: teamSc.netToParTotal,
+          grossStablefordTotal: teamSc.grossStablefordTotal,
+          netStablefordTotal: teamSc.netStablefordTotal,
           thru: teamSc.thru
         };
       }
@@ -645,9 +715,7 @@ export function materializePublicFromState(state){
         const teamPlayers = playersByTeam.get(teamId) || [];
         const groups = splitTwoManGroups(teamPlayers, r);
         const groupKeys = Object.keys(groups);
-        const groupGross = Object.fromEntries(groupKeys.map(key => [key, Array(18).fill(null)]));
-        const groupNet = Object.fromEntries(groupKeys.map(key => [key, Array(18).fill(null)]));
-        const groupShots = Object.fromEntries(groupKeys.map(key => [key, Array(18).fill(0)]));
+        const groupEntries = {};
 
         for (const key of groupKeys){
           const groupId = twoManGroupId(teamId, key);
@@ -709,97 +777,70 @@ export function materializePublicFromState(state){
             }
           }
 
-          groupGross[key] = grossRaw;
-          groupNet[key] = netRaw;
-          groupShots[key] = shots;
+          const groupPar = twoManFormat === "two_man_shamble"
+            ? roundCourse.pars.map((value) => Number(value || 0) * Math.max(1, gPlayers.length))
+            : roundCourse.pars.slice();
+          const groupEntry = buildScoreEntry(grossRaw, netRaw, shots, groupPar);
 
-          const parPlayedGroup = grossRaw.reduce((acc, v, i) => acc + (v == null ? 0 : Number(roundCourse.pars[i] || 0)), 0);
-          const grossTotalGroup = sumPlayed(grossRaw);
-          const netTotalGroup = sumPlayed(netRaw);
-          const grossToParTotalGroup = grossTotalGroup - parPlayedGroup;
-          const netToParTotalGroup = netTotalGroup - parPlayedGroup;
-          const thruGroup = thruFromHoles(grossRaw);
+          if (twoManFormat === "two_man_shamble"){
+            groupEntry.grossStableford = sumHoleArrays(gPlayers.map((player) => outRound.player[player.playerId]?.grossStableford));
+            groupEntry.netStableford = sumHoleArrays(gPlayers.map((player) => outRound.player[player.playerId]?.netStableford));
+            groupEntry.grossStablefordTotal = sumPlayed(groupEntry.grossStableford);
+            groupEntry.netStablefordTotal = sumPlayed(groupEntry.netStableford);
+          }
+
+          groupEntries[key] = {
+            ...groupEntry,
+            label: `Group ${key}`,
+            groupId,
+            playerIds: gPlayers.map((p) => p.playerId)
+          };
 
           if (isTwoManScramble){
             for (const p of gPlayers){
               outRound.player[p.playerId] = {
-                gross: grossRaw.slice(),
-                net: netRaw.slice(),
-                grossToPar: grossRaw.map((v, i) => (v == null ? null : Number(v) - Number(roundCourse.pars[i] || 0))),
-                netToPar: netRaw.map((v, i) => (v == null ? null : Number(v) - Number(roundCourse.pars[i] || 0))),
-                handicapShots: shots.slice(),
-                grossTotal: grossTotalGroup,
-                netTotal: netTotalGroup,
-                grossToParTotal: grossToParTotalGroup,
-                netToParTotal: netToParTotalGroup,
-                thru: thruGroup
+                gross: groupEntry.gross.slice(),
+                net: groupEntry.net.slice(),
+                par: groupEntry.par.slice(),
+                grossToPar: groupEntry.grossToPar.slice(),
+                netToPar: groupEntry.netToPar.slice(),
+                grossStableford: groupEntry.grossStableford.slice(),
+                netStableford: groupEntry.netStableford.slice(),
+                handicapShots: groupEntry.handicapShots.slice(),
+                grossTotal: groupEntry.grossTotal,
+                netTotal: groupEntry.netTotal,
+                grossToParTotal: groupEntry.grossToParTotal,
+                netToParTotal: groupEntry.netToParTotal,
+                grossStablefordTotal: groupEntry.grossStablefordTotal,
+                netStablefordTotal: groupEntry.netStablefordTotal,
+                thru: groupEntry.thru
               };
             }
           }
         }
 
-        const gross = Array(18).fill(null);
-        const net = Array(18).fill(null);
-        const grossToPar = Array(18).fill(null);
-        const netToPar = Array(18).fill(null);
-        for (let i=0;i<18;i++){
-          let grossSum = 0;
-          let netSum = 0;
-          let grossCount = 0;
-          let netCount = 0;
+        const gross = sumHoleArrays(groupKeys.map((key) => groupEntries[key]?.gross));
+        const net = sumHoleArrays(groupKeys.map((key) => groupEntries[key]?.net));
+        const grossStableford = sumHoleArrays(groupKeys.map((key) => groupEntries[key]?.grossStableford));
+        const netStableford = sumHoleArrays(groupKeys.map((key) => groupEntries[key]?.netStableford));
+        const teamPar = Array.from({ length: 18 }, (_, i) => {
+          let total = 0;
+          let count = 0;
           for (const key of groupKeys){
-            const gGross = Number.isFinite(groupGross[key]?.[i]) ? Number(groupGross[key][i]) : null;
-            const gNet = Number.isFinite(groupNet[key]?.[i]) ? Number(groupNet[key][i]) : null;
-            if (gGross != null) {
-              grossSum += gGross;
-              grossCount += 1;
-            }
-            if (gNet != null) {
-              netSum += gNet;
-              netCount += 1;
-            }
+            const groupEntry = groupEntries[key];
+            if (groupEntry?.gross?.[i] == null && groupEntry?.net?.[i] == null) continue;
+            total += Number(groupEntry?.par?.[i] || 0);
+            count += 1;
           }
-          if (grossCount > 0) gross[i] = grossSum;
-          if (netCount > 0) net[i] = netSum;
-          const holePar = Number(roundCourse.pars[i] || 0);
-          if (grossCount > 0) grossToPar[i] = grossSum - (holePar * grossCount);
-          if (netCount > 0) netToPar[i] = netSum - (holePar * netCount);
-        }
-
-        const parPlayed = gross.reduce((acc, v, i) => {
-          if (v == null) return acc;
-          let groupsPlayed = 0;
-          for (const key of groupKeys) {
-            if (Number.isFinite(groupGross[key]?.[i])) groupsPlayed += 1;
-          }
-          return acc + (Number(roundCourse.pars[i] || 0) * groupsPlayed);
-        }, 0);
-        const grossTotal = sumPlayed(gross);
-        const netTotal = sumPlayed(net);
-        const thru = thruFromHoles(gross);
-        const grossToParTotal = sumPlayed(grossToPar);
-        const netToParTotal = sumPlayed(netToPar);
-
-        outRound.team[teamId] = {
-          gross, net, grossToPar, netToPar,
-          handicapShots: Array(18).fill(0),
-          grossTotal, netTotal,
-          grossToParTotal, netToParTotal,
-          thru,
-          groups: Object.fromEntries(
-            groupKeys.map((key) => [
-              key,
-              {
-                label: `Group ${key}`,
-                groupId: twoManGroupId(teamId, key),
-                playerIds: (groups[key] || []).map(p => p.playerId),
-                gross: groupGross[key],
-                net: groupNet[key],
-                handicapShots: groupShots[key]
-              }
-            ])
-          )
-        };
+          return count > 0 ? total : 0;
+        });
+        const teamEntry = buildScoreEntry(gross, net, Array(18).fill(0), teamPar);
+        teamEntry.grossStableford = grossStableford;
+        teamEntry.netStableford = netStableford;
+        teamEntry.grossStablefordTotal = sumPlayed(grossStableford);
+        teamEntry.netStablefordTotal = sumPlayed(netStableford);
+        teamEntry.groups = Object.fromEntries(groupKeys.map((key) => [key, groupEntries[key]]));
+        outRound.team[teamId] = teamEntry;
       }
     } else if (isTeamBestBall){
       // Round leaderboard: Team Best Ball is sum of best X scores per hole.
@@ -810,8 +851,9 @@ export function materializePublicFromState(state){
         const teamPlayers = playersByTeam.get(teamId) || [];
         const gross = Array(18).fill(null);
         const net = Array(18).fill(null);
-        const grossToPar = Array(18).fill(null);
-        const netToPar = Array(18).fill(null);
+        const grossStableford = Array(18).fill(null);
+        const netStableford = Array(18).fill(null);
+        const parByHole = Array(18).fill(0);
 
         for (let i = 0; i < 18; i++){
           const candidates = [];
@@ -820,15 +862,21 @@ export function materializePublicFromState(state){
             if (!playerSc) continue;
             const grossRaw = playerSc?.gross?.[i];
             const netRaw = playerSc?.net?.[i];
+            const grossStablefordRaw = playerSc?.grossStableford?.[i];
+            const netStablefordRaw = playerSc?.netStableford?.[i];
             const grossVal = grossRaw == null ? null : (Number.isFinite(Number(grossRaw)) ? Number(grossRaw) : null);
             const netVal = netRaw == null ? grossVal : (Number.isFinite(Number(netRaw)) ? Number(netRaw) : grossVal);
-            const metricVal = useHandicap ? netVal : grossVal;
+            const grossPoints = grossStablefordRaw == null ? null : Number(grossStablefordRaw);
+            const netPoints = netStablefordRaw == null ? grossPoints : Number(netStablefordRaw);
+            const metricVal = scoring === "stableford"
+              ? (useHandicap ? netPoints : grossPoints)
+              : (useHandicap ? netVal : grossVal);
             if (metricVal == null) continue;
-            candidates.push({ gross: grossVal, net: netVal, metric: metricVal });
+            candidates.push({ gross: grossVal, net: netVal, grossPoints, netPoints, metric: metricVal });
           }
           if (!candidates.length) continue;
 
-          candidates.sort((a, b) => a.metric - b.metric);
+          candidates.sort((a, b) => scoring === "stableford" ? Number(b.metric) - Number(a.metric) : Number(a.metric) - Number(b.metric));
           const take = candidates.slice(0, Math.min(topX, candidates.length));
           const grossVals = take.map((x) => x.gross);
           const netVals = take.map((x) => x.net);
@@ -836,82 +884,74 @@ export function materializePublicFromState(state){
           const netAgg = aggregateValuesByMode(netVals, "sum");
           if (grossAgg != null) gross[i] = grossAgg;
           if (netAgg != null) net[i] = netAgg;
-
-          const parBase = Number(roundCourse.pars[i] || 0) * take.length;
-          if (grossAgg != null) grossToPar[i] = grossAgg - parBase;
-          if (netAgg != null) netToPar[i] = netAgg - parBase;
+          const grossPoints = aggregateValuesByMode(take.map((x) => x.grossPoints), "sum");
+          const netPoints = aggregateValuesByMode(take.map((x) => x.netPoints), "sum");
+          if (grossPoints != null) grossStableford[i] = grossPoints;
+          if (netPoints != null) netStableford[i] = netPoints;
+          parByHole[i] = take.length ? Number(roundCourse.pars[i] || 0) * take.length : 0;
         }
 
-        const grossTotal = sumPlayed(gross);
-        const netTotal = sumPlayed(net);
-        const thru = thruFromHoles(gross);
-        const grossToParTotal = sumPlayed(grossToPar);
-        const netToParTotal = sumPlayed(netToPar);
-
-        outRound.team[teamId] = {
-          gross, net, grossToPar, netToPar,
-          handicapShots: Array(18).fill(0),
-          grossTotal, netTotal,
-          grossToParTotal, netToParTotal,
-          thru
-        };
+        const teamEntry = buildScoreEntry(gross, net, Array(18).fill(0), parByHole);
+        teamEntry.grossStableford = grossStableford;
+        teamEntry.netStableford = netStableford;
+        teamEntry.grossStablefordTotal = sumPlayed(grossStableford);
+        teamEntry.netStablefordTotal = sumPlayed(netStableford);
+        outRound.team[teamId] = teamEntry;
       }
     } else {
       // team totals derived from players for that round (aggregation)
       const agg = round.teamAggregation || { mode:"avg", topX:4 };
       for (const teamId of Object.keys(teams)){
-        const pids = Object.keys(players).filter(pid => players[pid].teamId === teamId);
-        const grossPairs = pids.map(pid => {
-          const p = outRound.player[pid];
-          if (!p || !Number.isFinite(p.thru) || p.thru <= 0) return null;
-          const parPlayed = p.grossTotal - p.grossToParTotal;
-          return { strokes: p.grossTotal, par: parPlayed };
-        }).filter(Boolean);
-
-        const netPairs = pids.map(pid => {
-          const p = outRound.player[pid];
-          if (!p || !Number.isFinite(p.thru) || p.thru <= 0) return null;
-          const parPlayed = p.grossTotal - p.grossToParTotal;
-          return { strokes: p.netTotal, par: parPlayed };
-        }).filter(Boolean);
-
-        const grossAgg = bestXAggregateWithParSum(grossPairs, agg);
-        const netAgg = bestXAggregateWithParSum(netPairs, agg);
-
-        const playedThrus = pids
-          .map(pid => outRound.player[pid]?.thru)
-          .filter(v => Number.isFinite(v) && v > 0);
+        const teamPlayerEntries = Object.keys(players)
+          .filter((pid) => players[pid].teamId === teamId)
+          .map((pid) => outRound.player[pid])
+          .filter((entry) => entry && Number.isFinite(entry.thru) && entry.thru > 0);
+        const metricKey = scoring === "stableford"
+          ? (useHandicap ? "netStablefordTotal" : "grossStablefordTotal")
+          : (useHandicap ? "netTotal" : "grossTotal");
+        const selected = selectEntriesByMetric(
+          teamPlayerEntries,
+          metricKey,
+          agg.topX,
+          scoring === "stableford" ? "high" : "low"
+        );
+        const playedThrus = selected
+          .map((entry) => entry?.thru)
+          .filter((v) => Number.isFinite(v) && v > 0);
         const teamThru = playedThrus.length ? Math.min(...playedThrus) : null;
 
-        if (!grossAgg && !netAgg){
-          outRound.team[teamId] = {
-            gross: Array(18).fill(null),
-            net: Array(18).fill(null),
-            grossToPar: Array(18).fill(null),
-            netToPar: Array(18).fill(null),
-            handicapShots: Array(18).fill(0),
-            grossTotal: 0, netTotal: 0,
-            grossToParTotal: 0, netToParTotal: 0,
-            thru: teamThru
-          };
+        if (!selected.length){
+          const emptyEntry = buildScoreEntry(
+            Array(18).fill(null),
+            Array(18).fill(null),
+            Array(18).fill(0),
+            Array(18).fill(0)
+          );
+          emptyEntry.thru = teamThru;
+          outRound.team[teamId] = emptyEntry;
           continue;
         }
-        const grossStrokes = grossAgg?.strokes ?? 0;
-        const grossParPlayed = grossAgg?.par ?? 0;
-        const netStrokes = netAgg?.strokes ?? grossStrokes;
-        const netParPlayed = netAgg?.par ?? grossParPlayed;
-        outRound.team[teamId] = {
-          gross: Array(18).fill(null),
-          net: Array(18).fill(null),
-          grossToPar: Array(18).fill(null),
-          netToPar: Array(18).fill(null),
-          handicapShots: Array(18).fill(0),
-          grossTotal: grossStrokes,
-          netTotal: netStrokes,
-          grossToParTotal: grossStrokes - grossParPlayed,
-          netToParTotal: netStrokes - netParPlayed,
-          thru: teamThru
-        };
+        const gross = sumHoleArrays(selected.map((entry) => entry.gross));
+        const net = sumHoleArrays(selected.map((entry) => entry.net));
+        const grossStableford = sumHoleArrays(selected.map((entry) => entry.grossStableford));
+        const netStableford = sumHoleArrays(selected.map((entry) => entry.netStableford));
+        const parByHole = Array.from({ length: 18 }, (_, i) => {
+          let total = 0;
+          let count = 0;
+          for (const entry of selected){
+            if (entry?.gross?.[i] == null && entry?.net?.[i] == null) continue;
+            total += Number(roundCourse.pars[i] || 0);
+            count += 1;
+          }
+          return count > 0 ? total : 0;
+        });
+        const teamEntry = buildScoreEntry(gross, net, Array(18).fill(0), parByHole);
+        teamEntry.grossStableford = grossStableford;
+        teamEntry.netStableford = netStableford;
+        teamEntry.grossStablefordTotal = sumPlayed(grossStableford);
+        teamEntry.netStablefordTotal = sumPlayed(netStableford);
+        teamEntry.thru = teamThru;
+        outRound.team[teamId] = teamEntry;
       }
     }
 

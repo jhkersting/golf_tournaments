@@ -1,5 +1,6 @@
-import { json, parseBody, requireAdmin, uid, makeEditCode, hashEditCode, updateStateWithRetry, writePublicObjectsFromState } from "./utils.js";
+import { json, parseBody, requireAdmin, uid, makeEditCode, hashEditCode, normalizeTournamentScoring, updateStateWithRetry, writePublicObjectsFromState } from "./utils.js";
 import { normalizeCourseRecord, validateCourse } from "./course_data.js";
+import { normalizeRoundMaxHoleScore } from "./round_rules.js";
 
 function defaultCourse(){
   return {
@@ -76,6 +77,7 @@ export async function handler(event){
     const body = await parseBody(event);
     const name = String(body.name || "").trim() || "Tournament";
     const dates = String(body.dates || "").trim() || "";
+    const scoring = normalizeTournamentScoring(body?.tournament?.scoring ?? body?.scoring);
     const rounds = Array.isArray(body.rounds) ? body.rounds : [];
     const courses = normalizeCoursesFromBody(body);
 
@@ -85,6 +87,7 @@ export async function handler(event){
       format: normalizeRoundFormat(r?.format),
       weight: normalizeRoundWeight(r?.weight),
       useHandicap: !!r?.useHandicap,
+      maxHoleScore: normalizeRoundMaxHoleScore(r?.maxHoleScore),
       courseIndex: normalizeRoundCourseIndex(r?.courseIndex, courses.length),
       teamAggregation: normalizeAgg(r?.teamAggregation)
     }));
@@ -102,6 +105,7 @@ export async function handler(event){
         tournamentId: tid,
         name,
         dates,
+        scoring,
         createdAt: Date.now(),
         editCodeHash: hashEditCode(editCode)
       },

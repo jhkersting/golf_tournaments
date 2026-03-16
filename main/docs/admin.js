@@ -36,6 +36,37 @@ let savedCourses = [];
 let selectedCourseId = "";
 let selectedPrimaryTeeKey = "";
 const PRIMARY_COURSE_REF = "primary";
+const MAX_HOLE_SCORE_OPTIONS = [
+  { value: "none", label: "No max" },
+  { value: "to_par:2", label: "Double bogey max (par + 2)" },
+  { value: "to_par:3", label: "Triple bogey max (par + 3)" },
+  { value: "to_par:4", label: "Quad bogey max (par + 4)" },
+  { value: "score:6", label: "Max score 6" },
+  { value: "score:7", label: "Max score 7" },
+  { value: "score:8", label: "Max score 8" },
+  { value: "score:9", label: "Max score 9" },
+  { value: "score:10", label: "Max score 10" }
+];
+
+function roundMaxHoleScoreOptionsHtml(selectedValue = "none") {
+  const selected = String(selectedValue || "none").trim() || "none";
+  return MAX_HOLE_SCORE_OPTIONS
+    .map((option) => `<option value="${option.value}" ${option.value === selected ? "selected" : ""}>${option.label}</option>`)
+    .join("");
+}
+
+function parseRoundMaxHoleScoreValue(raw) {
+  const value = String(raw || "none").trim().toLowerCase();
+  if (!value || value === "none") return null;
+  const match = value.match(/^(to_par|score):(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const parsedValue = Number(match[2]);
+  if (!Number.isFinite(parsedValue)) return null;
+  return {
+    type: match[1],
+    value: Math.round(parsedValue)
+  };
+}
 
 function isValidCourseShape(course){
   return Array.isArray(course?.pars)
@@ -669,6 +700,12 @@ function roundCard(){
         <label>Tee</label>
         <select data-tee-ref></select>
       </div>
+      <div class="col">
+        <label>Hole max</label>
+        <select data-max-hole-score>
+          ${roundMaxHoleScoreOptionsHtml("none")}
+        </select>
+      </div>
     </div>
 
     <div class="row" style="margin-top:8px;" data-aggrow>
@@ -762,6 +799,7 @@ function getRounds(){
     const topX = Number(c.querySelector("[data-topx]")?.value || 4);
     const courseRef = String(c.querySelector("[data-course-ref]")?.value || PRIMARY_COURSE_REF).trim();
     const teeRef = String(c.querySelector("[data-tee-ref]")?.value || "").trim();
+    const maxHoleScore = parseRoundMaxHoleScoreValue(c.querySelector("[data-max-hole-score]")?.value);
 
     return {
       name: c.querySelector("[data-name]")?.value.trim() || "Round",
@@ -770,6 +808,7 @@ function getRounds(){
       weight,
       courseRef: courseRef || PRIMARY_COURSE_REF,
       teeRef,
+      maxHoleScore,
       teamAggregation: {
         mode: "avg",
         topX: Math.max(1, Math.min(4, Math.floor(topX || 4)))

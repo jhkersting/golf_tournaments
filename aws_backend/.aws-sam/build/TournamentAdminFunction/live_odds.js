@@ -1,4 +1,6 @@
-const MODEL_VERSION = "live-odds-latency-v6";
+import { maxGrossByHoleForRound } from "./round_rules.js";
+
+const MODEL_VERSION = "live-odds-latency-v10";
 const LATENCY_MODE = "latency_first";
 const HOLE_COUNT = 18;
 const PAR_SIGMA = { 3: 0.55, 4: 0.75, 5: 0.95 };
@@ -9,6 +11,8 @@ const BASELINE_REFERENCE_HANDICAP = 10;
 const BASELINE_HANDICAP_ANCHORS = [0, 5, 10, 15, 20];
 const LIVE_HOLE_SHRINKAGE = 8;
 const FORM_SHRINKAGE = 6;
+const FORM_EFFECT_MULTIPLIER = 0.5;
+const FORM_EFFECT_CAP = 0.2;
 const HARDY_PARAM_EPSILON = 0.002;
 const MAX_HARDY_PARAM_SUM = 0.97;
 const LIVE_SHIFT_SCALES = { p: 0.7, q: 0.6 };
@@ -275,12 +279,12 @@ function hardyDistributionFromParams(par, params) {
   };
 }
 
-function sampleGolfHoleGross(par, params, rng) {
+function sampleGolfHoleGross(par, params, rng, maxScore = holeUpperBound(par)) {
   const distribution = hardyDistributionFromParams(par, params);
   return clamp(
     sampleDiscrete(distribution.values, distribution.weights, rng),
     1,
-    holeUpperBound(par)
+    Math.max(1, Math.round(Number(maxScore) || holeUpperBound(par)))
   );
 }
 
@@ -853,8 +857,12 @@ function buildUnitPriors(units, course) {
     const rawFormDelta = playedHoles > 0
       ? (actualToPar - priorToPar) / playedHoles
       : 0;
-    const shrunkenFormDelta = rawFormDelta * (playedHoles / (playedHoles + FORM_SHRINKAGE));
-    const formShift = hardyShiftFromStrokeDelta(shrunkenFormDelta, FORM_SHIFT_SCALES);
+    const shrunkenFormDelta =
+      rawFormDelta
+      * (playedHoles / (playedHoles + FORM_SHRINKAGE))
+      * FORM_EFFECT_MULTIPLIER;
+    const cappedFormDelta = clamp(shrunkenFormDelta, -FORM_EFFECT_CAP, FORM_EFFECT_CAP);
+    const formShift = hardyShiftFromStrokeDelta(cappedFormDelta, FORM_SHIFT_SCALES);
 
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
       const holeBaseline = holeBaselines[holeIndex];
@@ -871,7 +879,7 @@ function buildUnitPriors(units, course) {
     unit.priorHoleParams = priorHoleParams;
     unit.priorGrossMeans = priorGrossMeans;
     unit.priorGrossSigmas = priorGrossSigmas;
-    unit.formAdjustment = clamp(shrunkenFormDelta, -0.35, 0.35);
+    unit.formAdjustment = cappedFormDelta;
   }
 }
 
@@ -901,8 +909,10 @@ function sampleUnplayedHoles(context, rng) {
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
       if (hasPlayedScore(nextUnit.gross[holeIndex])) continue;
       const par = Number(context.course?.pars?.[holeIndex] || 4);
+      const maxGrossRaw = context.maxGrossByHole?.[holeIndex];
+      const maxGross = maxGrossRaw == null ? null : Number(maxGrossRaw);
       const params = shiftHardyParams(unit.priorHoleParams?.[holeIndex], roundShockShift);
-      const sampledGross = sampleGolfHoleGross(par, params, rng);
+      const sampledGross = sampleGolfHoleGross(par, params, rng, maxGross);
       nextUnit.gross[holeIndex] = sampledGross;
       nextUnit.net[holeIndex] = sampledGross - Number(nextUnit.handicapShots?.[holeIndex] || 0);
     }
@@ -1282,6 +1292,7 @@ function buildRoundContext(tournamentJson, roundIndex) {
   const rounds = tournamentJson?.tournament?.rounds || [];
   const round = rounds[roundIndex] || {};
   const course = courseForRoundIndex(tournamentJson, roundIndex);
+  const maxGrossByHole = maxGrossByHoleForRound(round?.maxHoleScore, course?.pars);
   const roundData = tournamentJson?.score_data?.rounds?.[roundIndex] || {};
   const teams = (tournamentJson?.teams || []).map((team) => ({
     teamId: String(team?.teamId ?? team?.id ?? "").trim(),
@@ -1391,6 +1402,7 @@ function buildRoundContext(tournamentJson, roundIndex) {
     useHandicap: !!round?.useHandicap,
     teamAggregation: round?.teamAggregation || { topX: 4 },
     course,
+    maxGrossByHole,
     units,
     teams,
     players,
@@ -1707,17 +1719,17 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
         if (!target) continue;
         const teamGroups = groupsByTeam.get(team.teamId) || [];
         if (teamGroups.length) {
-          const grossAvg = teamGroups.reduce((total, entry) => total + Number(entry.grossTotal || 0), 0) / teamGroups.length;
-          const netAvg = teamGroups.reduce((total, entry) => total + Number(entry.netTotal || 0), 0) / teamGroups.length;
-          const grossToParAvg = teamGroups.reduce((total, entry) => total + Number(entry.grossToParTotal || 0), 0) / teamGroups.length;
-          const netToParAvg = teamGroups.reduce((total, entry) => total + Number(entry.netToParTotal || 0), 0) / teamGroups.length;
-          const gross = averageHoleArrays(teamGroups, "gross");
-          const net = averageHoleArrays(teamGroups, "net");
-          target.leaderboardTotal += Number(useHandicap ? netAvg : grossAvg) * weight;
-          target.grossTotal += grossAvg * weight;
-          target.netTotal += netAvg * weight;
-          target.grossToParTotal += grossToParAvg * weight;
-          target.netToParTotal += netToParAvg * weight;
+          const grossSum = teamGroups.reduce((total, entry) => total + Number(entry.grossTotal || 0), 0);
+          const netSum = teamGroups.reduce((total, entry) => total + Number(entry.netTotal || 0), 0);
+          const grossToParSum = teamGroups.reduce((total, entry) => total + Number(entry.grossToParTotal || 0), 0);
+          const netToParSum = teamGroups.reduce((total, entry) => total + Number(entry.netToParTotal || 0), 0);
+          const gross = sumHoleArrays(teamGroups.map((entry) => entry.gross));
+          const net = sumHoleArrays(teamGroups.map((entry) => entry.net));
+          target.leaderboardTotal += Number(useHandicap ? netSum : grossSum) * weight;
+          target.grossTotal += grossSum * weight;
+          target.netTotal += netSum * weight;
+          target.grossToParTotal += grossToParSum * weight;
+          target.netToParTotal += netToParSum * weight;
           addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, gross, net, weight);
           continue;
         }
@@ -1740,25 +1752,25 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
       const teamPlayers = Array.from(evaluation.players.values()).filter((entry) => entry.teamId === team.teamId);
       const { topX } = normalizeTeamAggregation(context.teamAggregation);
       const selected = bestXByMetric(teamPlayers, topX, useHandicap ? "netTotal" : "grossTotal");
-      const grossAvg = selected.length
-        ? selected.reduce((total, entry) => total + Number(entry.grossTotal || 0), 0) / selected.length
+      const grossSum = selected.length
+        ? selected.reduce((total, entry) => total + Number(entry.grossTotal || 0), 0)
         : 0;
-      const netAvg = selected.length
-        ? selected.reduce((total, entry) => total + Number(entry.netTotal || 0), 0) / selected.length
+      const netSum = selected.length
+        ? selected.reduce((total, entry) => total + Number(entry.netTotal || 0), 0)
         : 0;
-      const grossToParAvg = selected.length
-        ? selected.reduce((total, entry) => total + Number(entry.grossToParTotal || 0), 0) / selected.length
+      const grossToParSum = selected.length
+        ? selected.reduce((total, entry) => total + Number(entry.grossToParTotal || 0), 0)
         : 0;
-      const netToParAvg = selected.length
-        ? selected.reduce((total, entry) => total + Number(entry.netToParTotal || 0), 0) / selected.length
+      const netToParSum = selected.length
+        ? selected.reduce((total, entry) => total + Number(entry.netToParTotal || 0), 0)
         : 0;
-      const gross = averageHoleArrays(selected, "gross");
-      const net = averageHoleArrays(selected, "net");
-      target.leaderboardTotal += Number(useHandicap ? netAvg : grossAvg) * weight;
-      target.grossTotal += grossAvg * weight;
-      target.netTotal += netAvg * weight;
-      target.grossToParTotal += grossToParAvg * weight;
-      target.netToParTotal += netToParAvg * weight;
+      const gross = sumHoleArrays(selected.map((entry) => entry.gross));
+      const net = sumHoleArrays(selected.map((entry) => entry.net));
+      target.leaderboardTotal += Number(useHandicap ? netSum : grossSum) * weight;
+      target.grossTotal += grossSum * weight;
+      target.netTotal += netSum * weight;
+      target.grossToParTotal += grossToParSum * weight;
+      target.netToParTotal += netToParSum * weight;
       addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, gross, net, weight);
     }
   }

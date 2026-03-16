@@ -64,7 +64,7 @@ function teamEntry(grossScore, handicap = 0) {
   return playerEntry(grossScore, handicap);
 }
 
-function materializedFixture(format, { useHandicap = false, includeFutureRound = false, courseOverrides = null } = {}) {
+function materializedFixture(format, { useHandicap = false, includeFutureRound = false, courseOverrides = null, roundOverrides = null } = {}) {
   const rounds = [
     {
       name: "Round 1",
@@ -72,7 +72,8 @@ function materializedFixture(format, { useHandicap = false, includeFutureRound =
       useHandicap,
       weight: 1,
       courseIndex: 0,
-      teamAggregation: { topX: 2 }
+      teamAggregation: { topX: 2 },
+      ...(roundOverrides && typeof roundOverrides === "object" ? roundOverrides : {})
     }
   ];
   if (includeFutureRound) {
@@ -239,6 +240,17 @@ registerTest("all-round odds include future unstarted holes", () => {
   assert.ok(Number(allRoundTeamOdds.get("A")?.projectedScore || 0) > Number(roundTeamOdds.get("A")?.projectedScore || 0));
 });
 
+registerTest("all-round team_best_ball projections keep summed team to-par totals", () => {
+  const tournamentJson = materializedFixture("team_best_ball");
+  const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
+  const roundTeamOdds = new Map((odds.rounds?.[0]?.teams || []).map((row) => [row.teamId, row]));
+  const allRoundTeamOdds = new Map((odds.all_rounds?.teams || []).map((row) => [row.teamId, row]));
+
+  assert.equal(roundTeamOdds.get("B")?.projectedGrossToPar, 36);
+  assert.equal(allRoundTeamOdds.get("B")?.projectedGrossToPar, 36);
+  assert.equal(allRoundTeamOdds.get("B")?.projectedGrossToPar, roundTeamOdds.get("B")?.projectedGrossToPar);
+});
+
 registerTest("baseline modeling respects stroke index difficulty and handicap lookup", () => {
   const tournamentJson = materializedFixture("singles", { useHandicap: true });
   const playerHandicaps = new Map((tournamentJson.players || []).map((player) => [player.playerId, Number(player.handicap || 0)]));
@@ -310,6 +322,75 @@ registerTest("live hole scoring feeds future hole projections for players who ha
   const liveHole1 = Number(liveB1?.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
 
   assert.ok(liveHole1 > baselineHole1, `expected live-scoring hole effect to raise future projection: ${liveHole1} vs ${baselineHole1}`);
+});
+
+registerTest("player form impact is halved and capped", () => {
+  const baselineTournament = materializedFixture("singles");
+  const formTournament = deepClone(baselineTournament);
+
+  for (const tournamentJson of [baselineTournament, formTournament]) {
+    for (const playerId of Object.keys(tournamentJson.score_data.rounds[0].player || {})) {
+      tournamentJson.score_data.rounds[0].player[playerId] = {
+        gross: grossArray(null),
+        net: grossArray(null),
+        handicapShots: Array(18).fill(0),
+        grossTotal: 0,
+        netTotal: 0,
+        grossToParTotal: 0,
+        netToParTotal: 0,
+        thru: 0
+      };
+    }
+  }
+
+  for (let holeIndex = 0; holeIndex < 9; holeIndex++) {
+    formTournament.score_data.rounds[0].player.A1.gross[holeIndex] = 9;
+    formTournament.score_data.rounds[0].player.A1.net[holeIndex] = 9;
+  }
+  formTournament.score_data.rounds[0].player.A1.grossTotal = 81;
+  formTournament.score_data.rounds[0].player.A1.netTotal = 81;
+  formTournament.score_data.rounds[0].player.A1.grossToParTotal = 45;
+  formTournament.score_data.rounds[0].player.A1.netToParTotal = 45;
+  formTournament.score_data.rounds[0].player.A1.thru = 9;
+
+  const baselineOdds = computeLiveOdds(baselineTournament, { generatedAt: FIXED_NOW });
+  const formOdds = computeLiveOdds(formTournament, { generatedAt: FIXED_NOW });
+  const baselineA1 = (baselineOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "A1");
+  const formA1 = (formOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "A1");
+  const baselineHole10 = Number(baselineA1?.remainingHoleExpectations?.find((item) => item.holeIndex === 9)?.projectedGross || 0);
+  const formHole10 = Number(formA1?.remainingHoleExpectations?.find((item) => item.holeIndex === 9)?.projectedGross || 0);
+
+  const delta = formHole10 - baselineHole10;
+  assert.ok(delta > 0.01, `expected form to still affect later holes: ${delta}`);
+  assert.ok(delta <= 0.2, `expected capped form effect <= 0.2 strokes per hole: ${delta}`);
+});
+
+registerTest("round max hole score caps simulated hole outcomes", () => {
+  const tournamentJson = materializedFixture("singles", {
+    roundOverrides: {
+      maxHoleScore: { type: "to_par", value: 3 }
+    }
+  });
+
+  for (const playerId of Object.keys(tournamentJson.score_data.rounds[0].player || {})) {
+    tournamentJson.score_data.rounds[0].player[playerId] = {
+      gross: grossArray(null),
+      net: grossArray(null),
+      handicapShots: Array(18).fill(0),
+      grossTotal: 0,
+      netTotal: 0,
+      grossToParTotal: 0,
+      netToParTotal: 0,
+      thru: 0
+    };
+  }
+
+  const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
+  const row = (odds.rounds?.[0]?.players || []).find((item) => item.playerId === "A1");
+  const firstHole = row?.remainingHoleExpectations?.find((item) => item.holeIndex === 0);
+  const maxScore = Math.max(...(firstHole?.grossDistribution || []).map((item) => Number(item.score || 0)));
+
+  assert.ok(maxScore <= 7, `expected triple-bogey max cap of 7 on par 4, got ${maxScore}`);
 });
 
 registerTest("course rating and slope raise projections and widen handicap spread", () => {

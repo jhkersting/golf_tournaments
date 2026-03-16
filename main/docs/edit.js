@@ -72,7 +72,48 @@ const ROUND_FORMATS = [
   { value: "shamble", label: "shamble" },
   { value: "singles", label: "singles" }
 ];
+const MAX_HOLE_SCORE_OPTIONS = [
+  { value: "none", label: "No max" },
+  { value: "to_par:2", label: "Double bogey max (par + 2)" },
+  { value: "to_par:3", label: "Triple bogey max (par + 3)" },
+  { value: "to_par:4", label: "Quad bogey max (par + 4)" },
+  { value: "score:6", label: "Max score 6" },
+  { value: "score:7", label: "Max score 7" },
+  { value: "score:8", label: "Max score 8" },
+  { value: "score:9", label: "Max score 9" },
+  { value: "score:10", label: "Max score 10" }
+];
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function roundMaxHoleScoreValue(rule) {
+  if (!rule || typeof rule !== "object") return "none";
+  const type = String(rule.type || "").trim().toLowerCase();
+  const value = Number(rule.value);
+  if ((type !== "to_par" && type !== "score") || !Number.isFinite(value)) return "none";
+  return `${type}:${Math.round(value)}`;
+}
+
+function roundMaxHoleScoreOptionsHtml(selectedValue = "none") {
+  const selected = typeof selectedValue === "string"
+    ? (String(selectedValue || "").trim().toLowerCase() || "none")
+    : roundMaxHoleScoreValue(selectedValue);
+  return MAX_HOLE_SCORE_OPTIONS
+    .map((option) => `<option value="${option.value}" ${option.value === selected ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
+    .join("");
+}
+
+function parseRoundMaxHoleScoreValue(raw) {
+  const value = String(raw || "none").trim().toLowerCase();
+  if (!value || value === "none") return null;
+  const match = value.match(/^(to_par|score):(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const parsedValue = Number(match[2]);
+  if (!Number.isFinite(parsedValue)) return null;
+  return {
+    type: match[1],
+    value: Math.round(parsedValue)
+  };
+}
 
 function escapeHtml(v) {
   return String(v || "")
@@ -1146,6 +1187,11 @@ function renderRounds(rounds) {
           <option value="true" ${round?.useHandicap ? "selected" : ""}>Yes</option>
         </select>
       </td>
+      <td>
+        <select data-field="maxHoleScore">
+          ${roundMaxHoleScoreOptionsHtml(round?.maxHoleScore)}
+        </select>
+      </td>
       <td><input data-field="weight" type="number" step="0.01" min="0.01" value="${Number(round?.weight || 1)}" /></td>
       <td><input data-field="topX" type="number" step="1" min="1" max="4" value="${Number(round?.teamAggregation?.topX || 4)}" /></td>
       <td>
@@ -1266,6 +1312,7 @@ function collectRounds() {
       const name = String(tr.querySelector("[data-field='name']")?.value || "").trim() || "Round";
       const format = String(tr.querySelector("[data-field='format']")?.value || "singles").trim();
       const useHandicap = tr.querySelector("[data-field='handicap']")?.value === "true";
+      const maxHoleScore = parseRoundMaxHoleScoreValue(tr.querySelector("[data-field='maxHoleScore']")?.value);
       const weight = Number(tr.querySelector("[data-field='weight']")?.value || 1);
       const topX = Number(tr.querySelector("[data-field='topX']")?.value || 4);
       const courseRef = String(tr.querySelector("[data-field='course']")?.value || "tournament:0").trim();
@@ -1274,6 +1321,7 @@ function collectRounds() {
         name,
         format,
         useHandicap,
+        maxHoleScore,
         courseRef: courseRef || "tournament:0",
         teeRef,
         weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
@@ -1383,6 +1431,7 @@ function addRoundRow() {
     name: `Round ${rounds.length + 1}`,
     format: "singles",
     useHandicap: false,
+    maxHoleScore: null,
     courseRef: "tournament:0",
     teeRef: "",
     weight: 1,

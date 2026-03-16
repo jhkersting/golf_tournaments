@@ -424,6 +424,38 @@ header {
   flex-wrap: wrap;
 }
 
+#odds_panel {
+  position: relative;
+  overflow: visible;
+}
+
+#odds_panel > .scoreboard-main-head {
+  margin-bottom: 10px;
+  padding: 6px 0 10px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+#odds_panel.odds-head-fixed {
+  padding-top: var(--odds-head-space, 0px);
+}
+
+#odds_panel.odds-head-fixed > .scoreboard-main-head {
+  position: fixed;
+  top: var(--odds-head-top, 0px);
+  left: var(--odds-head-left, 0px);
+  width: var(--odds-head-width, auto);
+  z-index: 80;
+  margin: 0;
+  padding: 18px 18px 12px;
+  background: color-mix(in srgb, var(--surface) 98%, var(--bg));
+  border: 1px solid var(--border-strong);
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 10px 26px rgba(15, 34, 56, 0.14);
+}
+
 .scoreboard-enter-card {
   display: flex;
   align-items: center;
@@ -1024,26 +1056,55 @@ hr {
   color: rgba(20, 33, 47, 0.35);
 }
 
-.odds-distribution-pills {
+.odds-histogram {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: flex-end;
+  gap: 2px;
+  height: 56px;
+  padding: 2px 0;
+  width: 100%;
 }
 
-.odds-distribution-pill {
-  display: inline-flex;
+.odds-histogram-col {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(20, 33, 47, 0.07);
+  gap: 2px;
+  flex: 1;
+  height: 100%;
+}
+
+.odds-histogram-label {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
   line-height: 1;
 }
 
-.odds-distribution-pill strong {
-  font-weight: 800;
+.odds-histogram-bar-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.odds-histogram-bar {
+  width: 100%;
+  background: var(--brand);
+  border-radius: 3px;
+  min-height: 2px;
+}
+
+.odds-histogram-pct {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-align: center;
+  color: var(--muted);
+  line-height: 1;
 }
 
 .odds-distribution-played {
@@ -2026,6 +2087,10 @@ th.dots {
     gap: 6px;
   }
 
+  #odds_panel > .scoreboard-main-head {
+    padding: 4px 0 8px;
+  }
+
   .odds-block-head {
     gap: 6px;
   }
@@ -2101,22 +2166,81 @@ th.dots {
 
   .odds-scorecard-table,
   .odds-distribution-table {
-    min-width: 760px;
+    min-width: 0;
+  }
+
+  .odds-scorecard-table {
+    min-width: 640px;
+  }
+
+  .odds-distribution-table {
+    min-width: 500px;
   }
 
   .odds-scorecard-table .entity-col,
   .odds-distribution-table .entity-col {
-    width: 180px;
-    min-width: 180px;
+    width: 128px;
+    min-width: 128px;
   }
 
-  .odds-distribution-pills {
-    gap: 4px;
-  }
-
-  .odds-distribution-pill {
-    padding: 3px 7px;
+  .odds-scorecard-table th,
+  .odds-scorecard-table td {
+    padding: 5px 2px;
     font-size: 11px;
+  }
+
+  .odds-scorecard-table .entity-name,
+  .odds-distribution-table .entity-name {
+    font-size: 12px;
+    line-height: 1.1;
+  }
+
+  .odds-scorecard-table .entity-sub,
+  .odds-distribution-table .entity-sub {
+    margin-top: 1px;
+    font-size: 10px;
+    line-height: 1.05;
+  }
+
+  .odds-scorecard-table th:not(.entity-col),
+  .odds-scorecard-table td:not(.entity-col) {
+    width: 32px;
+    min-width: 32px;
+  }
+
+  .odds-scorecard-cell {
+    font-size: 10px;
+    letter-spacing: -0.02em;
+    overflow: hidden;
+    text-overflow: clip;
+  }
+
+  .odds-distribution-table th,
+  .odds-distribution-table td {
+    padding: 5px 4px;
+    font-size: 11px;
+  }
+
+  .odds-distribution-table th:nth-child(2),
+  .odds-distribution-table td:nth-child(2) {
+    width: 54px;
+    min-width: 54px;
+  }
+
+  .odds-histogram {
+    height: 44px;
+  }
+
+  .odds-histogram-col {
+    min-width: 24px;
+  }
+
+  .odds-histogram-label {
+    font-size: 9px;
+  }
+
+  .odds-histogram-pct {
+    font-size: 8px;
   }
 }
 

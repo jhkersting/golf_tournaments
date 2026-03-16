@@ -10,9 +10,11 @@ import {
   requireTournamentEditCode,
   updateStateWithRetry,
   appendEvent,
-  writePublicObjectsFromState
+  writePublicObjectsFromState,
+  normalizeTournamentScoring
 } from "./utils.js";
 import { normalizeCourseRecord, validateCourse } from "./course_data.js";
+import { normalizeRoundMaxHoleScore } from "./round_rules.js";
 
 function normalizeRoundFormat(format) {
   const raw = String(format || "")
@@ -347,6 +349,9 @@ function normalizeRoundsOrThrow(roundsIn, existingRounds, courseCount = 1) {
       format: normalizeRoundFormat(round?.format || existing?.format),
       useHandicap:
         round?.useHandicap !== undefined ? !!round.useHandicap : !!existing?.useHandicap,
+      maxHoleScore: round?.maxHoleScore !== undefined
+        ? normalizeRoundMaxHoleScore(round?.maxHoleScore)
+        : normalizeRoundMaxHoleScore(existing?.maxHoleScore),
       weight: normalizeRoundWeight(round?.weight ?? existing?.weight),
       courseIndex: normalizeRoundCourseIndex(round?.courseIndex ?? existing?.courseIndex, courseCount),
       teamAggregation: normalizeAgg(round?.teamAggregation || existing?.teamAggregation)
@@ -534,6 +539,7 @@ function toAdminPayload(state) {
       tournamentId: state?.tournament?.tournamentId,
       name: state?.tournament?.name || "",
       dates: state?.tournament?.dates || "",
+      scoring: normalizeTournamentScoring(state?.tournament?.scoring),
       rounds
     },
     rounds,
@@ -631,8 +637,12 @@ export async function handler(event) {
         .trim();
       const dates = String(body?.tournament?.dates ?? body?.dates ?? current.tournament.dates ?? "")
         .trim();
+      const scoring = normalizeTournamentScoring(
+        body?.tournament?.scoring ?? body?.scoring ?? current.tournament?.scoring
+      );
       current.tournament.name = name || current.tournament.name || "Tournament";
       current.tournament.dates = dates;
+      current.tournament.scoring = scoring;
 
       current.rounds = normalizeRoundsOrThrow(body?.rounds, current.rounds, current.courses.length);
 

@@ -24,6 +24,7 @@ const updated = document.getElementById("updated");
 const status = document.getElementById("status");
 const raw = document.getElementById("raw");
 const oddsPanel = document.getElementById("odds_panel");
+const oddsPanelHead = oddsPanel?.querySelector(".scoreboard-main-head") || null;
 const oddsMeta = document.getElementById("odds_meta");
 const oddsSections = document.getElementById("odds_sections");
 const oddsScorecardsPanel = document.getElementById("odds_scorecards_panel");
@@ -119,6 +120,52 @@ let sortState = { key: "score", dir: "asc" };
 const AUTO_REFRESH_MS = 30_000;
 let refreshTimerId = null;
 let refreshInFlight = false;
+let oddsHeadSyncRaf = 0;
+
+function oddsHeadTopOffset() {
+  return 0;
+}
+
+function clearOddsHeadFixedState() {
+  if (!oddsPanel || !oddsPanelHead) return;
+  oddsPanel.classList.remove("odds-head-fixed");
+  oddsPanel.style.removeProperty("--odds-head-space");
+  oddsPanelHead.style.removeProperty("--odds-head-left");
+  oddsPanelHead.style.removeProperty("--odds-head-width");
+  oddsPanelHead.style.removeProperty("--odds-head-top");
+}
+
+function syncOddsHeadFixedState() {
+  if (!oddsPanel || !oddsPanelHead || oddsPanel.hidden) {
+    clearOddsHeadFixedState();
+    return;
+  }
+
+  const panelRect = oddsPanel.getBoundingClientRect();
+  const topOffset = oddsHeadTopOffset();
+  const headHeight = Math.ceil(oddsPanelHead.offsetHeight);
+  const shouldFix = panelRect.top <= topOffset && panelRect.bottom > topOffset + headHeight;
+
+  if (!shouldFix) {
+    clearOddsHeadFixedState();
+    return;
+  }
+
+  const width = Math.max(0, panelRect.width);
+  oddsPanel.classList.add("odds-head-fixed");
+  oddsPanel.style.setProperty("--odds-head-space", `${headHeight + 10}px`);
+  oddsPanelHead.style.setProperty("--odds-head-left", `${Math.round(panelRect.left)}px`);
+  oddsPanelHead.style.setProperty("--odds-head-width", `${Math.round(width)}px`);
+  oddsPanelHead.style.setProperty("--odds-head-top", `${topOffset}px`);
+}
+
+function scheduleOddsHeadFixedStateSync() {
+  if (oddsHeadSyncRaf) return;
+  oddsHeadSyncRaf = window.requestAnimationFrame(() => {
+    oddsHeadSyncRaf = 0;
+    syncOddsHeadFixedState();
+  });
+}
 let scoreNotifierTimerId = 0;
 let scoreNotifierQueue = [];
 let scoreNotifierActive = false;
@@ -611,26 +658,99 @@ function oddsActualScoreForHole(scoreBundle, holeIndex) {
   return asPlayedNumber(source?.[holeIndex]);
 }
 
-function oddsHoleCellText(actualValue, detail) {
-  if (actualValue != null) return String(actualValue);
+function oddsGroupRowKey(row) {
+  return normalizeTwoManGroupKey(row?.groupKey || String(row?.groupId || "").split("::")[1] || "");
+}
+
+function oddsGroupPlayerCount(roundIndex, row) {
+  const groupKey = oddsGroupRowKey(row);
+  if (!groupKey) return 1;
+  const playerIds = compactOddsGroupPlayerIds(TOURN, roundIndex, row?.teamId, groupKey);
+  return Math.max(1, playerIds.length);
+}
+
+function oddsTwoManTeamHolePar(data, roundIndex, row, holeIndex, basePar, twoManFormat) {
+  const teamId = normalizeTeamId(row?.teamId);
+  if (!teamId || !Number.isFinite(basePar) || basePar <= 0) return null;
+  const groupRows = (data?.players || []).filter((candidate) =>
+    normalizeTeamId(candidate?.teamId) === teamId && String(candidate?.groupId || "").trim()
+  );
+  if (!groupRows.length) return null;
+
+  const multiplier = groupRows.reduce((total, candidate) => {
+    const groupPar = Number(candidate?.scores?.par?.[holeIndex]);
+    if (Number.isFinite(groupPar) && groupPar > 0) return total + (groupPar / basePar);
+    if (twoManFormat === "two_man_shamble") return total + oddsGroupPlayerCount(roundIndex, candidate);
+    return total + 1;
+  }, 0);
+
+  return multiplier > 0 ? basePar * multiplier : null;
+}
+
+function oddsHoleParForRow(data, key, row, holeIndex, scoreBundle) {
+  const basePar = Number(data?.course?.pars?.[holeIndex]);
+  if (!Number.isFinite(basePar) || basePar <= 0) return undefined;
+
+  const roundCfg = roundAt(data?.view?.round);
+  const format = String(roundCfg?.format || "").toLowerCase();
+  const twoManFormat = normalizeTwoManFormat(format);
+  const roundIndex = Number(data?.view?.round);
+
+  if (key === "teams" && twoManFormat && Number.isInteger(roundIndex)) {
+    const teamPar = oddsTwoManTeamHolePar(data, roundIndex, row, holeIndex, basePar, twoManFormat);
+    if (Number.isFinite(teamPar) && teamPar > 0) return teamPar;
+  }
+
+  const explicitPar = Number(scoreBundle?.par?.[holeIndex]);
+  if (Number.isFinite(explicitPar) && explicitPar > 0) return explicitPar;
+
+  if (key === "groups" && twoManFormat === "two_man_shamble" && Number.isInteger(roundIndex)) {
+    return basePar * oddsGroupPlayerCount(roundIndex, row);
+  }
+
+  if (key === "teams" && format !== "scramble") {
+    const { topX } = roundAggregationConfig(roundCfg);
+    const playerCount = (TOURN?.players || []).filter((player) =>
+      normalizeTeamId(player?.teamId) === normalizeTeamId(row?.teamId)
+    ).length;
+    return basePar * Math.max(1, Math.min(topX, playerCount || topX));
+  }
+
+  return basePar;
+}
+
+function oddsHoleCellText(actualValue, detail, par) {
+  if (actualValue != null) {
+    if (Number.isFinite(par)) return toParStrFromDiff(actualValue - par);
+    return String(actualValue);
+  }
   const projected = oddsHoleMetricExpectation(detail);
-  if (Number.isFinite(projected)) return formatDecimal(projected);
+  if (Number.isFinite(projected)) {
+    if (Number.isFinite(par)) return toParStrFromDecimal(projected - par);
+    return formatDecimal(projected);
+  }
   return "—";
 }
 
-function oddsDistributionSummary(actualValue, detail) {
+function oddsDistributionSummary(actualValue, detail, par) {
   if (actualValue != null) {
+    const label = Number.isFinite(par) ? toParStrFromDiff(actualValue - par) : String(actualValue);
     return {
-      expected: String(actualValue),
-      played: `Played ${actualValue}`,
-      items: []
+      expected: label,
+      played: `Played ${label}`,
+      items: [],
+      par
     };
   }
   const projected = oddsHoleMetricExpectation(detail);
+  const expectedLabel = Number.isFinite(projected)
+    ? (Number.isFinite(par) ? toParStrFromDecimal(projected - par) : formatDecimal(projected))
+    : "—";
   return {
-    expected: Number.isFinite(projected) ? formatDecimal(projected) : "—",
+    expected: expectedLabel,
     played: "",
-    items: oddsHoleMetricDistribution(detail)
+    items: oddsHoleMetricDistribution(detail),
+    par
   };
 }
 
@@ -3517,13 +3637,41 @@ function renderOddsDistributionCell(summary) {
     return td;
   }
 
+  const par = Number.isFinite(summary?.par) ? summary.par : null;
+  const maxProb = Math.max(...items.map(i => Number(i?.probability || 0)));
+
   const wrap = document.createElement("div");
-  wrap.className = "odds-distribution-pills";
+  wrap.className = "odds-histogram";
   items.forEach((item) => {
-    const pill = document.createElement("span");
-    pill.className = "odds-distribution-pill";
-    pill.innerHTML = `<strong>${escapeHtml(formatDecimal(item?.score))}</strong><span>${escapeHtml(formatPercent(item?.probability, { exactExtremes: true }))}</span>`;
-    wrap.appendChild(pill);
+    const prob = Number(item?.probability || 0);
+    const score = Number(item?.score);
+    const label = par != null && Number.isFinite(score)
+      ? toParStrFromDiff(score - par)
+      : formatDecimal(score);
+
+    const col = document.createElement("div");
+    col.className = "odds-histogram-col";
+
+    const pctEl = document.createElement("span");
+    pctEl.className = "odds-histogram-pct";
+    pctEl.textContent = formatPercent(prob, { exactExtremes: true });
+
+    const barWrap = document.createElement("div");
+    barWrap.className = "odds-histogram-bar-wrap";
+
+    const bar = document.createElement("div");
+    bar.className = "odds-histogram-bar";
+    bar.style.height = `${maxProb > 0 ? (prob / maxProb) * 100 : 0}%`;
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "odds-histogram-label";
+    labelEl.textContent = label;
+
+    barWrap.appendChild(bar);
+    col.appendChild(pctEl);
+    col.appendChild(barWrap);
+    col.appendChild(labelEl);
+    wrap.appendChild(col);
   });
   td.appendChild(wrap);
   return td;
@@ -3532,6 +3680,7 @@ function renderOddsDistributionCell(summary) {
 function renderOddsScorecardBlock(title, rows, key, data, selectedHoleIndex) {
   const block = document.createElement("section");
   block.className = "odds-scorecard-block";
+  const pars = data?.course?.pars || [];
 
   const head = document.createElement("div");
   head.className = "odds-block-head";
@@ -3572,9 +3721,10 @@ function renderOddsScorecardBlock(title, rows, key, data, selectedHoleIndex) {
       ${Array.from({ length: 18 }, (_, holeIndex) => {
         const actualValue = oddsActualScoreForHole(scoreBundle, holeIndex);
         const detail = detailByHole.get(holeIndex);
+        const holePar = oddsHoleParForRow(data, key, row, holeIndex, scoreBundle);
         const stateClass = actualValue != null ? "actual" : detail ? "projected" : "empty";
         const selectedClass = holeIndex === selectedHoleIndex ? " selected" : "";
-        return `<td class="odds-scorecard-cell ${stateClass}${selectedClass}">${escapeHtml(oddsHoleCellText(actualValue, detail))}</td>`;
+        return `<td class="odds-scorecard-cell ${stateClass}${selectedClass}">${escapeHtml(oddsHoleCellText(actualValue, detail, holePar))}</td>`;
       }).join("")}
     `;
     scorecardBody.appendChild(tr);
@@ -3591,8 +3741,8 @@ function renderOddsScorecardBlock(title, rows, key, data, selectedHoleIndex) {
     <thead>
       <tr>
         <th class="left entity-col">${key === "teams" ? "Team" : key === "groups" ? "Group" : "Player"}</th>
-        <th>Exp</th>
-        <th class="left">Hole ${selectedHoleIndex + 1} distribution</th>
+        <th>Exp ±</th>
+        <th class="left">Hole ${selectedHoleIndex + 1} Distribution</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -3606,7 +3756,8 @@ function renderOddsScorecardBlock(title, rows, key, data, selectedHoleIndex) {
       : null;
     const detail = oddsProjectedDetailMap(row).get(selectedHoleIndex);
     const actualValue = oddsActualScoreForHole(scoreBundle, selectedHoleIndex);
-    const summary = oddsDistributionSummary(actualValue, detail);
+    const holePar = oddsHoleParForRow(data, key, row, selectedHoleIndex, scoreBundle);
+    const summary = oddsDistributionSummary(actualValue, detail, holePar);
     const tr = document.createElement("tr");
     const name = key === "teams"
       ? row?.teamName || row?.teamId || "Team"
@@ -3906,6 +4057,7 @@ function render() {
   updated.textContent = `Updated: ${ts}`;
 
   raw.textContent = "";
+  scheduleOddsHeadFixedStateSync();
 }
 
 btnTeam.onclick = () => {
@@ -4000,6 +4152,9 @@ roundFilter.onchange = () => {
   writeScoreboardPrefs();
   render();
 };
+
+window.addEventListener("scroll", scheduleOddsHeadFixedStateSync, { passive: true });
+window.addEventListener("resize", scheduleOddsHeadFixedStateSync);
 
 (async function init() {
   if (!tid) {
