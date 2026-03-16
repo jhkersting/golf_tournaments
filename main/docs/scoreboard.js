@@ -12,6 +12,7 @@ import {
 const tidFromQuery = String(qs("t") || qs("code") || "").trim();
 if (tidFromQuery) rememberTournamentId(tidFromQuery);
 const tid = tidFromQuery || getRememberedTournamentId();
+const SCOREBOARD_PREFS_STORAGE_PREFIX = "golf:scoreboardPrefs:";
 const roundFilter = document.getElementById("round_filter");
 const btnTeam = document.getElementById("btn_team");
 const btnPlayer = document.getElementById("btn_player");
@@ -25,6 +26,9 @@ const raw = document.getElementById("raw");
 const oddsPanel = document.getElementById("odds_panel");
 const oddsMeta = document.getElementById("odds_meta");
 const oddsSections = document.getElementById("odds_sections");
+const oddsScorecardsPanel = document.getElementById("odds_scorecards_panel");
+const oddsHoleSelect = document.getElementById("odds_hole_select");
+const oddsScorecards = document.getElementById("odds_scorecards");
 const btnOddsGross = document.getElementById("btn_odds_gross");
 const btnOddsNet = document.getElementById("btn_odds_net");
 const btnOddsPct = document.getElementById("btn_odds_pct");
@@ -44,12 +48,69 @@ const btnTrendNet = document.getElementById("btn_trend_net");
 const scorecardCard = document.getElementById("scorecard_card");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-let mode = "player"; // "team" | "player"
-let currentRound = "all"; // "all" | number
+function scoreboardPrefsStorageKey() {
+  const suffix = String(tid || "global").trim() || "global";
+  return `${SCOREBOARD_PREFS_STORAGE_PREFIX}${suffix}`;
+}
+
+function readScoreboardPrefs() {
+  try {
+    const raw = localStorage.getItem(scoreboardPrefsStorageKey());
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function normalizeStoredRound(value) {
+  if (value === "all") return "all";
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+function normalizeStoredMode(value) {
+  return value === "team" || value === "player" ? value : null;
+}
+
+function normalizeStoredMetric(value) {
+  return value === "gross" || value === "net" ? value : null;
+}
+
+function normalizeStoredOddsValueMode(value) {
+  return value === "percent" || value === "american" ? value : null;
+}
+
+function writeScoreboardPrefs() {
+  try {
+    localStorage.setItem(
+      scoreboardPrefsStorageKey(),
+      JSON.stringify({
+        mode,
+        round: currentRound,
+        graphMetric,
+        oddsMetric,
+        oddsValueMode
+      })
+    );
+  } catch (_) {}
+}
+
+const storedScoreboardPrefs = readScoreboardPrefs();
+const hasStoredModePreference = normalizeStoredMode(storedScoreboardPrefs.mode) != null;
+const hasStoredRoundPreference = normalizeStoredRound(storedScoreboardPrefs.round) != null;
+const hasStoredGraphMetricPreference = normalizeStoredMetric(storedScoreboardPrefs.graphMetric) != null;
+const hasStoredOddsMetricPreference = normalizeStoredMetric(storedScoreboardPrefs.oddsMetric) != null;
+const hasStoredOddsValueModePreference = normalizeStoredOddsValueMode(storedScoreboardPrefs.oddsValueMode) != null;
+
+let mode = normalizeStoredMode(storedScoreboardPrefs.mode) || "player"; // "team" | "player"
+let currentRound = normalizeStoredRound(storedScoreboardPrefs.round) ?? "all"; // "all" | number
 let TOURN = null;
-let graphMetric = "gross"; // "gross" | "net"
-let oddsMetric = "gross"; // "gross" | "net"
-let oddsValueMode = "percent"; // "percent" | "american"
+let graphMetric = normalizeStoredMetric(storedScoreboardPrefs.graphMetric) || "gross"; // "gross" | "net"
+let oddsMetric = normalizeStoredMetric(storedScoreboardPrefs.oddsMetric) || "gross"; // "gross" | "net"
+let oddsValueMode = normalizeStoredOddsValueMode(storedScoreboardPrefs.oddsValueMode) || "percent"; // "percent" | "american"
+let oddsSelectedHoleKey = "";
 
 let openInlineKey = null;
 let openInlineRow = null;
@@ -196,6 +257,21 @@ function formatOddsValue(value, options) {
     : formatPercent(value, options);
 }
 
+function oddsUnderlineStyle(probability) {
+  const n = Number(probability);
+  if (!Number.isFinite(n)) return "";
+  const pct = clampNumber(n, 0, 100) / 100;
+  const thickness = `${(0.75 + (pct * 2)).toFixed(2)}px`;
+  const alpha = (0.18 + (pct * 0.64)).toFixed(3);
+  return `--odds-underline-thickness:${thickness}; --odds-underline-color:rgba(20, 33, 47, ${alpha});`;
+}
+
+function renderOddsMetricValue(value, probability, options) {
+  const display = formatOddsValue(value, options);
+  const style = oddsUnderlineStyle(probability);
+  return `<span class="odds-metric-value"${style ? ` style="${style}"` : ""}>${escapeHtml(display)}</span>`;
+}
+
 function toParStrFromTenths(diff) {
   const n = Number(diff);
   if (!Number.isFinite(n) || Math.abs(n) < 0.05) return "E";
@@ -230,6 +306,35 @@ function projectedScoreToPar(row) {
 function fromTenthsInt(value) {
   const n = Number(value);
   return Number.isFinite(n) ? (n / 10) : null;
+}
+
+function expandCompactDistribution(distribution) {
+  return (distribution || [])
+    .map((item) => ({
+      score: fromTenthsInt(item?.[0]),
+      probability: Number(item?.[1] || 0)
+    }))
+    .filter((item) => item.score != null && Number(item.probability || 0) > 0)
+    .sort((a, b) => Number(a.score || 0) - Number(b.score || 0));
+}
+
+function expandCompactHoleDetails(details, roundIndex) {
+  if (!Array.isArray(details)) return [];
+  return details
+    .map((item) => {
+      const holeIndex = Number(item?.[0]);
+      if (!Number.isInteger(holeIndex) || holeIndex < 0) return null;
+      return {
+        roundIndex: Number.isInteger(Number(roundIndex)) ? Number(roundIndex) : null,
+        holeIndex,
+        projectedGross: fromTenthsInt(item?.[1]),
+        projectedNet: fromTenthsInt(item?.[2]),
+        grossDistribution: expandCompactDistribution(item?.[3]),
+        netDistribution: expandCompactDistribution(item?.[4])
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Number(a.holeIndex || 0) - Number(b.holeIndex || 0));
 }
 
 function teamNameLookupFromTournament(tournamentJson) {
@@ -310,7 +415,8 @@ function expandCompactOddsRows(rows, kind, tournamentJson, roundIndex, teamNames
         projectedScoreToPar: fromTenthsInt(row?.[4]),
         projectedGrossToPar: fromTenthsInt(row?.[5]),
         projectedNetToPar: fromTenthsInt(row?.[6]),
-        holesRemaining: Number(row?.[7] || 0)
+        holesRemaining: Number(row?.[7] || 0),
+        remainingHoleExpectations: expandCompactHoleDetails(row?.[8], roundIndex)
       };
     }
 
@@ -325,7 +431,8 @@ function expandCompactOddsRows(rows, kind, tournamentJson, roundIndex, teamNames
       projectedScoreToPar: fromTenthsInt(row?.[5]),
       projectedGrossToPar: fromTenthsInt(row?.[6]),
       projectedNetToPar: fromTenthsInt(row?.[7]),
-      holesRemaining: Number(row?.[8] || 0)
+      holesRemaining: Number(row?.[8] || 0),
+      remainingHoleExpectations: expandCompactHoleDetails(row?.[9], roundIndex)
     };
 
     if (kind === "player") {
@@ -379,6 +486,42 @@ function liveOddsForView(viewRound = currentRound) {
   return odds.rounds?.[Number(viewRound)] || null;
 }
 
+function oddsRowStableId(row, key) {
+  if (key === "teams") return String(row?.teamId || "").trim();
+  if (key === "groups") return String(row?.groupId || "").trim();
+  return String(row?.playerId || "").trim();
+}
+
+function oddsTournamentComplete() {
+  const allRoundsOdds = liveOddsForView("all");
+  if (!allRoundsOdds) return false;
+  const rows = Array.isArray(allRoundsOdds.teams) && allRoundsOdds.teams.length
+    ? allRoundsOdds.teams
+    : allRoundsOdds.players;
+  if (!Array.isArray(rows) || !rows.length) return false;
+  return rows.every((row) => Number(row?.holesRemaining || 0) <= 0);
+}
+
+function completedOddsRowIds(key, fallbackRows = []) {
+  const allRoundsOdds = liveOddsForView("all");
+  if (!allRoundsOdds && !(key === "groups" && oddsTournamentComplete())) return new Set();
+  const rows = key === "teams"
+    ? allRoundsOdds.teams
+    : key === "groups"
+      ? allRoundsOdds.groups
+      : allRoundsOdds.players;
+  const sourceRows = Array.isArray(rows) && rows.length
+    ? rows
+    : (key === "groups" && oddsTournamentComplete() ? fallbackRows : []);
+  if (!Array.isArray(sourceRows) || !sourceRows.length) return new Set();
+  return new Set(
+    sourceRows
+      .filter((row) => Number(row?.holesRemaining || 0) <= 0 && Number(row?.leaderProbability || 0) >= 100)
+      .map((row) => oddsRowStableId(row, key))
+      .filter(Boolean)
+  );
+}
+
 function liveOddsTimestampLabel() {
   const rawTs = TOURN?.score_data?.live_odds?.generatedAt;
   if (!rawTs) return "";
@@ -397,6 +540,98 @@ function liveOddsTooltip(entry) {
       return `${roundLabel} ${holeLabel} G ${formatDecimal(item?.projectedGross)} / N ${formatDecimal(item?.projectedNet)}`;
     })
     .join(" • ");
+}
+
+function oddsHoleMetricExpectation(detail) {
+  if (!detail || typeof detail !== "object") return null;
+  return oddsMetric === "net"
+    ? Number(detail?.projectedNet)
+    : Number(detail?.projectedGross);
+}
+
+function oddsHoleMetricDistribution(detail) {
+  const items = oddsMetric === "net"
+    ? detail?.netDistribution
+    : detail?.grossDistribution;
+  return Array.isArray(items) ? items : [];
+}
+
+function oddsRoundActualRowMaps(data) {
+  return {
+    teams: new Map((data?.teams || []).map((row) => [String(row?.teamId || "").trim(), row])),
+    players: new Map((data?.players || []).map((row) => [String(row?.playerId || "").trim(), row])),
+    groups: new Map(
+      (data?.players || [])
+        .filter((row) => String(row?.groupId || "").trim())
+        .map((row) => [String(row?.groupId || "").trim(), row])
+    )
+  };
+}
+
+function oddsActualRowForKey(data, key, row) {
+  const maps = oddsRoundActualRowMaps(data);
+  if (key === "teams") return maps.teams.get(String(row?.teamId || "").trim()) || null;
+  if (key === "groups") return maps.groups.get(String(row?.groupId || "").trim()) || null;
+  return maps.players.get(String(row?.playerId || "").trim()) || null;
+}
+
+function oddsHoleOptions(tables, data) {
+  const seen = new Set();
+  const options = [];
+  tables.forEach((table) => {
+    (table?.rows || []).forEach((row) => {
+      (row?.remainingHoleExpectations || []).forEach((item) => {
+        const holeIndex = Number(item?.holeIndex);
+        if (!Number.isInteger(holeIndex) || holeIndex < 0 || holeIndex > 17) return;
+        const key = String(holeIndex);
+        if (seen.has(key)) return;
+        seen.add(key);
+        options.push({
+          key,
+          holeIndex,
+          label: `Hole ${holeIndex + 1}${Number.isFinite(Number(data?.course?.pars?.[holeIndex])) ? ` • Par ${Number(data.course.pars[holeIndex])}` : ""}`
+        });
+      });
+    });
+  });
+  return options.sort((a, b) => a.holeIndex - b.holeIndex);
+}
+
+function oddsProjectedDetailMap(row) {
+  return new Map(
+    (row?.remainingHoleExpectations || [])
+      .map((item) => [Number(item?.holeIndex), item])
+      .filter(([holeIndex]) => Number.isInteger(holeIndex))
+  );
+}
+
+function oddsActualScoreForHole(scoreBundle, holeIndex) {
+  if (!scoreBundle) return null;
+  const source = oddsMetric === "net" ? scoreBundle?.net : scoreBundle?.gross;
+  return asPlayedNumber(source?.[holeIndex]);
+}
+
+function oddsHoleCellText(actualValue, detail) {
+  if (actualValue != null) return String(actualValue);
+  const projected = oddsHoleMetricExpectation(detail);
+  if (Number.isFinite(projected)) return formatDecimal(projected);
+  return "—";
+}
+
+function oddsDistributionSummary(actualValue, detail) {
+  if (actualValue != null) {
+    return {
+      expected: String(actualValue),
+      played: `Played ${actualValue}`,
+      items: []
+    };
+  }
+  const projected = oddsHoleMetricExpectation(detail);
+  return {
+    expected: Number.isFinite(projected) ? formatDecimal(projected) : "—",
+    played: "",
+    items: oddsHoleMetricDistribution(detail)
+  };
 }
 
 function sumHoles(arr) {
@@ -2354,6 +2589,7 @@ function renderTrendGraph(data) {
 
   const isTeam = mode === "team";
   const isAllRounds = data.view?.round === "all";
+  const isPhoneWidth = typeof window !== "undefined" && window.innerWidth <= 560;
   const showGrossNet = isHandicapRound(data.view?.round) || isAllRounds;
   const isTwoManGroupView = !isTeam && !isAllRounds && isTwoManRound(data.view?.round);
   const entityLabel = isTeam ? "teams" : isTwoManGroupView ? "groups" : "players";
@@ -2410,7 +2646,9 @@ function renderTrendGraph(data) {
   trendEmpty.hidden = true;
   trendGraphShell.hidden = false;
 
-  const plot = { width: 760, height: 320, left: 44, right: 14, top: 14, bottom: 28 };
+  const plot = isPhoneWidth
+    ? { width: 760, height: 760, left: 82, right: 28, top: 26, bottom: 82 }
+    : { width: 760, height: 320, left: 44, right: 14, top: 14, bottom: 28 };
   trendSvg.setAttribute("viewBox", `0 0 ${plot.width} ${plot.height}`);
 
   const allValues = seriesRows.flatMap((entry) => entry.values.filter((value) => value != null));
@@ -2468,6 +2706,9 @@ function renderTrendGraph(data) {
     trendSvg.appendChild(label);
   });
 
+  const labeledHoles = isPhoneWidth
+    ? new Set([0, 2, 4, 6, 8, 10, 12, 14, 16, 17])
+    : new Set(Array.from({ length: 18 }, (_, holeIndex) => holeIndex));
   Array.from({ length: 18 }, (_, holeIndex) => holeIndex).forEach((holeIndex) => {
     const x = xForHole(holeIndex);
     trendSvg.appendChild(svgNode("line", {
@@ -2477,9 +2718,10 @@ function renderTrendGraph(data) {
       y2: plot.height - plot.bottom,
       class: "trend-grid-line-light"
     }));
+    if (!labeledHoles.has(holeIndex)) return;
     const label = svgNode("text", {
       x,
-      y: plot.height - 8,
+      y: plot.height - 12,
       "text-anchor": "middle",
       class: "trend-hole-label"
     });
@@ -2497,7 +2739,9 @@ function renderTrendGraph(data) {
       d: buildStepPath(pointPairs),
       stroke: entry.color,
       "stroke-dasharray": entry.dasharray || null,
-      "stroke-width": indexFromBack === seriesRows.length - 1 ? 3 : 2,
+      "stroke-width": isPhoneWidth
+        ? (indexFromBack === seriesRows.length - 1 ? 4 : 3)
+        : (indexFromBack === seriesRows.length - 1 ? 3 : 2),
       opacity: indexFromBack === seriesRows.length - 1 ? 1 : 0.84,
       class: "trend-series-line"
     });
@@ -2507,7 +2751,7 @@ function renderTrendGraph(data) {
     trendSvg.appendChild(svgNode("circle", {
       cx: endX,
       cy: endY,
-      r: 4,
+      r: isPhoneWidth ? 6 : 4,
       fill: entry.color,
       class: "trend-series-dot"
     }));
@@ -3177,6 +3421,8 @@ function oddsTablesForView(viewRound = currentRound) {
 function renderOddsTable(title, rows, key) {
   const block = document.createElement("section");
   block.className = "odds-block";
+  const completedWinners = completedOddsRowIds(key, rows);
+  const hasCompletedWinner = completedWinners.size > 0;
 
   const head = document.createElement("div");
   head.className = "odds-block-head";
@@ -3229,13 +3475,20 @@ function renderOddsTable(title, rows, key) {
       ? row?.projectedNetToPar
       : row?.projectedGrossToPar;
     const isFinished = Number(row?.holesRemaining || 0) <= 0;
+    const isTournamentWinner = completedWinners.has(oddsRowStableId(row, key));
+    const leadOddsContent = hasCompletedWinner
+      ? (isTournamentWinner ? `<span class="odds-status-badge odds-status-win">WIN</span>` : "")
+      : renderOddsMetricValue(row?.leaderProbability, row?.leaderProbability, { exactExtremes: isFinished });
+    const lowOddsContent = hasCompletedWinner
+      ? ""
+      : renderOddsMetricValue(lowMetricProbability, lowMetricProbability, { exactExtremes: isFinished });
     tr.innerHTML = `
       <td class="left entity-col">
         <div class="entity-name">${escapeHtml(name)}</div>
         ${sub ? `<div class="small muted entity-sub">${escapeHtml(sub)}</div>` : ""}
       </td>
-      <td class="mono">${escapeHtml(formatOddsValue(row?.leaderProbability, { exactExtremes: isFinished }))}</td>
-      <td class="mono">${escapeHtml(formatOddsValue(lowMetricProbability, { exactExtremes: isFinished }))}</td>
+      <td class="mono">${leadOddsContent}</td>
+      <td class="mono">${lowOddsContent}</td>
       <td class="mono"><b>${escapeHtml(projectedOddsMetricToPar == null ? "—" : toParStrFromTenths(projectedOddsMetricToPar))}</b></td>
       <td class="mono remaining-col" title="${escapeHtml(remTitle)}">${escapeHtml(String(Number(row?.holesRemaining || 0)))}</td>
     `;
@@ -3247,7 +3500,172 @@ function renderOddsTable(title, rows, key) {
   return block;
 }
 
-function renderLiveOdds() {
+function renderOddsDistributionCell(summary) {
+  const td = document.createElement("td");
+  td.className = "left";
+  if (summary?.played) {
+    const text = document.createElement("span");
+    text.className = "odds-distribution-played";
+    text.textContent = summary.played;
+    td.appendChild(text);
+    return td;
+  }
+
+  const items = Array.isArray(summary?.items) ? summary.items : [];
+  if (!items.length) {
+    td.textContent = "—";
+    return td;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "odds-distribution-pills";
+  items.forEach((item) => {
+    const pill = document.createElement("span");
+    pill.className = "odds-distribution-pill";
+    pill.innerHTML = `<strong>${escapeHtml(formatDecimal(item?.score))}</strong><span>${escapeHtml(formatPercent(item?.probability, { exactExtremes: true }))}</span>`;
+    wrap.appendChild(pill);
+  });
+  td.appendChild(wrap);
+  return td;
+}
+
+function renderOddsScorecardBlock(title, rows, key, data, selectedHoleIndex) {
+  const block = document.createElement("section");
+  block.className = "odds-scorecard-block";
+
+  const head = document.createElement("div");
+  head.className = "odds-block-head";
+  head.innerHTML = `<h3>${escapeHtml(title)}</h3><div class="small">${rows.length} ${escapeHtml(title.toLowerCase())}</div>`;
+  block.appendChild(head);
+
+  const scorecardWrap = document.createElement("div");
+  scorecardWrap.className = "odds-scorecard-wrap";
+  const scorecardTable = document.createElement("table");
+  scorecardTable.className = "table odds-scorecard-table";
+  scorecardTable.innerHTML = `
+    <thead>
+      <tr>
+        <th class="left entity-col">${key === "teams" ? "Team" : key === "groups" ? "Group" : "Player"}</th>
+        ${Array.from({ length: 18 }, (_, holeIndex) => `<th class="odds-scorecard-hole${holeIndex === selectedHoleIndex ? " selected" : ""}">${holeIndex + 1}</th>`).join("")}
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const scorecardBody = scorecardTable.querySelector("tbody");
+
+  rows.forEach((row) => {
+    const actualRow = oddsActualRowForKey(data, key, row);
+    const scoreBundle = actualRow
+      ? normalizeScoreBundle(actualRow, actualRow?.scores || {}, data?.course?.pars || [])
+      : null;
+    const detailByHole = oddsProjectedDetailMap(row);
+    const tr = document.createElement("tr");
+    const name = key === "teams"
+      ? row?.teamName || row?.teamId || "Team"
+      : row?.name || row?.groupId || row?.playerId || "—";
+    const sub = key === "teams" ? "" : String(row?.teamName || "").trim();
+    tr.innerHTML = `
+      <td class="left entity-col">
+        <div class="entity-name">${escapeHtml(name)}</div>
+        ${sub ? `<div class="small muted entity-sub">${escapeHtml(sub)}</div>` : ""}
+      </td>
+      ${Array.from({ length: 18 }, (_, holeIndex) => {
+        const actualValue = oddsActualScoreForHole(scoreBundle, holeIndex);
+        const detail = detailByHole.get(holeIndex);
+        const stateClass = actualValue != null ? "actual" : detail ? "projected" : "empty";
+        const selectedClass = holeIndex === selectedHoleIndex ? " selected" : "";
+        return `<td class="odds-scorecard-cell ${stateClass}${selectedClass}">${escapeHtml(oddsHoleCellText(actualValue, detail))}</td>`;
+      }).join("")}
+    `;
+    scorecardBody.appendChild(tr);
+  });
+
+  scorecardWrap.appendChild(scorecardTable);
+  block.appendChild(scorecardWrap);
+
+  const distributionWrap = document.createElement("div");
+  distributionWrap.className = "odds-distribution-wrap";
+  const distributionTable = document.createElement("table");
+  distributionTable.className = "table odds-distribution-table";
+  distributionTable.innerHTML = `
+    <thead>
+      <tr>
+        <th class="left entity-col">${key === "teams" ? "Team" : key === "groups" ? "Group" : "Player"}</th>
+        <th>Exp</th>
+        <th class="left">Hole ${selectedHoleIndex + 1} distribution</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const distributionBody = distributionTable.querySelector("tbody");
+
+  rows.forEach((row) => {
+    const actualRow = oddsActualRowForKey(data, key, row);
+    const scoreBundle = actualRow
+      ? normalizeScoreBundle(actualRow, actualRow?.scores || {}, data?.course?.pars || [])
+      : null;
+    const detail = oddsProjectedDetailMap(row).get(selectedHoleIndex);
+    const actualValue = oddsActualScoreForHole(scoreBundle, selectedHoleIndex);
+    const summary = oddsDistributionSummary(actualValue, detail);
+    const tr = document.createElement("tr");
+    const name = key === "teams"
+      ? row?.teamName || row?.teamId || "Team"
+      : row?.name || row?.groupId || row?.playerId || "—";
+    const sub = key === "teams" ? "" : String(row?.teamName || "").trim();
+    tr.innerHTML = `
+      <td class="left entity-col">
+        <div class="entity-name">${escapeHtml(name)}</div>
+        ${sub ? `<div class="small muted entity-sub">${escapeHtml(sub)}</div>` : ""}
+      </td>
+      <td class="mono"><b>${escapeHtml(summary.expected)}</b></td>
+    `;
+    tr.appendChild(renderOddsDistributionCell(summary));
+    distributionBody.appendChild(tr);
+  });
+
+  distributionWrap.appendChild(distributionTable);
+  block.appendChild(distributionWrap);
+  return block;
+}
+
+function renderProjectedOddsScorecards(data, tables) {
+  if (!oddsScorecardsPanel || !oddsHoleSelect || !oddsScorecards) return;
+  if (data?.view?.round === "all" || !Array.isArray(tables) || !tables.length) {
+    oddsScorecardsPanel.hidden = true;
+    oddsScorecards.innerHTML = "";
+    if (oddsHoleSelect) oddsHoleSelect.innerHTML = "";
+    return;
+  }
+
+  const holeOptions = oddsHoleOptions(tables, data);
+  if (!holeOptions.length) {
+    oddsScorecardsPanel.hidden = true;
+    oddsScorecards.innerHTML = "";
+    oddsHoleSelect.innerHTML = "";
+    return;
+  }
+
+  if (!holeOptions.some((option) => option.key === oddsSelectedHoleKey)) {
+    oddsSelectedHoleKey = holeOptions[0].key;
+  }
+
+  oddsHoleSelect.innerHTML = holeOptions
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+    .join("");
+  oddsHoleSelect.value = oddsSelectedHoleKey;
+
+  const selectedOption = holeOptions.find((option) => option.key === oddsSelectedHoleKey) || holeOptions[0];
+  const selectedHoleIndex = Number(selectedOption?.holeIndex || 0);
+
+  oddsScorecards.innerHTML = "";
+  oddsScorecards.className = "odds-scorecards";
+  tables.forEach((table) => {
+    oddsScorecards.appendChild(renderOddsScorecardBlock(table.title, table.rows, table.key, data, selectedHoleIndex));
+  });
+  oddsScorecardsPanel.hidden = false;
+}
+
+function renderLiveOdds(data) {
   if (!oddsPanel || !oddsMeta || !oddsSections) return;
   syncOddsMetricButtons();
   syncOddsValueButtons();
@@ -3257,6 +3675,7 @@ function renderLiveOdds() {
     oddsPanel.hidden = true;
     oddsMeta.textContent = "—";
     oddsSections.innerHTML = "";
+    if (oddsScorecardsPanel) oddsScorecardsPanel.hidden = true;
     return;
   }
 
@@ -3289,6 +3708,8 @@ function renderLiveOdds() {
     note.textContent = "Two-man rounds show group odds in the section above; player projections still feed team simulations in the backend.";
     oddsSections.appendChild(note);
   }
+
+  renderProjectedOddsScorecards(data, tables);
 
   oddsPanel.hidden = false;
 }
@@ -3411,6 +3832,7 @@ function syncRoundFilterOptions() {
   }
 
   roundFilter.value = String(currentRound);
+  writeScoreboardPrefs();
 }
 
 async function refreshTournamentData() {
@@ -3476,7 +3898,7 @@ function render() {
   }
 
   renderLeaderboard(data);
-  renderLiveOdds();
+  renderLiveOdds(data);
   renderTrendGraph(data);
   renderStats(data);
 
@@ -3488,6 +3910,7 @@ function render() {
 
 btnTeam.onclick = () => {
   mode = "team";
+  writeScoreboardPrefs();
   syncModeButtons();
   render();
 };
@@ -3500,6 +3923,7 @@ btnPlayer.onclick = () => {
     return;
   }
   mode = "player";
+  writeScoreboardPrefs();
   syncModeButtons();
   render();
 };
@@ -3507,6 +3931,7 @@ btnPlayer.onclick = () => {
 if (btnTrendGross) {
   btnTrendGross.onclick = () => {
     graphMetric = "gross";
+    writeScoreboardPrefs();
     syncTrendMetricButtons();
     render();
   };
@@ -3515,7 +3940,15 @@ if (btnTrendGross) {
 if (btnTrendNet) {
   btnTrendNet.onclick = () => {
     graphMetric = "net";
+    writeScoreboardPrefs();
     syncTrendMetricButtons();
+    render();
+  };
+}
+
+if (oddsHoleSelect) {
+  oddsHoleSelect.onchange = () => {
+    oddsSelectedHoleKey = String(oddsHoleSelect.value || "");
     render();
   };
 }
@@ -3523,6 +3956,7 @@ if (btnTrendNet) {
 if (btnOddsGross) {
   btnOddsGross.onclick = () => {
     oddsMetric = "gross";
+    writeScoreboardPrefs();
     syncOddsMetricButtons();
     render();
   };
@@ -3531,6 +3965,7 @@ if (btnOddsGross) {
 if (btnOddsNet) {
   btnOddsNet.onclick = () => {
     oddsMetric = "net";
+    writeScoreboardPrefs();
     syncOddsMetricButtons();
     render();
   };
@@ -3539,6 +3974,7 @@ if (btnOddsNet) {
 if (btnOddsPct) {
   btnOddsPct.onclick = () => {
     oddsValueMode = "percent";
+    writeScoreboardPrefs();
     syncOddsValueButtons();
     render();
   };
@@ -3547,6 +3983,7 @@ if (btnOddsPct) {
 if (btnOddsAmerican) {
   btnOddsAmerican.onclick = () => {
     oddsValueMode = "american";
+    writeScoreboardPrefs();
     syncOddsValueButtons();
     render();
   };
@@ -3560,6 +3997,7 @@ roundFilter.onchange = () => {
   if (switchedRounds && isIndividualDefaultRound(currentRound) && !isScrambleRound(currentRound)) {
     mode = "player";
   }
+  writeScoreboardPrefs();
   render();
 };
 
@@ -3581,13 +4019,30 @@ roundFilter.onchange = () => {
     $('body').show();
 
     const roundCount = (TOURN.tournament.rounds || []).length;
-    currentRound = roundCount > 0 ? newestRoundWithDataIndex(TOURN) : "all";
-    graphMetric = isHandicapRound(currentRound) ? "net" : "gross";
-    oddsMetric = isHandicapRound(currentRound) ? "net" : "gross";
+    if (!hasStoredRoundPreference) {
+      currentRound = roundCount > 0 ? newestRoundWithDataIndex(TOURN) : "all";
+    }
     syncTrendMetricButtons();
     syncOddsMetricButtons();
     syncOddsValueButtons();
     syncRoundFilterOptions();
+    if (!hasStoredGraphMetricPreference) {
+      graphMetric = isHandicapRound(currentRound) ? "net" : "gross";
+    }
+    if (!hasStoredOddsMetricPreference) {
+      oddsMetric = isHandicapRound(currentRound) ? "net" : "gross";
+    }
+    if (!hasStoredModePreference && isIndividualDefaultRound(currentRound) && !isScrambleRound(currentRound)) {
+      mode = "player";
+    }
+    if (!hasStoredOddsValueModePreference) {
+      oddsValueMode = "percent";
+    }
+    writeScoreboardPrefs();
+    syncModeButtons();
+    syncTrendMetricButtons();
+    syncOddsMetricButtons();
+    syncOddsValueButtons();
 
     status.textContent = "";
     render();

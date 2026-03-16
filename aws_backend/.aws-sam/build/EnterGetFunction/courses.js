@@ -1,21 +1,6 @@
 import { json, parseBody, requireAdmin, uid, getJson, putJson } from "./utils.js";
-
-function validateCourse(course){
-  const pars = course?.pars;
-  const strokeIndex = course?.strokeIndex;
-  if (!Array.isArray(pars) || pars.length !== 18) return "course.pars must be an array of length 18";
-  if (!Array.isArray(strokeIndex) || strokeIndex.length !== 18) return "course.strokeIndex must be an array of length 18";
-  for (const p of pars){
-    if (!Number.isFinite(Number(p))) return "All pars must be numbers";
-  }
-  const si = strokeIndex.map(Number);
-  const set = new Set(si);
-  if (set.size !== 18) return "Stroke Index must contain 18 unique values";
-  for (const v of si){
-    if (!Number.isInteger(v) || v < 1 || v > 18) return "Stroke Index values must be integers 1..18";
-  }
-  return null;
-}
+import { normalizeCourseRecord, validateCourse } from "./course_data.js";
+import { importBlueGolfCourse } from "./bluegolf_import.js";
 
 async function updateCatalogWithRetry(updater, { maxTries=5 } = {}){
   const bucket = process.env.STATE_BUCKET;
@@ -58,24 +43,43 @@ export async function handler(event){
     if (method === "POST"){
       requireAdmin(event);
       const body = await parseBody(event);
-      const course = body?.course || body || {};
+      const bluegolfUrl = String(
+        body?.bluegolfUrl
+          ?? body?.importBlueGolf?.url
+          ?? body?.course?.bluegolfUrl
+          ?? ""
+      ).trim();
+
+      let importedMetadata = null;
+      let course = body?.course || body || {};
+      if (bluegolfUrl) {
+        const imported = await importBlueGolfCourse(bluegolfUrl);
+        importedMetadata = imported.metadata || null;
+        course = {
+          ...imported.course,
+          ...(course && typeof course === "object" ? course : {})
+        };
+      }
 
       const errMsg = validateCourse(course);
       if (errMsg) return json(400, { error: errMsg });
+      const normalizedCourse = normalizeCourseRecord(course);
+      if (!normalizedCourse) return json(400, { error: "Invalid course payload." });
 
       const now = Date.now();
-      const givenId = String(course.courseId || "").trim();
-      const courseId = givenId || uid("c");
-      const name = String(course.name || "").trim() || "Course";
+      const givenId = String(course.courseId || body?.courseId || "").trim();
+      const importedId = importedMetadata?.bluegolfCourseSlug
+        ? `bluegolf-${importedMetadata.bluegolfCourseSlug}`
+        : "";
+      const courseId = givenId || importedId || uid("c");
 
       const next = await updateCatalogWithRetry((current) => {
         current.courses = current.courses || {};
         const prev = current.courses[courseId] || {};
         current.courses[courseId] = {
+          ...prev,
+          ...normalizedCourse,
           courseId,
-          name,
-          pars: course.pars.map(Number),
-          strokeIndex: course.strokeIndex.map(Number),
           createdAt: prev.createdAt || now,
           updatedAt: now
         };
@@ -84,7 +88,12 @@ export async function handler(event){
         return current;
       });
 
-      return json(200, { ok:true, course: next.courses[courseId] });
+      return json(200, {
+        ok:true,
+        imported: !!importedMetadata,
+        ...(importedMetadata ? { importMetadata: importedMetadata } : {}),
+        course: next.courses[courseId]
+      });
     }
 
     if (method === "GET"){

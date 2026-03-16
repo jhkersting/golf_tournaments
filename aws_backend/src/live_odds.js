@@ -14,6 +14,9 @@ const MAX_HARDY_PARAM_SUM = 0.97;
 const LIVE_SHIFT_SCALES = { p: 0.7, q: 0.6 };
 const FORM_SHIFT_SCALES = { p: 0.6, q: 0.5 };
 const ROUND_SHOCK_SHIFT_SCALES = { p: 0.45, q: 0.35 };
+const YARDAGE_MEAN_SHIFT_PER_Z = 0.06;
+const YARDAGE_SIGMA_SHIFT_PER_Z = 0.04;
+const SLOPE_SIGMA_SHIFT_FACTOR = 0.08;
 const BASELINE_OVER_PAR_BY_STROKE_INDEX = [
   [0.35, 0.69, 0.98, 1.28, 1.58],
   [0.30, 0.64, 0.93, 1.22, 1.50],
@@ -45,6 +48,12 @@ function round2(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100) / 100;
+}
+
+function round1(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 10) / 10;
 }
 
 function quantize(value, step) {
@@ -108,6 +117,37 @@ function sampleDiscrete(values, weights, rng) {
     if (threshold <= 0 || i === values.length - 1) return Number(values[i]);
   }
   return Number(values[values.length - 1] || 0);
+}
+
+function averageFinite(values) {
+  const clean = (values || []).map((value) => Number(value)).filter(Number.isFinite);
+  if (!clean.length) return null;
+  return clean.reduce((sum, value) => sum + value, 0) / clean.length;
+}
+
+function distributionBucketValue(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return round1(n);
+}
+
+function addDistributionValue(targetMap, value) {
+  if (!(targetMap instanceof Map)) return;
+  const bucket = distributionBucketValue(value);
+  if (bucket == null) return;
+  const key = bucket.toFixed(1);
+  targetMap.set(key, Number(targetMap.get(key) || 0) + 1);
+}
+
+function distributionRowsFromMap(distributionMap, simulationCount) {
+  if (!(distributionMap instanceof Map) || simulationCount <= 0) return [];
+  return Array.from(distributionMap.entries())
+    .map(([scoreText, count]) => ({
+      score: round1(Number(scoreText)),
+      probability: round2((Number(count || 0) / simulationCount) * 100)
+    }))
+    .filter((row) => Number(row?.probability || 0) > 0)
+    .sort((a, b) => Number(a.score || 0) - Number(b.score || 0));
 }
 
 function hardyScoreDistribution(par, p, q, maxScore = holeUpperBound(par)) {
@@ -322,8 +362,33 @@ function normalizeCourse(course) {
     ? course.strokeIndex.map((value) => Number(value) || 0)
     : null;
   if (!pars || !strokeIndex) return null;
+  const holeYardages = Array.isArray(course?.holeYardages) && course.holeYardages.length === HOLE_COUNT
+    ? course.holeYardages.map((value) => {
+        const n = Number(value);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+      })
+    : null;
+  const ratings = Array.isArray(course?.ratings)
+    ? course.ratings
+        .map((entry) => {
+          const rating = Number(entry?.rating);
+          const slope = Number(entry?.slope);
+          const gender = String(entry?.gender || "").trim().toUpperCase();
+          if (!gender && !Number.isFinite(rating) && !Number.isFinite(slope)) return null;
+          return {
+            ...(gender ? { gender } : {}),
+            ...(Number.isFinite(rating) ? { rating: Number(rating.toFixed(1)) } : {}),
+            ...(Number.isFinite(slope) ? { slope: Math.round(slope) } : {})
+          };
+        })
+        .filter(Boolean)
+    : [];
   return {
     ...(course?.name ? { name: String(course.name) } : {}),
+    ...(course?.teeName ? { teeName: String(course.teeName) } : {}),
+    ...(Number.isFinite(Number(course?.totalYards)) ? { totalYards: Math.max(0, Math.round(Number(course.totalYards))) } : {}),
+    ...(holeYardages ? { holeYardages } : {}),
+    ...(ratings.length ? { ratings } : {}),
     pars,
     strokeIndex
   };
@@ -476,10 +541,86 @@ function difficultyZ(strokeIndex) {
   return (difficultyRank - STROKE_Z_MEAN) / STROKE_Z_STD;
 }
 
-function holeSigmaTarget(par, effectiveHandicap, strokeIndex) {
+function courseParTotal(course) {
+  return (course?.pars || []).reduce((sum, value) => sum + (Number(value) || 0), 0);
+}
+
+function courseRatingSummary(course) {
+  const ratings = Array.isArray(course?.ratings) ? course.ratings : [];
+  return {
+    rating: averageFinite(ratings.map((entry) => entry?.rating)),
+    slope: averageFinite(ratings.map((entry) => entry?.slope))
+  };
+}
+
+function holeYardageDifficultyByPar(course) {
+  const pars = Array.isArray(course?.pars) ? course.pars : Array(HOLE_COUNT).fill(4);
+  const yardages = Array.isArray(course?.holeYardages) && course.holeYardages.length === HOLE_COUNT
+    ? course.holeYardages.map((value) => {
+        const n = Number(value);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      })
+    : Array(HOLE_COUNT).fill(null);
+
+  return Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
+    const par = Number(pars[holeIndex] || 4);
+    const yardage = yardages[holeIndex];
+    if (!Number.isFinite(yardage)) return 0;
+
+    const sameParYardages = yardages.filter((value, idx) => Number(pars[idx] || 4) === par && Number.isFinite(value));
+    if (sameParYardages.length >= 2) {
+      const mean = sameParYardages.reduce((sum, value) => sum + value, 0) / sameParYardages.length;
+      const variance = sameParYardages.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / sameParYardages.length;
+      const stdDev = Math.sqrt(Math.max(variance, 1));
+      return clamp((yardage - mean) / stdDev, -2.5, 2.5);
+    }
+
+    const fallbackMean = { 3: 170, 4: 390, 5: 520 }[par] || 390;
+    const fallbackStd = { 3: 25, 4: 45, 5: 60 }[par] || 45;
+    return clamp((yardage - fallbackMean) / fallbackStd, -2.5, 2.5);
+  });
+}
+
+function buildCourseDifficultyModel(course) {
+  const pars = Array.isArray(course?.pars) ? course.pars : Array(HOLE_COUNT).fill(4);
+  const strokeIndex = Array.isArray(course?.strokeIndex) ? course.strokeIndex : Array.from({ length: HOLE_COUNT }, (_, idx) => idx + 1);
+  const parTotal = courseParTotal(course);
+  const { rating, slope } = courseRatingSummary(course);
+  const yardageDifficulty = holeYardageDifficultyByPar(course);
+  const scratchDeltaTotal = Number.isFinite(rating) ? clamp(rating - parTotal, -6, 10) : 0;
+  const slopeFactor = clamp((Number.isFinite(slope) ? slope : 113) / 113, 0.85, 1.35);
+  const weightBase = Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
+    const difficulty = Math.max(0, difficultyZ(strokeIndex[holeIndex]));
+    const yardage = Number(yardageDifficulty[holeIndex] || 0);
+    return Math.max(0.2, 1 + (0.3 * difficulty) + (0.25 * Math.max(yardage, 0)) + (0.1 * Math.abs(yardage)));
+  });
+  const weightTotal = weightBase.reduce((sum, value) => sum + value, 0) || HOLE_COUNT;
+  const scratchShiftByHole = Array.from({ length: HOLE_COUNT }, (_, holeIndex) =>
+    scratchDeltaTotal * (weightBase[holeIndex] / weightTotal)
+  );
+
+  return {
+    rating,
+    slope: Number.isFinite(slope) ? slope : 113,
+    slopeFactor,
+    yardageDifficulty,
+    yardageMeanShift: yardageDifficulty.map((value) => Number(value || 0) * YARDAGE_MEAN_SHIFT_PER_Z),
+    scratchShiftByHole
+  };
+}
+
+function holeSigmaTarget(par, effectiveHandicap, strokeIndex, courseDifficulty, holeIndex) {
   const z = difficultyZ(strokeIndex);
+  const slopeFactor = Number(courseDifficulty?.slopeFactor || 1);
+  const yardageDifficulty = Math.abs(Number(courseDifficulty?.yardageDifficulty?.[holeIndex] || 0));
   return (
-    (Number(PAR_SIGMA[par] || 0.8) + (0.02 * Number(effectiveHandicap || 0)) + (0.05 * Math.abs(z))) *
+    (
+      Number(PAR_SIGMA[par] || 0.8)
+      + (0.02 * Number(effectiveHandicap || 0) * slopeFactor)
+      + (0.05 * Math.abs(z))
+      + (YARDAGE_SIGMA_SHIFT_PER_Z * yardageDifficulty)
+      + (SLOPE_SIGMA_SHIFT_FACTOR * Math.max(0, slopeFactor - 1))
+    ) *
     HOLE_SIGMA_MULTIPLIER
   );
 }
@@ -513,14 +654,19 @@ function baselineOverParFromLookup(handicapIndex, strokeIndex) {
   return Number(row[lastAnchorIndex] || 0);
 }
 
-function buildHoleBaselines(course) {
+function buildHoleBaselines(course, courseDifficulty) {
   return Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
     const par = Number(course?.pars?.[holeIndex] || 4);
     const strokeIndex = Number(course?.strokeIndex?.[holeIndex] || holeIndex + 1);
-    const targetMean = par + baselineOverParFromLookup(BASELINE_REFERENCE_HANDICAP, strokeIndex);
-    const targetSigma = holeSigmaTarget(par, BASELINE_REFERENCE_HANDICAP, strokeIndex);
+    const targetMean =
+      par
+      + baselineOverParFromLookup(BASELINE_REFERENCE_HANDICAP, strokeIndex)
+      + Number(courseDifficulty?.scratchShiftByHole?.[holeIndex] || 0)
+      + Number(courseDifficulty?.yardageMeanShift?.[holeIndex] || 0);
+    const targetSigma = holeSigmaTarget(par, BASELINE_REFERENCE_HANDICAP, strokeIndex, courseDifficulty, holeIndex);
     const candidate = hardyCandidateForTarget(par, targetMean, targetSigma);
     return {
+      holeIndex,
       par,
       strokeIndex,
       referenceMean: candidate.mean,
@@ -530,7 +676,7 @@ function buildHoleBaselines(course) {
   });
 }
 
-function skillShiftByPar(course, holeBaselines, effectiveHandicap) {
+function skillShiftByPar(course, holeBaselines, courseDifficulty, effectiveHandicap) {
   const shifts = new Map();
   for (const par of [3, 4, 5]) {
     const parHoles = holeBaselines.filter((hole) => hole.par === par);
@@ -540,11 +686,20 @@ function skillShiftByPar(course, holeBaselines, effectiveHandicap) {
     }
 
     const targetMean = parHoles.reduce(
-      (sum, hole) => sum + (par + baselineOverParFromLookup(effectiveHandicap, hole.strokeIndex)),
+      (sum, hole) => {
+        const referenceOverPar = baselineOverParFromLookup(BASELINE_REFERENCE_HANDICAP, hole.strokeIndex);
+        const handicapOverPar = baselineOverParFromLookup(effectiveHandicap, hole.strokeIndex);
+        const slopeAdjustedOverPar = referenceOverPar + ((handicapOverPar - referenceOverPar) * Number(courseDifficulty?.slopeFactor || 1));
+        return sum
+          + par
+          + slopeAdjustedOverPar
+          + Number(courseDifficulty?.scratchShiftByHole?.[hole.holeIndex] || 0)
+          + Number(courseDifficulty?.yardageMeanShift?.[hole.holeIndex] || 0);
+      },
       0
     ) / parHoles.length;
     const targetSigma = parHoles.reduce(
-      (sum, hole) => sum + holeSigmaTarget(par, effectiveHandicap, hole.strokeIndex),
+      (sum, hole) => sum + holeSigmaTarget(par, effectiveHandicap, hole.strokeIndex, courseDifficulty, hole.holeIndex),
       0
     ) / parHoles.length;
     const referenceMean = parHoles.reduce((sum, hole) => sum + hole.referenceMean, 0) / parHoles.length;
@@ -627,14 +782,15 @@ function createSeededRng(seedText) {
 }
 
 function buildUnitPriors(units, course) {
-  const holeBaselines = buildHoleBaselines(course);
+  const courseDifficulty = buildCourseDifficultyModel(course);
+  const holeBaselines = buildHoleBaselines(course, courseDifficulty);
   const liveHoleActualTotals = Array(HOLE_COUNT).fill(0);
   const liveHoleExpectedTotals = Array(HOLE_COUNT).fill(0);
   const liveHoleCounts = Array(HOLE_COUNT).fill(0);
 
   for (const unit of units) {
     const effectiveHandicap = strokesFromHandicapShots(unit.handicapShots);
-    const parSkillShift = skillShiftByPar(course, holeBaselines, effectiveHandicap);
+    const parSkillShift = skillShiftByPar(course, holeBaselines, courseDifficulty, effectiveHandicap);
     const baselineMeans = Array(HOLE_COUNT).fill(0);
 
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
@@ -1276,7 +1432,12 @@ function createEntityAccumulator(entries, remainingHoleKeysById) {
       top2Share: 0,
       top3Share: 0,
       holeSums: new Map(
-        (remainingHoleKeysById.get(entityId) || []).map((key) => [key, { gross: 0, net: 0 }])
+        (remainingHoleKeysById.get(entityId) || []).map((key) => [key, {
+          gross: 0,
+          net: 0,
+          grossDistribution: new Map(),
+          netDistribution: new Map()
+        }])
       )
     });
   }
@@ -1364,14 +1525,22 @@ function accumulateEntitySet(accumulatorById, entries, scoreSelector) {
     const holeNetByKey = entry.holeNetByKey instanceof Map ? entry.holeNetByKey : null;
     for (const [key, sums] of acc.holeSums.entries()) {
       if (holeGrossByKey || holeNetByKey) {
-        sums.gross += Number(holeGrossByKey?.get(key) || 0);
-        sums.net += Number(holeNetByKey?.get(key) || 0);
+        const grossValue = holeGrossByKey?.get(key);
+        const netValue = holeNetByKey?.get(key);
+        sums.gross += Number(grossValue || 0);
+        sums.net += Number(netValue || 0);
+        addDistributionValue(sums.grossDistribution, grossValue);
+        addDistributionValue(sums.netDistribution, netValue);
         continue;
       }
       const [, holeIndexText] = key.split(":");
       const holeIndex = Number(holeIndexText);
-      sums.gross += Number(entry.gross?.[holeIndex] || 0);
-      sums.net += Number(entry.net?.[holeIndex] || 0);
+      const grossValue = entry.gross?.[holeIndex];
+      const netValue = entry.net?.[holeIndex];
+      sums.gross += Number(grossValue || 0);
+      sums.net += Number(netValue || 0);
+      addDistributionValue(sums.grossDistribution, grossValue);
+      addDistributionValue(sums.netDistribution, netValue);
     }
   }
 
@@ -1391,7 +1560,9 @@ function finalizeEntitySet(accumulatorById, simulationCount, entityType) {
             roundIndex: Number(roundIndexText),
             holeIndex: Number(holeIndexText),
             projectedGross: round2(sums.gross / simulationCount),
-            projectedNet: round2(sums.net / simulationCount)
+            projectedNet: round2(sums.net / simulationCount),
+            grossDistribution: distributionRowsFromMap(sums.grossDistribution, simulationCount),
+            netDistribution: distributionRowsFromMap(sums.netDistribution, simulationCount)
           };
         })
         .sort((a, b) => a.roundIndex - b.roundIndex || a.holeIndex - b.holeIndex);

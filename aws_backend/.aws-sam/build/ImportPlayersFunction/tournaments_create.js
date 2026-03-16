@@ -1,37 +1,11 @@
 import { json, parseBody, requireAdmin, uid, makeEditCode, hashEditCode, updateStateWithRetry, writePublicObjectsFromState } from "./utils.js";
-
-function validateCourse(course){
-  const pars = course?.pars;
-  const strokeIndex = course?.strokeIndex;
-  if (!Array.isArray(pars) || pars.length !== 18) return "course.pars must be an array of length 18";
-  if (!Array.isArray(strokeIndex) || strokeIndex.length !== 18) return "course.strokeIndex must be an array of length 18";
-  for (const p of pars){
-    if (!Number.isFinite(Number(p))) return "All pars must be numbers";
-  }
-  const si = strokeIndex.map(Number);
-  const set = new Set(si);
-  if (set.size !== 18) return "Stroke Index must contain 18 unique values";
-  for (const v of si){
-    if (!Number.isInteger(v) || v < 1 || v > 18) return "Stroke Index values must be integers 1..18";
-  }
-  return null;
-}
+import { normalizeCourseRecord, validateCourse } from "./course_data.js";
 
 function defaultCourse(){
   return {
     pars: Array(18).fill(4),
     strokeIndex: Array.from({ length: 18 }, (_, i) => i + 1)
   };
-}
-
-function normalizeCourseForState(course){
-  const out = {
-    pars: course.pars.map(Number),
-    strokeIndex: course.strokeIndex.map(Number)
-  };
-  const name = String(course?.name || "").trim();
-  if (name) out.name = name.slice(0, 120);
-  return out;
 }
 
 function normalizeRoundCourseIndex(value, courseCount){
@@ -51,7 +25,7 @@ function normalizeCoursesFromBody(body){
         e.statusCode = 400;
         throw e;
       }
-      out.push(normalizeCourseForState(rawCourses[idx]));
+      out.push(normalizeCourseRecord(rawCourses[idx]));
     }
     return out;
   }
@@ -63,7 +37,7 @@ function normalizeCoursesFromBody(body){
     e.statusCode = 400;
     throw e;
   }
-  return [normalizeCourseForState(singleCourse)];
+  return [normalizeCourseRecord(singleCourse)];
 }
 
 function normalizeAgg(agg){

@@ -3,6 +3,7 @@ import zlib from "zlib";
 import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { computeLiveOdds } from "./live_odds.js";
 import { appendCompactLiveOddsHistory, compactLiveOddsPayload } from "./live_odds_compact.js";
+import { normalizeCourseRecord } from "./course_data.js";
 
 export const s3 = new S3Client({});
 
@@ -301,17 +302,7 @@ function defaultCourseObject(){
 }
 
 function normalizeCourseObject(course){
-  const pars = Array.isArray(course?.pars) ? course.pars.map(Number) : [];
-  const strokeIndex = Array.isArray(course?.strokeIndex) ? course.strokeIndex.map(Number) : [];
-  if (pars.length !== 18 || strokeIndex.length !== 18) return null;
-  if (!pars.every((v) => Number.isFinite(v))) return null;
-  const uniqSi = new Set(strokeIndex);
-  if (uniqSi.size !== 18) return null;
-  if (!strokeIndex.every((v) => Number.isInteger(v) && v >= 1 && v <= 18)) return null;
-  const out = { pars, strokeIndex };
-  const name = String(course?.name || "").trim();
-  if (name) out.name = name.slice(0, 120);
-  return out;
+  return normalizeCourseRecord(course);
 }
 
 function normalizeRoundCourseIndex(value, courseCount){

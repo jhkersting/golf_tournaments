@@ -1,73 +1,75 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&display=swap");
+@import url("https://use.typekit.net/ipm3dii.css");
 
 :root {
   color-scheme: light;
   --font-sans: "IBM Plex Sans", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
-  --bg: #eef3f9;
-  --text: #14212f;
+  --font-display: "ivypresto-display", Georgia, serif;
+  --bg: #f3f5f8;
+  --text: #111820;
   --WHITE: #ffffff;
-  --BLACK: #14212f;
-  --muted: #5b6a7d;
+  --BLACK: #111820;
+  --muted: #5e6d7f;
   --surface: #ffffff;
   --surface-strong: #ffffff;
-  --header: #ffffff;
-  --border: rgba(25, 42, 61, 0.14);
-  --border-strong: rgba(23, 38, 56, 0.3);
-  --shadow: 0 14px 35px rgba(15, 34, 56, 0.12);
-  --brand: #252525;
-  --brand-hover: #1f1f1f;
-  --brand-contrast: #f3f7ff;
+  --header: rgba(255, 255, 255, 0.82);
+  --border: rgba(25, 42, 61, 0.10);
+  --border-strong: rgba(23, 38, 56, 0.22);
+  --shadow: 0 1px 3px rgba(15, 34, 56, 0.06), 0 8px 24px rgba(15, 34, 56, 0.08);
+  --brand: #1a1a1a;
+  --brand-hover: #000000;
+  --brand-contrast: #ffffff;
   --ok: #0f9965;
   --bad: #c02f2f;
-  --link-bg: rgba(15, 93, 216, 0.08);
-  --field-bg: rgba(255, 255, 255, 0.94);
+  --link-bg: rgba(15, 93, 216, 0.06);
+  --field-bg: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --bg: #050607;
-    --text: #f1f4f7;
-    --WHITE: #f1f4f7;
-    --BLACK: #f1f4f7;
-    --muted: #98a1ab;
-    --surface: #0d0f12;
-    --surface-strong: #101318;
-    --header: #0a0c0f;
-    --border: rgba(255, 255, 255, 0.14);
-    --border-strong: rgba(255, 255, 255, 0.3);
-    --shadow: 0 16px 28px rgba(0, 0, 0, 0.45);
-    --brand: #f5f5f5;
-    --brand-hover: #f3f3f3;
-    --brand-contrast: #04101f;
+    --bg: #08090b;
+    --text: #eaeff4;
+    --WHITE: #eaeff4;
+    --BLACK: #eaeff4;
+    --muted: #8a95a3;
+    --surface: #101215;
+    --surface-strong: #141619;
+    --header: rgba(10, 12, 15, 0.82);
+    --border: rgba(255, 255, 255, 0.10);
+    --border-strong: rgba(255, 255, 255, 0.20);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.20), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --brand: #e8e8e8;
+    --brand-hover: #ffffff;
+    --brand-contrast: #0a0c0f;
     --ok: #4ccc95;
     --bad: #ff7a7a;
-    --link-bg: rgba(255, 255, 255, 0.05);
-    --field-bg: #11151b;
+    --link-bg: rgba(255, 255, 255, 0.04);
+    --field-bg: #13161a;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #050607;
-  --text: #f1f4f7;
-  --WHITE: #f1f4f7;
-  --BLACK: #f1f4f7;
-  --muted: #98a1ab;
-  --surface: #0d0f12;
-  --surface-strong: #101318;
-  --header: #0a0c0f;
-  --border: rgba(255, 255, 255, 0.14);
-  --border-strong: rgba(255, 255, 255, 0.3);
-  --shadow: 0 16px 28px rgba(0, 0, 0, 0.45);
-  --brand: #4f8cff;
-  --brand-hover: #3f7df2;
-  --brand-contrast: #04101f;
+  --bg: #08090b;
+  --text: #eaeff4;
+  --WHITE: #eaeff4;
+  --BLACK: #eaeff4;
+  --muted: #8a95a3;
+  --surface: #101215;
+  --surface-strong: #141619;
+  --header: rgba(10, 12, 15, 0.82);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.20);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.20), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --brand: #e8e8e8;
+  --brand-hover: #ffffff;
+  --brand-contrast: #0a0c0f;
   --ok: #4ccc95;
   --bad: #ff7a7a;
-  --link-bg: rgba(255, 255, 255, 0.05);
-  --field-bg: #11151b;
+  --link-bg: rgba(255, 255, 255, 0.04);
+  --field-bg: #13161a;
 }
 
 * {
@@ -87,9 +89,11 @@ body {
   color: var(--text);
   background-color: var(--bg);
   background-image: none;
-  line-height: 1.45;
-  font-size: 15px;
+  line-height: 1.5;
+  font-size: 14px;
   display: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a {
@@ -106,6 +110,8 @@ header {
   z-index: 40;
   border-bottom: 1px solid var(--border);
   background: var(--header);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .nav {
@@ -121,8 +127,10 @@ header {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 15px;
-  font-weight: 800;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+  /*font-style: italic;*/
   letter-spacing: 0.01em;
 }
 
@@ -150,10 +158,12 @@ header {
   color: var(--text);
   border: 1px solid var(--border);
   background: var(--link-bg);
-  border-radius: 999px;
-  padding: 9px 12px;
-  font-size: 13px;
-  font-weight: 700;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .nav a:hover,
@@ -189,6 +199,8 @@ header {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .menu-toggle:hover {
@@ -198,31 +210,78 @@ header {
 
 .enter-tabs {
   display: flex;
-  gap: 8px;
-  margin: 10px 0;
+  gap: 0;
+  margin: 12px 0;
   flex-wrap: wrap;
+  border-bottom: 2px solid var(--border);
+}
+
+.enter-tabs button,
+.enter-tabs button.secondary {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 16px;
+  min-height: 36px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  position: relative;
+}
+
+.enter-tabs button:hover,
+.enter-tabs button.secondary:hover {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
+}
+
+.enter-tabs button.active {
+  color: var(--text);
+  background: transparent;
+}
+
+.enter-tabs button.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 2px;
+  background: var(--brand);
 }
 
 .hole-header {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
   align-items: flex-end;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hole-header b {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 400;
 }
 
 .hole-grid {
   display: block;
+  margin-top: 6px;
 }
 
 .hole-row {
   display: inline-block;
   vertical-align: top;
-  margin: 0 6px 6px 0;
-  padding: 8px 10px;
+  margin: 0 8px 8px 0;
+  padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface-strong);
   min-width: 0;
   max-width: 100%;
@@ -243,12 +302,48 @@ header {
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 14px;
-  margin: 0 0 12px;
+  border-radius: 14px;
+  padding: 18px;
+  margin: 0 0 14px;
   box-shadow: var(--shadow);
   max-width: 100%;
   overflow-x: hidden;
+}
+
+.enter-page .card {
+  border-radius: 12px;
+}
+
+.enter-who-card {
+  background: var(--surface);
+  border-left: 3px solid var(--brand);
+  padding: 14px 16px;
+}
+
+.enter-who-card .enter-who-main b {
+  font-size: 15px;
+}
+
+.enter-who-card .enter-who-main > div:first-child .small {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.enter-who-card #team_current_score {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.enter-who-card #entry_sync_status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.enter-page .card > .actions:first-child {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
 }
 
 .enter-who-head {
@@ -265,12 +360,61 @@ header {
   gap: 4px;
 }
 
+.scoreboard-controls {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.scoreboard-controls-inner {
+  width: min(100%, 1080px);
+  margin: 0 auto;
+  padding: 12px;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.scoreboard-control-group {
+  min-width: 0;
+}
+
+.scoreboard-control-group label {
+  margin-top: 0;
+}
+
+.scoreboard-control-group select {
+  min-width: 140px;
+  width: auto;
+}
+
+.scoreboard-control-status {
+  margin-left: auto;
+}
+
+.scoreboard-leaderboard {
+  margin-bottom: 18px;
+}
+
+.scoreboard-leaderboard-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.scoreboard-leaderboard-head h2 {
+  margin: 0;
+}
+
 .scoreboard-main-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  margin-bottom: 10px;
 }
 
 .scoreboard-head-toggles {
@@ -292,11 +436,13 @@ header {
   justify-content: center;
   min-height: 40px;
   border: 1px solid var(--brand);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--brand);
   color: var(--brand-contrast);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
   text-decoration: none;
   padding: 8px 12px;
   white-space: nowrap;
@@ -305,7 +451,7 @@ header {
 .main-action-link {
   width: 100%;
   padding: 10px 0;
-  font-size: 14px;
+  font-size: 12px;
   margin-bottom: 12px;
 }
 
@@ -331,28 +477,33 @@ h1,
 h2,
 h3 {
   margin: 0 0 8px;
-  line-height: 1.25;
-  letter-spacing: 0.01em;
+  font-family: var(--font-display);
+  font-weight: 400;
+  /*font-style: italic;*/
+  line-height: 1.2;
+  letter-spacing: 0.005em;
 }
 
 h1 {
-  font-size: clamp(1.3rem, 4vw, 1.7rem);
+  font-size: clamp(1.5rem, 4.5vw, 2rem);
 }
 
 h2 {
-  font-size: clamp(1.05rem, 3.5vw, 1.28rem);
+  font-size: clamp(1.15rem, 3.5vw, 1.45rem);
 }
 
 h3 {
-  font-size: clamp(0.98rem, 3vw, 1.1rem);
+  font-size: clamp(1rem, 3vw, 1.15rem);
 }
 
 label {
   display: block;
   margin: 10px 0 6px;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 input,
@@ -362,7 +513,7 @@ textarea {
   min-height: 44px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--field-bg);
   color: var(--text);
   font-family: var(--font-sans);
@@ -370,6 +521,11 @@ textarea {
   transition:
     border-color 120ms ease,
     box-shadow 120ms ease;
+}
+
+input[type="number"] {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 input[type="checkbox"],
@@ -395,13 +551,15 @@ textarea::placeholder {
 button {
   min-height: 44px;
   border: 1px solid var(--brand);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--brand);
   color: var(--brand-contrast);
   font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 700;
-  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 10px 16px;
   cursor: pointer;
   transition:
     transform 120ms ease,
@@ -443,6 +601,8 @@ hr {
 .muted {
   color: var(--muted);
   font-size: 12px;
+  font-family: var(--font-sans);
+  line-height: 1.55;
 }
 
 .pill {
@@ -452,9 +612,11 @@ hr {
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--link-bg);
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 700;
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 .score-notifier {
@@ -515,8 +677,10 @@ hr {
 }
 
 .score-notifier-line {
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -550,14 +714,24 @@ hr {
 .table th,
 .table td {
   border: 1px solid var(--border);
-  padding: 7px 6px;
+  padding: 8px 6px;
   text-align: center;
   vertical-align: middle;
 }
 
 .table th {
   background: color-mix(in srgb, var(--link-bg) 72%, var(--surface-strong));
-  font-weight: 700;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rank-col,
+.metric-col,
+.thru-col {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .sort-head-btn {
@@ -573,6 +747,9 @@ hr {
   font-weight: inherit;
   padding: 0;
   cursor: pointer;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  min-height: 0;
 }
 
 .sort-head-btn:hover,
@@ -619,12 +796,23 @@ hr {
 #lb_tbl {
   table-layout: fixed;
   width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
 }
 
 #lb_tbl th,
 #lb_tbl td {
   border-left: 0;
   border-right: 0;
+}
+
+#lb_tbl thead tr:first-child th:first-child {
+  border-top-left-radius: 10px;
+}
+
+#lb_tbl thead tr:first-child th:last-child {
+  border-top-right-radius: 10px;
 }
 
 #lb_tbl .name-col .team-accent,
@@ -677,34 +865,190 @@ hr {
 
 .odds-table {
   width: 100%;
-  min-width: 720px;
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .odds-table .entity-col {
-  min-width: 180px;
+  min-width: 0;
   text-align: left;
 }
 
 .odds-table .entity-name {
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .odds-table .entity-sub {
   margin-top: 2px;
+  overflow-wrap: anywhere;
 }
 
 .odds-table .metric-stack {
   display: grid;
   gap: 2px;
   justify-items: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .odds-table .metric-stack .small {
   line-height: 1.2;
 }
 
+.odds-table .odds-metric-value {
+  display: inline-block;
+  min-width: 3ch;
+  padding-bottom: 3px;
+  border-bottom: var(--odds-underline-thickness, 2px) solid var(--odds-underline-color, transparent);
+  line-height: 1;
+}
+
+.odds-table .odds-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+
+.odds-table .odds-status-win {
+  background: rgba(20, 33, 47, 0.92);
+  color: var(--WHITE);
+}
+
 .odds-table .remaining-col {
-  width: 76px;
+  width: 52px;
+}
+
+.odds-table th:nth-child(2),
+.odds-table td:nth-child(2),
+.odds-table th:nth-child(3),
+.odds-table td:nth-child(3) {
+  width: 82px;
+}
+
+.odds-table th:nth-child(4),
+.odds-table td:nth-child(4) {
+  width: 66px;
+}
+
+.odds-scorecards-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(20, 33, 47, 0.1);
+}
+
+.odds-scorecards-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.odds-hole-picker {
+  display: inline-grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.odds-hole-picker select {
+  min-width: 120px;
+}
+
+.odds-scorecards {
+  display: grid;
+  gap: 14px;
+}
+
+.odds-scorecard-block {
+  display: grid;
+  gap: 10px;
+}
+
+.odds-scorecard-wrap,
+.odds-distribution-wrap {
+  overflow-x: auto;
+}
+
+.odds-scorecard-table,
+.odds-distribution-table {
+  width: 100%;
+  min-width: 900px;
+  table-layout: fixed;
+}
+
+.odds-scorecard-table th,
+.odds-scorecard-table td,
+.odds-distribution-table th,
+.odds-distribution-table td {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.odds-scorecard-table .entity-col,
+.odds-distribution-table .entity-col {
+  width: 220px;
+  min-width: 220px;
+  text-align: left;
+}
+
+.odds-scorecard-hole.selected,
+.odds-scorecard-cell.selected {
+  background: rgba(20, 33, 47, 0.08);
+}
+
+.odds-scorecard-cell {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.odds-scorecard-cell.actual {
+  font-weight: 700;
+}
+
+.odds-scorecard-cell.projected {
+  color: rgba(20, 33, 47, 0.78);
+}
+
+.odds-scorecard-cell.empty {
+  color: rgba(20, 33, 47, 0.35);
+}
+
+.odds-distribution-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.odds-distribution-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(20, 33, 47, 0.07);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.odds-distribution-pill strong {
+  font-weight: 800;
+}
+
+.odds-distribution-played {
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .score-hole-cell {
@@ -720,7 +1064,9 @@ hr {
   margin: 0 auto;
   padding: 0 6px;
   line-height: 1;
+  font-family: var(--font-mono);
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   border-radius: 6px;
   color: var(--BLACK);
 }
@@ -801,6 +1147,8 @@ hr {
   width: 38px;
   min-height: 30px;
   padding: 3px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .left {
@@ -865,8 +1213,10 @@ hr {
   position: sticky;
   left: 0;
   z-index: 1;
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
   background: color-mix(in srgb, var(--surface) 86%, var(--bg));
   padding: 8px 10px 8px 0;
@@ -895,12 +1245,16 @@ hr {
 .enter-ticker-item {
   display: inline-flex;
   align-items: center;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 12px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   background: transparent;
   border: 0;
   border-radius: 0;
   padding: 2px 8px 2px 8px;
+  text-transform: none;
+  letter-spacing: 0;
 }
 .enter-ticker-item.team-accent {
   border-left: 4px solid var(--team-accent, var(--border-strong));
@@ -980,6 +1334,7 @@ hr {
 .trend-graph {
   display: block;
   width: 100%;
+  height: auto;
   min-height: 320px;
 }
 
@@ -1075,7 +1430,9 @@ hr {
 
 .trend-legend-score {
   white-space: nowrap;
+  font-family: var(--font-mono);
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
 
@@ -1257,6 +1614,8 @@ pre {
   border-radius: 9px;
   min-height: 36px;
   width: 50px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .toggle {
@@ -1266,7 +1625,7 @@ pre {
   border-radius: 999px;
   padding: 3px;
   background: var(--field-bg);
-  gap: 4px;
+  gap: 2px;
 }
 
 .toggle button {
@@ -1275,7 +1634,11 @@ pre {
   border-radius: 999px;
   background: transparent;
   color: var(--text);
-  padding: 6px 12px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .toggle button.active {
@@ -1332,8 +1695,8 @@ th.dots {
   }
 
   .container {
-    padding-top: 20px;
-    padding-bottom: 38px;
+    padding-top: 24px;
+    padding-bottom: 42px;
   }
 
   .enter-page .container {
@@ -1345,7 +1708,7 @@ th.dots {
   }
 
   .card {
-    padding: 18px;
+    padding: 22px;
   }
 }
 
@@ -1359,7 +1722,7 @@ th.dots {
   .menu-toggle {
     display: inline-flex;
     position: absolute;
-    top: 8px;
+    top: 10px;
     right: 10px;
   }
 
@@ -1379,7 +1742,7 @@ th.dots {
   .mobile-header-link {
     display: inline-flex;
     position: absolute;
-    top: 8px;
+    top: 10px;
     min-height: 25px;
     border-radius: 5px !important;
     padding: 1px 5px !important;
@@ -1430,7 +1793,23 @@ th.dots {
   }
 
   .scoreboard-page .container {
-    padding-top: 0;
+    padding-top: 14px;
+  }
+
+  .scoreboard-controls-inner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .scoreboard-control-status {
+    margin-left: 0;
+  }
+
+  .scoreboard-leaderboard-head {
+    flex-direction: column;
+    gap: 2px;
   }
 
   .score-notifier {
@@ -1473,8 +1852,8 @@ th.dots {
   }
 
   .enter-tabs button {
-    flex: 1 1 100%;
-    width: 100%;
+    flex: 1 1 auto;
+    text-align: center;
   }
 
   .hole-header {
@@ -1500,7 +1879,7 @@ th.dots {
   }
 
   .table {
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .table th,
@@ -1537,7 +1916,12 @@ th.dots {
   }
 
   .trend-graph {
-    min-height: 260px;
+    min-height: 340px;
+  }
+
+  .trend-graph .trend-axis-label,
+  .trend-graph .trend-hole-label {
+    font-size: 16px;
   }
 
   .trend-legend {
@@ -1637,6 +2021,103 @@ th.dots {
     min-width: 138px;
     padding-right: 8px;
   }
+
+  .odds-block {
+    gap: 6px;
+  }
+
+  .odds-block-head {
+    gap: 6px;
+  }
+
+  .odds-block-head h3 {
+    font-size: 0.98rem;
+  }
+
+  .odds-table-wrap {
+    overflow-x: visible;
+  }
+
+  .odds-table {
+    min-width: 0;
+  }
+
+  .odds-table th,
+  .odds-table td {
+    padding: 6px 3px;
+    font-size: 12px;
+  }
+
+  .odds-table th {
+    font-size: 10px;
+    letter-spacing: 0.02em;
+  }
+
+  .odds-table .entity-col {
+    width: calc(100% - 58px - 58px - 52px - 34px);
+  }
+
+  .odds-table th:nth-child(2),
+  .odds-table td:nth-child(2),
+  .odds-table th:nth-child(3),
+  .odds-table td:nth-child(3) {
+    width: 58px;
+  }
+
+  .odds-table th:nth-child(4),
+  .odds-table td:nth-child(4) {
+    width: 52px;
+  }
+
+  .odds-table .remaining-col {
+    width: 34px;
+  }
+
+  .odds-table .entity-name {
+    font-size: 12px;
+    line-height: 1.1;
+  }
+
+  .odds-table .entity-sub {
+    margin-top: 1px;
+    font-size: 11px;
+    line-height: 1.05;
+  }
+
+  .odds-table .odds-metric-value {
+    min-width: 0;
+    padding-bottom: 2px;
+  }
+
+  .odds-table .odds-status-badge {
+    margin-left: 4px;
+    padding: 2px 5px;
+    font-size: 10px;
+  }
+
+  .odds-scorecards-head {
+    align-items: stretch;
+  }
+
+  .odds-scorecard-table,
+  .odds-distribution-table {
+    min-width: 760px;
+  }
+
+  .odds-scorecard-table .entity-col,
+  .odds-distribution-table .entity-col {
+    width: 180px;
+    min-width: 180px;
+  }
+
+  .odds-distribution-pills {
+    gap: 4px;
+  }
+
+  .odds-distribution-pill {
+    padding: 3px 7px;
+    font-size: 11px;
+  }
 }
 
 .hole-map-controls {
@@ -1655,7 +2136,7 @@ th.dots {
   z-index: 85;
 
 }
-#metric_summary{
+#metric_summary {
   font-size: 13px;
 }
 
@@ -1738,6 +2219,7 @@ th.dots {
 }
 
 .hole-map-summary {
+  font-family: var(--font-display);
   font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -1755,8 +2237,8 @@ th.dots {
   max-height: 75vh;
   display: block;
   touch-action: auto;
-  border-radius: 14px;
-  border: 0;
+  border-radius: 10px;
+  border: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 85%, var(--bg));
 }
 
@@ -1767,9 +2249,10 @@ th.dots {
   bottom: 0;
   z-index: 90;
   border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-strong) 92%, var(--bg));
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
-  backdrop-filter: blur(7px);
+  background: color-mix(in srgb, var(--surface-strong) 88%, var(--bg));
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   transform-origin: left top;
 }
 
@@ -1790,13 +2273,17 @@ th.dots {
 
 .hole-map-footer-point-head {
   color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
   margin-bottom: 2px;
 }
 
 .hole-map-footer-point-value {
   color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 20px;
   font-weight: 800;
   line-height: 1.1;
@@ -1811,13 +2298,17 @@ th.dots {
 
 .hole-map-footer-head {
   color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
   margin-bottom: 4px;
 }
 
 .hole-map-footer-values {
   color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 22px;
   font-weight: 800;
   line-height: 1.1;
@@ -1843,7 +2334,7 @@ th.dots {
   }
 
   span[data-brand-title] {
-    font-size: 13px;
+    font-size: 15px;
     white-space: nowrap;
   }
 

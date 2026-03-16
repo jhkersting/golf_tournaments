@@ -64,7 +64,7 @@ function teamEntry(grossScore, handicap = 0) {
   return playerEntry(grossScore, handicap);
 }
 
-function materializedFixture(format, { useHandicap = false, includeFutureRound = false } = {}) {
+function materializedFixture(format, { useHandicap = false, includeFutureRound = false, courseOverrides = null } = {}) {
   const rounds = [
     {
       name: "Round 1",
@@ -151,6 +151,16 @@ function materializedFixture(format, { useHandicap = false, includeFutureRound =
     }
   }
 
+  const baseCourse = {
+    name: "Fixture Course",
+    pars: PARS.slice(),
+    strokeIndex: STROKE_INDEX.slice()
+  };
+  const mergedCourse = {
+    ...baseCourse,
+    ...(courseOverrides && typeof courseOverrides === "object" ? courseOverrides : {})
+  };
+
   return {
     tournament: {
       tournamentId: `fixture-${format}`,
@@ -158,16 +168,8 @@ function materializedFixture(format, { useHandicap = false, includeFutureRound =
       dates: "2026-03-15",
       rounds
     },
-    course: {
-      name: "Fixture Course",
-      pars: PARS.slice(),
-      strokeIndex: STROKE_INDEX.slice()
-    },
-    courses: [{
-      name: "Fixture Course",
-      pars: PARS.slice(),
-      strokeIndex: STROKE_INDEX.slice()
-    }],
+    course: { ...mergedCourse },
+    courses: [{ ...mergedCourse }],
     teams: [
       { teamId: "A", teamName: "Alpha", groupsByRound: { "0": { A: ["A1", "A2"] } } },
       { teamId: "B", teamName: "Beta", groupsByRound: { "0": { A: ["B1", "B2"] } } }
@@ -237,8 +239,188 @@ registerTest("all-round odds include future unstarted holes", () => {
   assert.ok(Number(allRoundTeamOdds.get("A")?.projectedScore || 0) > Number(roundTeamOdds.get("A")?.projectedScore || 0));
 });
 
+registerTest("baseline modeling respects stroke index difficulty and handicap lookup", () => {
+  const tournamentJson = materializedFixture("singles", { useHandicap: true });
+  const playerHandicaps = new Map((tournamentJson.players || []).map((player) => [player.playerId, Number(player.handicap || 0)]));
+  for (const playerId of Object.keys(tournamentJson.score_data.rounds[0].player || {})) {
+    const handicap = playerHandicaps.get(playerId) || 0;
+    tournamentJson.score_data.rounds[0].player[playerId] = {
+      gross: grossArray(null),
+      net: grossArray(null),
+      handicapShots: strokesPerHole(handicap, STROKE_INDEX),
+      grossTotal: 0,
+      netTotal: 0,
+      grossToParTotal: 0,
+      netToParTotal: 0,
+      thru: 0
+    };
+  }
+
+  const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
+  const playerOdds = new Map((odds.rounds?.[0]?.players || []).map((row) => [row.playerId, row]));
+  const lowHandicap = playerOdds.get("A1");
+  const highHandicap = playerOdds.get("B2");
+  assert.ok(lowHandicap);
+  assert.ok(highHandicap);
+
+  const lowHandicapHole1 = Number(lowHandicap.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+  const lowHandicapHole18 = Number(lowHandicap.remainingHoleExpectations?.find((item) => item.holeIndex === 17)?.projectedGross || 0);
+  const highHandicapHole1 = Number(highHandicap.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+
+  assert.ok(lowHandicapHole1 > lowHandicapHole18, `expected hardest hole to project higher than easiest hole: ${lowHandicapHole1} vs ${lowHandicapHole18}`);
+  assert.ok(highHandicapHole1 > lowHandicapHole1, `expected higher handicap hardest-hole projection to be worse: ${highHandicapHole1} vs ${lowHandicapHole1}`);
+});
+
+registerTest("live hole scoring feeds future hole projections for players who have not played that hole", () => {
+  const baselineTournament = materializedFixture("singles", { useHandicap: true });
+  const liveTournament = deepClone(baselineTournament);
+
+  for (const player of liveTournament.players || []) {
+    const handicapShots = strokesPerHole(player.handicap, STROKE_INDEX);
+    liveTournament.score_data.rounds[0].player[player.playerId] = {
+      gross: grossArray(null),
+      net: grossArray(null),
+      handicapShots,
+      grossTotal: 0,
+      netTotal: 0,
+      grossToParTotal: 0,
+      netToParTotal: 0,
+      thru: 0
+    };
+  }
+
+  for (const [playerId, grossScore] of [["A1", 7], ["A2", 8]]) {
+    const playerMeta = liveTournament.players.find((player) => player.playerId === playerId);
+    const entry = liveTournament.score_data.rounds[0].player[playerId];
+    const handicapShots = strokesPerHole(playerMeta.handicap, STROKE_INDEX);
+    entry.gross[0] = grossScore;
+    entry.net[0] = grossScore - Number(handicapShots[0] || 0);
+    entry.grossTotal = grossScore;
+    entry.netTotal = entry.net[0];
+    entry.grossToParTotal = grossScore - PARS[0];
+    entry.netToParTotal = entry.net[0] - PARS[0];
+    entry.thru = 1;
+  }
+
+  const baselineOdds = computeLiveOdds(baselineTournament, { generatedAt: FIXED_NOW });
+  const liveOdds = computeLiveOdds(liveTournament, { generatedAt: FIXED_NOW });
+  const baselineB1 = (baselineOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "B1");
+  const liveB1 = (liveOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "B1");
+  const baselineHole1 = Number(baselineB1?.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+  const liveHole1 = Number(liveB1?.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+
+  assert.ok(liveHole1 > baselineHole1, `expected live-scoring hole effect to raise future projection: ${liveHole1} vs ${baselineHole1}`);
+});
+
+registerTest("course rating and slope raise projections and widen handicap spread", () => {
+  const neutralTournament = materializedFixture("singles", {
+    useHandicap: true,
+    courseOverrides: {
+      ratings: [{ rating: 72.0, slope: 113 }],
+      holeYardages: Array(18).fill(400),
+      totalYards: 7200
+    }
+  });
+  const toughTournament = materializedFixture("singles", {
+    useHandicap: true,
+    courseOverrides: {
+      ratings: [{ rating: 76.5, slope: 145 }],
+      holeYardages: Array(18).fill(435),
+      totalYards: 7830
+    }
+  });
+
+  for (const tournamentJson of [neutralTournament, toughTournament]) {
+    const playerHandicaps = new Map((tournamentJson.players || []).map((player) => [player.playerId, Number(player.handicap || 0)]));
+    for (const playerId of Object.keys(tournamentJson.score_data.rounds[0].player || {})) {
+      const handicap = playerHandicaps.get(playerId) || 0;
+      tournamentJson.score_data.rounds[0].player[playerId] = {
+        gross: grossArray(null),
+        net: grossArray(null),
+        handicapShots: strokesPerHole(handicap, STROKE_INDEX),
+        grossTotal: 0,
+        netTotal: 0,
+        grossToParTotal: 0,
+        netToParTotal: 0,
+        thru: 0
+      };
+    }
+  }
+
+  const neutralOdds = computeLiveOdds(neutralTournament, { generatedAt: FIXED_NOW });
+  const toughOdds = computeLiveOdds(toughTournament, { generatedAt: FIXED_NOW });
+  const neutralPlayers = new Map((neutralOdds.rounds?.[0]?.players || []).map((row) => [row.playerId, row]));
+  const toughPlayers = new Map((toughOdds.rounds?.[0]?.players || []).map((row) => [row.playerId, row]));
+
+  const neutralLow = Number(neutralPlayers.get("A1")?.projectedGross || 0);
+  const neutralHigh = Number(neutralPlayers.get("B2")?.projectedGross || 0);
+  const toughLow = Number(toughPlayers.get("A1")?.projectedGross || 0);
+  const toughHigh = Number(toughPlayers.get("B2")?.projectedGross || 0);
+
+  assert.ok(toughLow > neutralLow, `expected rated course to project higher gross for low handicap: ${toughLow} vs ${neutralLow}`);
+  assert.ok((toughHigh - toughLow) > (neutralHigh - neutralLow), `expected slope to widen handicap spread: ${(toughHigh - toughLow)} vs ${(neutralHigh - neutralLow)}`);
+});
+
+registerTest("hole yardages influence hole-level projections beyond stroke index", () => {
+  const flatYardageTournament = materializedFixture("singles", {
+    useHandicap: true,
+    courseOverrides: {
+      ratings: [{ rating: 72.0, slope: 113 }],
+      holeYardages: Array(18).fill(400)
+    }
+  });
+  const variedYardageTournament = materializedFixture("singles", {
+    useHandicap: true,
+    courseOverrides: {
+      ratings: [{ rating: 72.0, slope: 113 }],
+      holeYardages: [400, 400, 400, 400, 400, 400, 400, 400, 320, 520, 400, 400, 400, 400, 400, 400, 400, 400]
+    }
+  });
+
+  for (const tournamentJson of [flatYardageTournament, variedYardageTournament]) {
+    const playerHandicaps = new Map((tournamentJson.players || []).map((player) => [player.playerId, Number(player.handicap || 0)]));
+    for (const playerId of Object.keys(tournamentJson.score_data.rounds[0].player || {})) {
+      const handicap = playerHandicaps.get(playerId) || 0;
+      tournamentJson.score_data.rounds[0].player[playerId] = {
+        gross: grossArray(null),
+        net: grossArray(null),
+        handicapShots: strokesPerHole(handicap, STROKE_INDEX),
+        grossTotal: 0,
+        netTotal: 0,
+        grossToParTotal: 0,
+        netToParTotal: 0,
+        thru: 0
+      };
+    }
+  }
+
+  const flatOdds = computeLiveOdds(flatYardageTournament, { generatedAt: FIXED_NOW });
+  const variedOdds = computeLiveOdds(variedYardageTournament, { generatedAt: FIXED_NOW });
+  const flatPlayer = (flatOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "A1");
+  const variedPlayer = (variedOdds.rounds?.[0]?.players || []).find((row) => row.playerId === "A1");
+  const flatHole9 = Number(flatPlayer?.remainingHoleExpectations?.find((item) => item.holeIndex === 8)?.projectedGross || 0);
+  const flatHole10 = Number(flatPlayer?.remainingHoleExpectations?.find((item) => item.holeIndex === 9)?.projectedGross || 0);
+  const variedHole9 = Number(variedPlayer?.remainingHoleExpectations?.find((item) => item.holeIndex === 8)?.projectedGross || 0);
+  const variedHole10 = Number(variedPlayer?.remainingHoleExpectations?.find((item) => item.holeIndex === 9)?.projectedGross || 0);
+
+  assert.ok((variedHole10 - variedHole9) > (flatHole10 - flatHole9), `expected long hole to pick up more projection weight from yardage: ${(variedHole10 - variedHole9)} vs ${(flatHole10 - flatHole9)}`);
+});
+
 registerTest("compact live odds payload strips names and quantizes output", () => {
-  const tournamentJson = materializedFixture("singles", { includeFutureRound: true });
+  const tournamentJson = materializedFixture("singles", { includeFutureRound: true, useHandicap: true });
+  for (const player of tournamentJson.players || []) {
+    const handicap = Number(player.handicap || 0);
+    tournamentJson.score_data.rounds[0].player[player.playerId] = {
+      gross: grossArray(null),
+      net: grossArray(null),
+      handicapShots: strokesPerHole(handicap, STROKE_INDEX),
+      grossTotal: 0,
+      netTotal: 0,
+      grossToParTotal: 0,
+      netToParTotal: 0,
+      thru: 0
+    };
+  }
   const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
   const compact = compactLiveOddsPayload(odds);
 
@@ -246,18 +428,25 @@ registerTest("compact live odds payload strips names and quantizes output", () =
   assert.equal(Array.isArray(compact?.r), true);
   assert.equal(Array.isArray(compact?.a), true);
 
-  const teamRow = compact?.r?.[0]?.[0]?.[0];
+  const teamRow = (compact?.r?.[0]?.[0] || []).find((row) => row?.[0] === "A");
   assert.equal(Array.isArray(teamRow), true);
-  assert.equal(teamRow.length, 8);
+  assert.equal(teamRow.length, 9);
   assert.equal(teamRow[0], "A");
   assert.equal(Number.isInteger(teamRow[1]), true);
   assert.equal(teamRow[4] == null || Number.isInteger(teamRow[4]), true);
+  assert.equal(Array.isArray(teamRow[8]), true);
 
-  const playerRow = compact?.r?.[0]?.[1]?.[0];
+  const playerRow = (compact?.r?.[0]?.[1] || []).find((row) => row?.[0] === "A1");
   assert.equal(Array.isArray(playerRow), true);
-  assert.equal(playerRow.length, 9);
+  assert.equal(playerRow.length, 10);
   assert.equal(playerRow[0], "A1");
   assert.equal(playerRow[1], "A");
+  assert.equal(Array.isArray(playerRow[9]), true);
+
+  const firstHoleDetail = playerRow[9][0];
+  assert.equal(Array.isArray(firstHoleDetail), true);
+  assert.equal(Number.isInteger(firstHoleDetail[0]), true);
+  assert.equal(Array.isArray(firstHoleDetail[3]), true);
 });
 
 registerTest("compact live odds history appends sparse snapshots and skips unchanged odds", () => {

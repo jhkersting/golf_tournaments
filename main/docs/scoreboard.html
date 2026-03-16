@@ -14,7 +14,7 @@
   <title>Scoreboard</title>
   <style>
     .mobile-header-link-secondary {
-      right: 134px;
+      right: 96px;
     }
   </style>
 </head>
@@ -23,7 +23,7 @@
   <header>
     <div class="nav">
       <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
-      <a href="./enter.html" data-enter-link class="mobile-header-link mobile-header-link-primary">Enter Score</a>
+      <a href="./enter.html" data-enter-link class="mobile-header-link mobile-header-link-primary">Enter</a>
       <a href="./hole-map.html" class="mobile-header-link mobile-header-link-secondary">Map</a>
       <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu"
         aria-expanded="false">☰</button>
@@ -34,75 +34,84 @@
         <a href="./hole-map.html">Hole Map</a>
         <button type="button" class="theme-toggle" data-theme-toggle></button>
       </div>
-      
+
     </div>
   </header>
-  <div class="container">
 
-    <div class="card">
-      <div class="row" style="align-items:flex-end;">
-        <div class="col">
-          <label for="round_filter">View</label>
-          <select id="round_filter"></select>
+  <div class="scoreboard-controls">
+    <div class="scoreboard-controls-inner">
+      <div class="scoreboard-control-group">
+        <label for="round_filter">View</label>
+        <select id="round_filter"></select>
+      </div>
+      <div class="scoreboard-control-group">
+        <label>Leaderboard</label>
+        <div class="toggle" id="lb_toggle">
+          <button id="btn_team">Team</button>
+          <button id="btn_player" class="active">Individual</button>
         </div>
-        <div class="col">
-          <label>Leaderboard</label>
-          <div class="toggle" id="lb_toggle">
-            <button id="btn_team">Team</button>
-            <button id="btn_player" class="active">Individual</button>
-          </div>
-          <div class="small" id="toggle_note"></div>
-        </div>
-        <div class="col" style="min-width:220px;">
-          <div class="pill" id="updated">—</div>
-          <div class="small" id="status" style="margin-top:6px;"></div>
-        </div>
+        <div class="small" id="toggle_note"></div>
+      </div>
+      <div class="scoreboard-control-group scoreboard-control-status">
+        <div class="pill" id="updated">—</div>
+        <div class="small" id="status" style="margin-top:4px;"></div>
       </div>
     </div>
+  </div>
 
-    <div class="row">
-      <div class="col card">
-        <h2 style="margin-top:0;" id="lb_title">Individuals</h2>
-        <div class="small" id="lb_title_help" style="margin-top:-6px; margin-bottom:10px;">Click on team/group/player to
-          see scores.</div>
-        <table class="table" id="lb_tbl">
-          <thead>
-            <tr id="lb_head"></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <div class="trend-panel" id="trend_panel">
-          <div class="scoreboard-main-head">
-            <div>
-              <h3 style="margin-top:0;">Score To Par Through Round</h3>
-              <div class="small" id="trend_meta">—</div>
-            </div>
-            <div class="toggle" id="trend_metric_toggle" aria-label="Graph metric">
-              <button type="button" id="btn_trend_gross" class="active">Gross</button>
-              <button type="button" id="btn_trend_net">Net</button>
-            </div>
-          </div>
-          <div class="trend-empty small" id="trend_empty" hidden></div>
-          <div class="trend-graph-shell" id="trend_graph_shell">
-            <svg
-              id="trend_svg"
+  <div class="container">
+
+    <div class="scoreboard-leaderboard">
+      <div class="scoreboard-leaderboard-head">
+        <h2 id="lb_title">Individuals</h2>
+        <div class="small" id="lb_title_help">Click on team/group/player to see scores.</div>
+      </div>
+      <table class="table" id="lb_tbl">
+        <thead>
+          <tr id="lb_head"></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card" id="scorecard_card" style="display:none;">
+      <h2 style="margin-top:0;" id="sc_title">Scorecard</h2>
+      <div class="small" id="sc_sub"></div>
+      <div class="scoregrid" style="margin-top:12px;" id="sc_grid"></div>
+    </div>
+
+    <div class="card" id="trend_panel">
+      <div class="scoreboard-main-head">
+        <div>
+          <h3 style="margin-top:0;">Score To Par Through Round</h3>
+          <div class="small" id="trend_meta">—</div>
+        </div>
+        <div class="toggle" id="trend_metric_toggle" aria-label="Graph metric">
+          <button type="button" id="btn_trend_gross" class="active">Gross</button>
+          <button type="button" id="btn_trend_net">Net</button>
+        </div>
+      </div>
+      <div class="trend-empty small" id="trend_empty" hidden></div>
+      <div class="trend-graph-shell" id="trend_graph_shell">
+        <svg
+          id="trend_svg"
               class="trend-graph"
               viewBox="0 0 760 320"
               role="img"
               aria-label="Score to par trend graph"
-              preserveAspectRatio="none"
+              preserveAspectRatio="xMidYMid meet"
             ></svg>
           </div>
-          <div class="trend-legend" id="trend_legend"></div>
-        </div>
-        <hr />
-        <div id="stats_panel">
-          <h3 style="margin-top:0;">Stats</h3>
-          <div class="small" id="stats_meta">—</div>
-          <div class="stats-kpis" id="stats_kpis"></div>
-          <div class="scoregrid stats-grid" id="stats_grid">
-            <table class="table stats-hole-table" id="stats_hole_tbl"></table>
-          </div>
+      <div class="trend-legend" id="trend_legend"></div>
+    </div>
+
+    <div class="card" id="stats_panel_card">
+      <div id="stats_panel">
+        <h3 style="margin-top:0;">Stats</h3>
+        <div class="small" id="stats_meta">—</div>
+        <div class="stats-kpis" id="stats_kpis"></div>
+        <div class="scoregrid stats-grid" id="stats_grid">
+          <table class="table stats-hole-table" id="stats_hole_tbl"></table>
         </div>
       </div>
     </div>
@@ -125,15 +134,22 @@
         </div>
       </div>
       <div id="odds_sections"></div>
+      <div id="odds_scorecards_panel" class="odds-scorecards-panel" hidden>
+        <div class="odds-scorecards-head">
+          <div>
+            <h3 style="margin:0;">Projected Scorecards</h3>
+            <div class="small muted">Posted holes show actual scores. Remaining holes show simulated averages and the selector below opens the score distribution for that hole.</div>
+          </div>
+          <label class="small odds-hole-picker">
+            <span>Hole</span>
+            <select id="odds_hole_select"></select>
+          </label>
+        </div>
+        <div id="odds_scorecards"></div>
+      </div>
     </div>
 
-    <div class="card" id="scorecard_card" style="display:none;">
-      <h2 style="margin-top:0;" id="sc_title">Scorecard</h2>
-      <div class="small" id="sc_sub"></div>
-      <div class="scoregrid" style="margin-top:12px;" id="sc_grid"></div>
-    </div>
-
-    <div class="card">
+    <div class="card" style="display: none;">
       <h3 style="margin-top:0;">Debug (raw JSON)</h3>
       <pre id="raw" style="white-space:pre-wrap;"></pre>
     </div>

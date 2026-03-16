@@ -16,6 +16,33 @@ function roundTenthsInt(value) {
   return Math.round(n * 10);
 }
 
+function compactDistribution(distribution = []) {
+  return (distribution || [])
+    .map((item) => {
+      const score = roundTenthsInt(item?.score);
+      const probability = roundPercentInt(item?.probability);
+      if (score == null || probability <= 0) return null;
+      return [score, probability];
+    })
+    .filter(Boolean);
+}
+
+function compactHoleDetails(row) {
+  return (row?.remainingHoleExpectations || [])
+    .map((item) => {
+      const holeIndex = Number(item?.holeIndex);
+      if (!Number.isInteger(holeIndex) || holeIndex < 0) return null;
+      return [
+        holeIndex,
+        roundTenthsInt(item?.projectedGross),
+        roundTenthsInt(item?.projectedNet),
+        compactDistribution(item?.grossDistribution),
+        compactDistribution(item?.netDistribution)
+      ];
+    })
+    .filter(Boolean);
+}
+
 function projectedScoreToPar(row) {
   const gross = Number(row?.projectedGross);
   const grossToPar = Number(row?.projectedGrossToPar);
@@ -48,26 +75,28 @@ function compactMetrics(row) {
   ];
 }
 
-function compactTeamRow(row) {
+function compactTeamRow(row, { includeHoleDetails = false } = {}) {
   return [
     String(row?.teamId || ""),
-    ...compactMetrics(row)
+    ...compactMetrics(row),
+    ...(includeHoleDetails ? [compactHoleDetails(row)] : [])
   ];
 }
 
-function compactMemberRow(row, idKey) {
+function compactMemberRow(row, idKey, { includeHoleDetails = false } = {}) {
   return [
     String(row?.[idKey] || ""),
     String(row?.teamId || ""),
-    ...compactMetrics(row)
+    ...compactMetrics(row),
+    ...(includeHoleDetails ? [compactHoleDetails(row)] : [])
   ];
 }
 
-function compactScopeRows(scope = {}) {
+function compactScopeRows(scope = {}, { includeHoleDetails = false } = {}) {
   return [
-    (scope?.teams || []).map((row) => compactTeamRow(row)),
-    (scope?.players || []).map((row) => compactMemberRow(row, "playerId")),
-    (scope?.groups || []).map((row) => compactMemberRow(row, "groupId"))
+    (scope?.teams || []).map((row) => compactTeamRow(row, { includeHoleDetails })),
+    (scope?.players || []).map((row) => compactMemberRow(row, "playerId", { includeHoleDetails })),
+    (scope?.groups || []).map((row) => compactMemberRow(row, "groupId", { includeHoleDetails }))
   ];
 }
 
@@ -160,8 +189,8 @@ export function compactLiveOddsPayload(liveOdds = {}) {
   return {
     s: Math.max(0, Math.round(Number(liveOdds?.simCount) || 0)),
     l: LATENCY_MODE_CODES[String(liveOdds?.latencyMode || "").trim()] ?? 0,
-    r: (liveOdds?.rounds || []).map((roundScope) => compactScopeRows(roundScope)),
-    a: compactScopeRows(liveOdds?.all_rounds || {})
+    r: (liveOdds?.rounds || []).map((roundScope) => compactScopeRows(roundScope, { includeHoleDetails: true })),
+    a: compactScopeRows(liveOdds?.all_rounds || {}, { includeHoleDetails: false })
   };
 }
 

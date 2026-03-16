@@ -3363,20 +3363,18 @@ function ensureScoreCard() {
   if (!els.container || !els.controlsCard) return;
   if (!els.scoreCard) {
     const card = document.createElement("div");
-    card.className = "card";
+    card.className = "card enter-who-card";
     card.id = "map_score_card";
     card.innerHTML = `
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-        <h2 style="margin:0;">Enter Scores</h2>
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <button id="map_change_code_btn" class="secondary" type="button">Change code</button>
+      <div class="enter-who-head">
+        <div class="enter-who-main">
+          <h2 style="margin:0;">Enter Scores</h2>
           <div class="small" id="map_course_info">Loading…</div>
+          <div class="small" id="map_score_sync_status" style="margin-top:4px;"></div>
         </div>
+        <button id="map_change_code_btn" class="secondary" type="button">Change code</button>
       </div>
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px;">
-        <span class="small" style="font-weight:700;">Round:</span>
-        <div id="map_round_tabs" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
-      </div>
+      <div class="enter-tabs" id="map_round_tabs" style="margin-top:12px;"></div>
       <div id="map_score_rows" style="display:flex; flex-wrap:wrap; gap:8px; overflow:auto; padding:2px 1px; margin-top:10px;"></div>
       <div class="actions hole-actions" style="margin-top:10px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
         <label class="small" style="display:inline-flex; align-items:center; gap:6px; margin-right:auto;">
@@ -3386,7 +3384,6 @@ function ensureScoreCard() {
         <button id="map_submit_hole_btn" type="button">Submit hole</button>
       </div>
       <div class="small" id="map_score_status" style="margin-top:8px;"></div>
-      <div class="small" id="map_score_sync_status" style="margin-top:4px;"></div>
     `;
     const mapStageCard = els.container.querySelector(".hole-map-stage-wrap")?.closest(".card");
     if (mapStageCard) {
@@ -3813,10 +3810,13 @@ function renderRoundTabs() {
   rounds.forEach((round, idx) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = idx === entryState.selectedRoundIndex ? "" : "secondary";
-    button.textContent = String(idx + 1);
+    button.className = "secondary";
+    if (idx === entryState.selectedRoundIndex) button.classList.add("active");
+    button.textContent = `Round ${idx + 1}`;
     button.addEventListener("click", async () => {
       if (idx === entryState.selectedRoundIndex) return;
+      els.roundTabs.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+      button.classList.add("active");
       try {
         await selectRound(idx, { jumpToSuggestedHole: true });
       } catch (error) {
