@@ -30,6 +30,7 @@ const nameEl = document.getElementById("e_name");
 const datesEl = document.getElementById("e_dates");
 const scoringEl = document.getElementById("e_scoring");
 const roundRows = document.getElementById("round_rows");
+const teamRows = document.getElementById("team_rows");
 const playersHead = document.getElementById("players_head");
 const playerRows = document.getElementById("player_rows");
 const csvImport = document.getElementById("csv_import");
@@ -137,6 +138,13 @@ function normalizeGroupLabel(v) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
   return out ? out.slice(0, 16) : "";
+}
+
+function normalizeTeamColor(v) {
+  const raw = String(v || "").trim();
+  if (!raw) return "";
+  const match = raw.match(/^#?([0-9a-fA-F]{6})$/);
+  return match ? `#${match[1].toUpperCase()}` : "";
 }
 
 function randomCode() {
@@ -1269,6 +1277,78 @@ function normalizeGroupsForUi(player, roundCount) {
   return out;
 }
 
+function collectTeamsSafe() {
+  try {
+    return collectTeams();
+  } catch {
+    return Array.isArray(currentData?.teams) ? currentData.teams.slice() : [];
+  }
+}
+
+function deriveTeamsForEditor(players = [], teamDraft = []) {
+  const explicitById = new Map();
+  const explicitByName = new Map();
+  (Array.isArray(teamDraft) ? teamDraft : []).forEach((team) => {
+    const teamId = String(team?.teamId || "").trim();
+    const teamName = String(team?.teamName || "").trim();
+    const color = normalizeTeamColor(team?.color);
+    if (teamId) explicitById.set(teamId, { teamId, teamName, color });
+    if (teamName) explicitByName.set(teamName.toLowerCase(), { teamId, teamName, color });
+  });
+
+  const out = [];
+  const seen = new Set();
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    const teamName = String(player?.teamName || "").trim();
+    if (!teamName) return;
+    const teamId = String(player?.teamId || "").trim();
+    const key = teamId || `name:${teamName.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const explicit = (teamId && explicitById.get(teamId)) || explicitByName.get(teamName.toLowerCase()) || null;
+    out.push({
+      teamId,
+      teamName,
+      color: explicit?.color || ""
+    });
+  });
+  return out.sort((a, b) => a.teamName.localeCompare(b.teamName));
+}
+
+function renderTeams(players, teams) {
+  if (!teamRows) return;
+  const rows = deriveTeamsForEditor(players, teams);
+  teamRows.innerHTML = "";
+  rows.forEach((team) => {
+    const tr = document.createElement("tr");
+    tr.dataset.teamId = String(team?.teamId || "");
+    tr.dataset.teamName = String(team?.teamName || "");
+    const color = normalizeTeamColor(team?.color);
+    const previewColor = color || "#5A9FD0";
+    tr.innerHTML = `
+      <td class="left">${escapeHtml(team?.teamName || "")}</td>
+      <td><input data-field="teamColor" placeholder="#1F6FEB" value="${escapeHtml(color)}" /></td>
+      <td><span class="pill" style="display:inline-flex; align-items:center; gap:8px;"><span style="width:12px; height:12px; border-radius:999px; display:inline-block; background:${escapeHtml(previewColor)};"></span>${escapeHtml(color || "Auto/fallback")}</span></td>
+    `;
+    const colorInput = tr.querySelector("[data-field='teamColor']");
+    if (colorInput) {
+      colorInput.addEventListener("input", () => {
+        const normalized = normalizeTeamColor(colorInput.value);
+        const next = normalized || "#5A9FD0";
+        const preview = tr.querySelector("[data-team-preview]");
+        if (preview) preview.style.background = next;
+        const label = tr.querySelector("[data-team-color-label]");
+        if (label) label.textContent = normalized || "Auto/fallback";
+      });
+    }
+    const previewCell = tr.children[2];
+    if (previewCell) {
+      previewCell.innerHTML = `<span class="pill" style="display:inline-flex; align-items:center; gap:8px;"><span data-team-preview style="width:12px; height:12px; border-radius:999px; display:inline-block; background:${escapeHtml(previewColor)};"></span><span data-team-color-label>${escapeHtml(color || "Auto/fallback")}</span></span>`;
+    }
+    teamRows.appendChild(tr);
+  });
+}
+
 function renderPlayers(players, roundCount = 1) {
   const rows = Array.isArray(players) ? players : [];
   const teeCount = Math.max(1, Number(roundCount) || 1);
@@ -1305,6 +1385,7 @@ function renderPlayers(players, roundCount = 1) {
 
   playerRows.querySelectorAll("input").forEach((node) => {
     node.addEventListener("change", () => {
+      renderTeams(collectPlayersSafe(), collectTeamsSafe());
       renderScoresEditor();
     });
   });
@@ -1382,6 +1463,21 @@ function collectPlayers() {
       return out;
     })
     .filter(Boolean);
+}
+
+function collectTeams() {
+  const teams = [];
+  const rows = [...teamRows.querySelectorAll("tr")];
+  rows.forEach((tr) => {
+    const teamName = String(tr.dataset.teamName || "").trim();
+    if (!teamName) return;
+    teams.push({
+      ...(String(tr.dataset.teamId || "").trim() ? { teamId: String(tr.dataset.teamId || "").trim() } : {}),
+      teamName,
+      color: normalizeTeamColor(tr.querySelector("[data-field='teamColor']")?.value)
+    });
+  });
+  return teams;
 }
 
 function autoAssignGroups() {
@@ -1467,6 +1563,7 @@ function addPlayerRow() {
     remove: false
   });
   renderPlayers(players, teeCount);
+  renderTeams(players, collectTeamsSafe());
   renderScoresEditor();
 }
 
@@ -1507,6 +1604,7 @@ function renderPage(data) {
   fillCourseRows(course.pars, course.strokeIndex);
   const rounds = data?.rounds || [];
   renderRounds(rounds);
+  renderTeams(data?.players || [], data?.teams || []);
   renderPlayers(data?.players || [], rounds.length || 1);
   renderScoresEditor();
   if (scoresStatus) scoresStatus.textContent = "";
@@ -1694,6 +1792,7 @@ async function saveTournament() {
       course: courses[0],
       courses,
       rounds,
+      teams: collectTeams(),
       players: collectPlayers(),
       scores: collectScoresForSave()
     };

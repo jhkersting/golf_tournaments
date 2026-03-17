@@ -196,6 +196,57 @@ registerTest("computeLiveOdds is deterministic for a fixed materialized tourname
   assert.deepEqual(first, second);
 });
 
+registerTest("materializePublicFromState preserves zero and negative net hole scores", () => {
+  const state = {
+    tournament: {
+      tournamentId: "negative-net-fixture",
+      name: "Negative Net Fixture",
+      dates: "2026-03-15"
+    },
+    rounds: [
+      {
+        name: "Round 1",
+        format: "singles",
+        useHandicap: true,
+        weight: 1,
+        courseIndex: 0,
+        teamAggregation: { topX: 2 }
+      }
+    ],
+    courses: [{
+      name: "Fixture Course",
+      pars: PARS.slice(),
+      strokeIndex: STROKE_INDEX.slice()
+    }],
+    teams: {
+      A: { teamName: "Alpha" }
+    },
+    players: {
+      P1: { name: "Player One", teamId: "A", handicap: 54 }
+    },
+    scores: {
+      rounds: [
+        {
+          players: {
+            P1: { holes: grossArray(1), meta: Array(18).fill(null) }
+          },
+          teams: {},
+          groups: {}
+        }
+      ]
+    }
+  };
+
+  const materialized = materializePublicFromState(state);
+  const player = materialized.score_data?.rounds?.[0]?.player?.P1;
+  assert.ok(player);
+  assert.equal(player.gross[0], 1);
+  assert.equal(player.net[0], -2);
+  assert.equal(player.net[17], -2);
+  assert.equal(player.netTotal, -36);
+  assert.equal(player.netToParTotal, -108);
+});
+
 for (const format of [
   "singles",
   "shamble",

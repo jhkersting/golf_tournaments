@@ -152,6 +152,25 @@
 
   <div class="card">
     <div class="actions" style="justify-content:space-between;">
+      <h2 style="margin:0;">Teams</h2>
+      <div class="small">Set a persistent color for each team. These colors are used on the scoreboard, ticker, and enter views.</div>
+    </div>
+    <div class="scoregrid" style="margin-top:10px;">
+      <table class="table" id="teams_tbl">
+        <thead>
+          <tr>
+            <th class="left">Team</th>
+            <th>Color</th>
+            <th>Preview</th>
+          </tr>
+        </thead>
+        <tbody id="team_rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="actions" style="justify-content:space-between;">
       <h2 style="margin:0;">Players</h2>
       <div class="actions">
         <button class="secondary" id="add_player_btn">+ Add player</button>

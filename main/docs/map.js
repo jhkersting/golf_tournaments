@@ -2274,18 +2274,22 @@ function updateBrandDotFromTournament(tournament) {
 }
 
 function seedTeamColors(tjson) {
+  const ordered = [];
   const seen = new Set();
-  let totalTeams = 0;
-  const add = (teamId) => {
+  const add = (teamId, teamName, teamColor) => {
     const id = normalizeTeamId(teamId);
     if (!id || seen.has(id)) return;
     seen.add(id);
-    totalTeams += 1;
+    ordered.push({
+      teamId: id,
+      teamName: String(teamName || "").trim(),
+      color: String(teamColor || "").trim()
+    });
   };
-  (tjson?.teams || []).forEach((team) => add(team?.teamId || team?.id));
-  (tjson?.players || []).forEach((player) => add(player?.teamId));
-  teamColors.reset(totalTeams);
-  seen.forEach((id) => teamColors.add(id));
+  (tjson?.teams || []).forEach((team) => add(team?.teamId || team?.id, team?.teamName || team?.name, team?.color));
+  (tjson?.players || []).forEach((player) => add(player?.teamId, player?.teamName));
+  teamColors.reset(ordered.length);
+  ordered.forEach((team) => teamColors.add(team.teamId, team.teamName, team.color));
 }
 
 function colorForTeam(teamId) {

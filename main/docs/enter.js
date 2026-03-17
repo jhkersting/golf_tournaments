@@ -74,20 +74,24 @@ function setBrandDotColor(color) {
 }
 
 function seedTeamColors(tjson, playersById) {
+  const ordered = [];
   const seen = new Set();
-  let totalTeams = 0;
-  const add = (teamId) => {
+  const add = (teamId, teamName, teamColor) => {
     const id = normalizeTeamId(teamId);
     if (!id || seen.has(id)) return;
     seen.add(id);
-    totalTeams += 1;
+    ordered.push({
+      teamId: id,
+      teamName: String(teamName || "").trim(),
+      color: String(teamColor || "").trim()
+    });
   };
-  (tjson?.teams || []).forEach((t) => add(t?.teamId || t?.id));
-  Object.values(playersById || {}).forEach((p) => add(p?.teamId));
+  (tjson?.teams || []).forEach((t) => add(t?.teamId || t?.id, t?.teamName || t?.name, t?.color));
+  Object.values(playersById || {}).forEach((p) => add(p?.teamId, p?.teamName));
 
-  teamColors.reset(totalTeams);
-  seen.forEach((id) => {
-    teamColors.add(id);
+  teamColors.reset(ordered.length);
+  ordered.forEach((team) => {
+    teamColors.add(team.teamId, team.teamName, team.color);
   });
 }
 

@@ -196,6 +196,14 @@ function normalizeTeamColorName(teamName){
   return String(teamName || "").trim().toLowerCase();
 }
 
+function normalizeExplicitTeamColor(color){
+  const raw = String(color || "").trim();
+  if (!raw) return "";
+  const match = raw.match(/^#?([0-9a-fA-F]{6})$/);
+  if (!match) return "";
+  return `#${match[1].toUpperCase()}`;
+}
+
 export function createTeamColorRegistry(){
   let byId = new Map();
   let byName = new Map();
@@ -219,9 +227,19 @@ export function createTeamColorRegistry(){
     return color;
   }
 
-  function add(teamId, teamName){
+  function rememberExplicitColor(id, nKey, explicitColor){
+    const normalized = normalizeExplicitTeamColor(explicitColor);
+    if (!normalized) return "";
+    if (id) byId.set(id, normalized);
+    if (nKey) byName.set(nKey, normalized);
+    return normalized;
+  }
+
+  function add(teamId, teamName, explicitColor){
     const id = normalizeTeamColorId(teamId);
     const nKey = normalizeTeamColorName(teamName);
+    const explicit = rememberExplicitColor(id, nKey, explicitColor);
+    if (explicit) return explicit;
 
     if (id && byId.has(id)) {
       const color = byId.get(id);
@@ -236,9 +254,11 @@ export function createTeamColorRegistry(){
     return color;
   }
 
-  function get(teamId, teamName){
+  function get(teamId, teamName, explicitColor){
     const id = normalizeTeamColorId(teamId);
     const nKey = normalizeTeamColorName(teamName);
+    const explicit = rememberExplicitColor(id, nKey, explicitColor);
+    if (explicit) return explicit;
     if (id && byId.has(id)) return byId.get(id);
     if (nKey && byName.has(nKey)) return byName.get(nKey);
     return add(id, teamName);

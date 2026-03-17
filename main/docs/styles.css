@@ -560,6 +560,10 @@ input[type="number"] {
   font-variant-numeric: tabular-nums;
 }
 
+#scoreboard_link{
+  font-family: var(--font-sans);
+}
+
 input[type="checkbox"],
 input[type="radio"] {
   width: 16px;
@@ -1117,6 +1121,13 @@ hr {
   padding: 0px !important;
 }
 
+.score-hole-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  padding: 2px 0;
+}
+
 .score-hole-pill {
   display: inline-flex;
   align-items: center;
@@ -1168,6 +1179,15 @@ hr {
 
 .score-hole-circle {
   border-radius: 999px;
+}
+
+.score-hole-marker {
+  min-height: 10px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--muted);
 }
 
 .score-hole-square {

@@ -163,15 +163,22 @@ export function normalizeTournamentScoring(scoring){
   return "stroke";
 }
 
-function holeScoreOrNull(value){
+function grossHoleScoreOrNull(value){
   if (value == null) return null;
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n;
 }
 
+function netHoleScoreOrNull(value){
+  if (value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
 function stablefordPointsForHole(score, par){
-  const scoreNum = holeScoreOrNull(score);
+  const scoreNum = netHoleScoreOrNull(score);
   if (scoreNum == null) return null;
   const parNum = Number(par);
   if (!Number.isFinite(parNum) || parNum <= 0) return null;
@@ -211,10 +218,10 @@ function selectEntriesByMetric(entries, metricKey, topX, direction = "low"){
 
 function buildScoreEntry(grossIn, netIn, handicapShotsIn, parIn){
   const gross = Array.from({ length: 18 }, (_, i) => {
-    return holeScoreOrNull(grossIn?.[i]);
+    return grossHoleScoreOrNull(grossIn?.[i]);
   });
   const net = Array.from({ length: 18 }, (_, i) => {
-    return holeScoreOrNull(netIn?.[i]);
+    return netHoleScoreOrNull(netIn?.[i]);
   });
   const handicapShots = Array.from({ length: 18 }, (_, i) => {
     const n = Number(handicapShotsIn?.[i]);
@@ -739,8 +746,8 @@ export function materializePublicFromState(state){
                 let allPresent = gPlayers.length > 0;
                 for (const player of gPlayers){
                   const playerSc = outRound.player[player.playerId];
-                  const grossVal = holeScoreOrNull(playerSc?.gross?.[i]);
-                  const netVal = holeScoreOrNull(playerSc?.net?.[i]);
+                  const grossVal = grossHoleScoreOrNull(playerSc?.gross?.[i]);
+                  const netVal = netHoleScoreOrNull(playerSc?.net?.[i]);
                   const shotVal = Number.isFinite(Number(playerSc?.handicapShots?.[i])) ? Number(playerSc.handicapShots[i]) : 0;
                   if (grossVal == null || netVal == null) {
                     allPresent = false;
@@ -763,8 +770,8 @@ export function materializePublicFromState(state){
               let shotBest = 0;
               for (const player of gPlayers){
                 const playerSc = outRound.player[player.playerId];
-                const grossVal = holeScoreOrNull(playerSc?.gross?.[i]);
-                const netVal = holeScoreOrNull(playerSc?.net?.[i]);
+                const grossVal = grossHoleScoreOrNull(playerSc?.gross?.[i]);
+                const netVal = netHoleScoreOrNull(playerSc?.net?.[i]);
                 const shotVal = Number.isFinite(Number(playerSc?.handicapShots?.[i])) ? Number(playerSc.handicapShots[i]) : 0;
                 if (grossVal != null && (grossBest == null || grossVal < grossBest)) grossBest = grossVal;
                 if (netVal != null && (netBest == null || netVal < netBest)) {
@@ -1147,11 +1154,13 @@ export function materializePublicFromState(state){
         const cur = teamTotals.get(teamId);
         if (groupPairs.length){
           const groupCount = groupPairs.length;
-          const avgMetric = groupPairs.reduce((a, p) => a + Number(p.metric || 0), 0) / groupCount;
+          const metricDivisor = scoring === "stableford" ? 1 : groupCount;
+          const pointDivisor = scoring === "stableford" ? 1 : groupCount;
+          const avgMetric = groupPairs.reduce((a, p) => a + Number(p.metric || 0), 0) / metricDivisor;
           const avgStrokes = groupPairs.reduce((a, p) => a + Number(p.strokes || 0), 0) / groupCount;
           const avgPar = groupPairs.reduce((a, p) => a + Number(p.par || 0), 0) / groupCount;
-          const avgGrossPoints = groupPairs.reduce((a, p) => a + Number(p.grossPoints || 0), 0) / groupCount;
-          const avgNetPoints = groupPairs.reduce((a, p) => a + Number(p.netPoints || 0), 0) / groupCount;
+          const avgGrossPoints = groupPairs.reduce((a, p) => a + Number(p.grossPoints || 0), 0) / pointDivisor;
+          const avgNetPoints = groupPairs.reduce((a, p) => a + Number(p.netPoints || 0), 0) / pointDivisor;
           cur.metric += avgMetric * weight;
           cur.strokes += avgStrokes * weight;
           cur.par += avgPar * weight;
@@ -1189,16 +1198,18 @@ export function materializePublicFromState(state){
       const totalGrossPoints = selected.reduce((sum, entry) => sum + Number(entry.grossPoints || 0), 0);
       const totalNetPoints = selected.reduce((sum, entry) => sum + Number(entry.netPoints || 0), 0);
       const divisor = selected.length || 1;
-      cur.metric += (totalMetric / divisor) * weight;
+      const pointDivisor = scoring === "stableford" ? 1 : divisor;
+      cur.metric += (totalMetric / pointDivisor) * weight;
       cur.strokes += (totalStrokes / divisor) * weight;
       cur.par += (totalPar / divisor) * weight;
-      cur.grossPoints += (totalGrossPoints / divisor) * weight;
-      cur.netPoints += (totalNetPoints / divisor) * weight;
+      cur.grossPoints += (totalGrossPoints / pointDivisor) * weight;
+      cur.netPoints += (totalNetPoints / pointDivisor) * weight;
     }
   }
 
   const teamLb = Object.keys(teams).map(teamId => {
     const tname = teams[teamId]?.teamName || "";
+    const teamColor = String(teams[teamId]?.color || "").trim();
     const v = teamTotals.get(teamId) || { metric:0, strokes:0, par:0, grossPoints:0, netPoints:0 };
     const strokes = Number(v.strokes.toFixed(2));
     const points = Number(v.metric.toFixed(2));
@@ -1206,6 +1217,7 @@ export function materializePublicFromState(state){
     return {
       teamId,
       teamName: tname,
+      ...(teamColor ? { color: teamColor } : {}),
       strokes,
       points,
       grossPoints: Number(v.grossPoints.toFixed(2)),
@@ -1240,7 +1252,11 @@ export function materializePublicFromState(state){
   const hasTwoManFormat = rounds.some(round => isTwoManFormat(round?.format));
   const playersByTeam = getPlayersByTeamMap(players);
   const publicTeams = Object.keys(teams).map(teamId => {
-    const row = { teamId, teamName: teams[teamId].teamName };
+    const row = {
+      teamId,
+      teamName: teams[teamId].teamName,
+      ...(teams[teamId]?.color ? { color: teams[teamId].color } : {})
+    };
     if (!hasTwoManFormat) return row;
     const groupsByRound = {};
     for (let r = 0; r < rounds.length; r++){

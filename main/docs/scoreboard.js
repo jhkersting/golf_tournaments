@@ -217,27 +217,31 @@ function rebuildTeamColors() {
 
   const seenTeamIds = new Set();
   const ordered = [];
-  const add = (teamId, teamName) => {
+  const add = (teamId, teamName, teamColor) => {
     const id = teamId == null ? "" : String(teamId).trim();
     if (!id || seenTeamIds.has(id)) return;
     seenTeamIds.add(id);
-    ordered.push({ teamId: id, teamName: String(teamName || "").trim() });
+    ordered.push({
+      teamId: id,
+      teamName: String(teamName || "").trim(),
+      color: String(teamColor || "").trim()
+    });
   };
 
   // Match enter.js assignment order: teams first, then players.
-  (TOURN?.teams || []).forEach((t) => add(t?.teamId ?? t?.id, t?.teamName ?? t?.name));
+  (TOURN?.teams || []).forEach((t) => add(t?.teamId ?? t?.id, t?.teamName ?? t?.name, t?.color));
   (TOURN?.players || []).forEach((p) => add(p?.teamId, p?.teamName));
 
   // Add any ids that appear only in leaderboard payloads.
-  (TOURN?.score_data?.leaderboard_all?.teams || []).forEach((t) => add(t?.teamId, t?.teamName));
+  (TOURN?.score_data?.leaderboard_all?.teams || []).forEach((t) => add(t?.teamId, t?.teamName, t?.color));
   const rounds = TOURN?.score_data?.rounds || [];
   rounds.forEach((rd) => {
-    (rd?.leaderboard?.teams || []).forEach((t) => add(t?.teamId, t?.teamName));
+    (rd?.leaderboard?.teams || []).forEach((t) => add(t?.teamId, t?.teamName, t?.color));
     (rd?.leaderboard?.players || []).forEach((p) => add(p?.teamId, p?.teamName));
   });
 
   teamColors.reset(ordered.length);
-  ordered.forEach((e) => teamColors.add(e.teamId, e.teamName));
+  ordered.forEach((e) => teamColors.add(e.teamId, e.teamName, e.color));
   teamColorsSeeded = true;
 }
 
@@ -1591,7 +1595,7 @@ function sectionPlayedCount(arr, start, end) {
   return count;
 }
 
-function holeScoreCell(value, parValue) {
+function holeScoreCell(value, parValue, marker = "") {
   if (!isPlayedScore(value)) return `<td class="mono"></td>`;
 
   const score = Number(value);
@@ -1608,8 +1612,10 @@ function holeScoreCell(value, parValue) {
   if (diff < 0) shapeClass = " score-hole-circle";
   if (diff === 1) shapeClass = " score-hole-square";
   const content = `<span class="score-hole-pill ${toneClass}${shadeClass}${shapeClass}">${String(value)}</span>`;
+  const markerText = String(marker || "").trim();
+  const markerHtml = markerText ? `<div class="score-hole-marker">${escapeHtml(markerText)}</div>` : "";
 
-  return `<td class="mono score-hole-cell" title="${title}">${content}</td>`;
+  return `<td class="mono score-hole-cell" title="${title}"><div class="score-hole-wrap">${content}${markerHtml}</div></td>`;
 }
 
 function buildScorecardTable(scores, useHandicap) {
@@ -1786,39 +1792,44 @@ function buildScorecardTable(scores, useHandicap) {
   return wrap;
 }
 
-function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
-  const teamId = teamRow?.teamId;
-  if (!teamId) return null;
+function computeBestBallSelections(memberRows) {
+  const net = Array.from({ length: 18 }, () => new Set());
 
-  const roundData = TOURN?.score_data?.rounds?.[roundIndex];
-  const byPlayer = roundData?.player || null;
-  if (!byPlayer) return null;
+  for (let holeIndex = 0; holeIndex < 18; holeIndex++) {
+    let netBest = null;
 
-  const teamPlayers = (TOURN?.players || [])
-    .filter((p) => p?.teamId === teamId)
-    .map((p) => {
-      const entry = byPlayer[p.playerId] || {};
-      return {
-        name: p.name || p.playerId || "Player",
-        gross: Array.isArray(entry.gross) ? entry.gross : Array(18).fill(null),
-        net: Array.isArray(entry.net) ? entry.net : Array(18).fill(null)
-      };
+    memberRows.forEach((row) => {
+      const netValue = asPlayedNumber(row?.net?.[holeIndex]);
+      if (netValue != null && (netBest == null || netValue < netBest)) netBest = netValue;
     });
 
-  if (!teamPlayers.length) return null;
-  const anyData = teamPlayers.some((p) => hasAnyScore(p.gross) || hasAnyScore(p.net));
+    memberRows.forEach((row, playerIndex) => {
+      const netValue = asPlayedNumber(row?.net?.[holeIndex]);
+      if (netBest != null && netValue === netBest) net[holeIndex].add(playerIndex);
+    });
+  }
+
+  return { net };
+}
+
+function bestBallMarkerForHole(selections, playerIndex, holeIndex, useHandicap) {
+  if (!selections) return "";
+  const netPicked = !!(useHandicap && selections.net?.[holeIndex]?.has(playerIndex));
+  return netPicked ? "*" : "";
+}
+
+function buildMemberRowsScorecard(memberRows, par, useHandicap, summaryText, bestBallSelections = null) {
+  if (!Array.isArray(memberRows) || !memberRows.length) return null;
+  const anyData = memberRows.some((row) => hasAnyScore(row?.gross) || hasAnyScore(row?.net));
   if (!anyData) return null;
 
-  const par = getCoursePars(roundIndex);
   const parTotal18 = segmentTotal(par, 0, 17);
   const wrap = document.createElement("div");
   wrap.className = "scorecard-one-wrap";
 
   const summary = document.createElement("div");
   summary.className = "small scorecard-summary";
-  summary.textContent = useHandicap
-    ? "Team members (gross rows shown)"
-    : "Team members";
+  summary.textContent = summaryText;
   wrap.appendChild(summary);
 
   const tbl = document.createElement("table");
@@ -1835,20 +1846,21 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
   }
 
   function addPlayerRows(start, end) {
-    for (const p of teamPlayers) {
-      const holes = p.gross;
+    memberRows.forEach((row, playerIndex) => {
+      const holes = row.gross;
       const played = holes.slice(start, end + 1).some((v) => v != null && Number(v) > 0);
       const tr = document.createElement("tr");
       tr.innerHTML =
-        `<td class="left"><b>${p.name}</b></td>` +
+        `<td class="left"><b>${row.name}</b></td>` +
         Array.from({ length: end - start + 1 }, (_, k) => {
-          const i = start + k;
-          return holeScoreCell(holes[i], par[i]);
+          const holeIndex = start + k;
+          const marker = bestBallMarkerForHole(bestBallSelections, playerIndex, holeIndex, useHandicap);
+          return holeScoreCell(holes[holeIndex], par[holeIndex], marker);
         }).join("") +
         `<td class="mono"><b>${played ? segmentTotal(holes, start, end) : ""}</b></td>` +
         `<td class="mono"><b>${played ? toParStrFromDiff(segmentToPar(holes, par, start, end)) : ""}</b></td>`;
       tbody.appendChild(tr);
-    }
+    });
   }
 
   function addParRow(start, end) {
@@ -1884,6 +1896,34 @@ function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
   return wrap;
+}
+
+function buildTeamMembersScorecard(roundIndex, teamRow, useHandicap) {
+  const teamId = teamRow?.teamId;
+  if (!teamId) return null;
+
+  const roundData = TOURN?.score_data?.rounds?.[roundIndex];
+  const byPlayer = roundData?.player || null;
+  if (!byPlayer) return null;
+  const format = String(roundData?.format || "").toLowerCase();
+  const isBestBallFormat = format === "team_best_ball";
+
+  const teamPlayers = (TOURN?.players || [])
+    .filter((p) => p?.teamId === teamId)
+    .map((p) => {
+      const entry = byPlayer[p.playerId] || {};
+      return {
+        name: p.name || p.playerId || "Player",
+        gross: Array.isArray(entry.gross) ? entry.gross : Array(18).fill(null),
+        net: Array.isArray(entry.net) ? entry.net : Array(18).fill(null)
+      };
+    });
+  const par = getCoursePars(roundIndex);
+  const selections = isBestBallFormat ? computeBestBallSelections(teamPlayers) : null;
+  const summaryText = isBestBallFormat
+    ? (useHandicap ? "Team members • * net ball used" : "Team members")
+    : (useHandicap ? "Team members (gross rows shown)" : "Team members");
+  return buildMemberRowsScorecard(teamPlayers, par, useHandicap, summaryText, selections);
 }
 
 function normalizeTwoManGroupKey(value) {
@@ -2219,7 +2259,6 @@ function buildTwoManBestBallTeamScorecard(roundIndex, teamRow, useHandicap) {
   const teamId = String(teamRow?.teamId || "").trim();
   if (!teamId) return null;
 
-  const roundData = TOURN?.score_data?.rounds?.[roundIndex] || {};
   const teamEntry = roundData?.team?.[teamId] || {};
   const twoManFormat = normalizeTwoManFormat(roundData?.format);
   const groupKeys = twoManGroupKeysForTeam(teamId, roundIndex, teamEntry);
@@ -2275,6 +2314,61 @@ function buildTwoManBestBallTeamScorecard(roundIndex, teamRow, useHandicap) {
   split.appendChild(
     buildTwoManGroupBreakdownTable(par, groups, useHandicap)
   );
+  return split;
+}
+
+function buildTwoManBestBallGroupScorecard(roundIndex, groupRow, useHandicap) {
+  const teamId = String(groupRow?.teamId || "").trim();
+  const groupKey = normalizeTwoManGroupKey(groupRow?.groupKey || String(groupRow?.groupId || "").split("::")[1] || "");
+  if (!teamId || !groupKey) return null;
+
+  const roundData = TOURN?.score_data?.rounds?.[roundIndex] || {};
+  const playerIds = playerIdsForTwoManGroup(teamId, roundIndex, groupKey);
+  if (!playerIds.length) return null;
+
+  const memberRows = playerIds.map((playerId) => {
+    const playerMeta = (TOURN?.players || []).find((player) => String(player?.playerId || "").trim() === playerId) || {};
+    const entry = roundData?.player?.[playerId] || {};
+    return {
+      name: playerMeta?.name || playerId,
+      gross: Array.isArray(entry?.gross) ? entry.gross : Array(18).fill(null),
+      net: Array.isArray(entry?.net) ? entry.net : Array(18).fill(null)
+    };
+  });
+
+  const par = getCoursePars(roundIndex);
+  const selections = computeBestBallSelections(memberRows);
+  const summaryText = useHandicap ? "Group members • * net ball used" : "Group members";
+  const memberTable = buildMemberRowsScorecard(memberRows, par, useHandicap, summaryText, selections);
+  if (!memberTable) return null;
+
+  const teamEntry = roundData?.team?.[teamId] || {};
+  const groupEntry = twoManGroupEntry(teamEntry, groupKey);
+  const twoManFormat = normalizeTwoManFormat(roundData?.format);
+  const parMultiplier = twoManFormat === "two_man_shamble" ? Math.max(1, playerIds.length) : 1;
+  const groupGross = Array.isArray(groupEntry?.gross)
+    ? groupEntry.gross
+    : aggregateTwoManGroupHoles(roundData, playerIds, twoManFormat, "gross");
+  const groupNet = Array.isArray(groupEntry?.net)
+    ? groupEntry.net
+    : aggregateTwoManGroupHoles(roundData, playerIds, twoManFormat, "net");
+  const groupPar = par.map((value) => Number(value || 0) * parMultiplier);
+  const groupScores = {
+    gross: groupGross,
+    net: groupNet,
+    handicapShots: Array.isArray(groupEntry?.handicapShots) ? groupEntry.handicapShots : handicapShotsFromHoleSets(groupGross, groupNet),
+    par: groupPar,
+    grossTotal: groupEntry?.grossTotal,
+    netTotal: groupEntry?.netTotal,
+    grossToParTotal: groupEntry?.grossToParTotal,
+    netToParTotal: groupEntry?.netToParTotal,
+    thru: groupEntry?.thru
+  };
+
+  const split = document.createElement("div");
+  split.className = "scorecard-split";
+  split.appendChild(memberTable);
+  split.appendChild(buildScorecardTable(groupScores, useHandicap));
   return split;
 }
 
@@ -2598,6 +2692,20 @@ function renderLeaderboard(data) {
             grid.className = "scoregrid inline-scoregrid";
             grid.style.marginTop = "0";
             grid.appendChild(teamTable);
+            host.appendChild(grid);
+            return;
+          }
+        }
+
+        if (!isTeam && r?.groupId && normalizeTwoManFormat(roundAt(data.view?.round)?.format) === "two_man_best_ball") {
+          const groupTable = buildTwoManBestBallGroupScorecard(rIdx, r, showGrossNet);
+          if (token !== inlineReqToken || openInlineKey !== key) return;
+          if (groupTable) {
+            loading.remove();
+            const grid = document.createElement("div");
+            grid.className = "scoregrid inline-scoregrid";
+            grid.style.marginTop = "0";
+            grid.appendChild(groupTable);
             host.appendChild(grid);
             return;
           }
@@ -3079,6 +3187,32 @@ function normalizePlayedHoleArray(arr) {
   return arr.map((value) => asPlayedNumber(value));
 }
 
+function deriveParArrayFromEntry(entry, fallbackPar = []) {
+  if (Array.isArray(entry?.par) && entry.par.length === 18) {
+    return entry.par.map((value, index) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : Number(fallbackPar?.[index] || 0);
+    });
+  }
+
+  const gross = normalizePlayedHoleArray(entry?.gross);
+  const net = normalizePlayedHoleArray(entry?.net);
+  const grossToPar = Array.isArray(entry?.grossToPar) ? entry.grossToPar : Array(18).fill(null);
+  const netToPar = Array.isArray(entry?.netToPar) ? entry.netToPar : Array(18).fill(null);
+
+  return Array.from({ length: 18 }, (_, index) => {
+    const grossValue = gross[index];
+    const grossDiff = toParNumber(grossToPar[index]);
+    if (grossValue != null && grossDiff != null) return grossValue - grossDiff;
+
+    const netValue = net[index];
+    const netDiff = toParNumber(netToPar[index]);
+    if (netValue != null && netDiff != null) return netValue - netDiff;
+
+    return Number(fallbackPar?.[index] || 0);
+  });
+}
+
 function aggregateNumbers(values) {
   if (!values.length) return null;
   const total = values.reduce((a, v) => a + Number(v || 0), 0);
@@ -3253,12 +3387,13 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
       const normalized = asPlayedNumber(value);
       return normalized != null ? normalized : gross[index];
     });
+    const par = deriveParArrayFromEntry(entry, coursePars);
     const scoreBundle = normalizeScoreBundle(
       {},
       {
         gross,
         net,
-        par: Array.isArray(entry?.par) ? entry.par : coursePars,
+        par,
         handicapShots: Array.isArray(entry?.handicapShots) ? entry.handicapShots : Array(18).fill(0)
       },
       coursePars

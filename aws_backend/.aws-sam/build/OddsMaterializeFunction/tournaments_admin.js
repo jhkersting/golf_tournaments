@@ -391,6 +391,19 @@ function ensureUniqueCodes(playersById, { regenerateAll = false } = {}) {
   return codeIndex;
 }
 
+function normalizeTeamColor(value, { allowMissing = true } = {}) {
+  if (value === undefined) return allowMissing ? undefined : null;
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^#?([0-9a-fA-F]{6})$/);
+  if (!match) {
+    const err = new Error(`Invalid team color "${raw}". Use a 6-digit hex color like #1F6FEB.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return `#${match[1].toUpperCase()}`;
+}
+
 function createTeamResolver(nextTeams) {
   const names = new Map();
   for (const teamId of Object.keys(nextTeams || {})) {
@@ -400,14 +413,16 @@ function createTeamResolver(nextTeams) {
     if (key && !names.has(key)) names.set(key, teamId);
   }
 
-  function upsertTeam(teamIdMaybe, teamNameMaybe) {
+  function upsertTeam(teamIdMaybe, teamNameMaybe, teamColorMaybe) {
     const teamIdRaw = String(teamIdMaybe || "").trim();
     const teamNameRaw = String(teamNameMaybe || "").trim();
+    const color = normalizeTeamColor(teamColorMaybe, { allowMissing: true });
     const name = teamNameRaw || "Team";
     const nameKey = name.toLowerCase();
 
     if (teamIdRaw && nextTeams[teamIdRaw]) {
       nextTeams[teamIdRaw].teamName = name;
+      if (color !== undefined) nextTeams[teamIdRaw].color = color;
       names.set(nameKey, teamIdRaw);
       return teamIdRaw;
     }
@@ -416,12 +431,13 @@ function createTeamResolver(nextTeams) {
       const existingId = names.get(nameKey);
       if (nextTeams[existingId]) {
         nextTeams[existingId].teamName = name;
+        if (color !== undefined) nextTeams[existingId].color = color;
       }
       return existingId;
     }
 
     const newTeamId = teamIdRaw || uid("tm");
-    nextTeams[newTeamId] = { teamId: newTeamId, teamName: name };
+    nextTeams[newTeamId] = { teamId: newTeamId, teamName: name, ...(color ? { color } : {}) };
     names.set(nameKey, newTeamId);
     return newTeamId;
   }
@@ -508,7 +524,8 @@ function toAdminPayload(state) {
   const teamRows = Object.keys(teams)
     .map((teamId) => ({
       teamId,
-      teamName: teams[teamId]?.teamName || teamId
+      teamName: teams[teamId]?.teamName || teamId,
+      color: teams[teamId]?.color || ""
     }))
     .sort((a, b) => a.teamName.localeCompare(b.teamName));
 
@@ -649,9 +666,11 @@ export async function handler(event) {
       const nextTeams = {};
       for (const teamId of Object.keys(current.teams || {})) {
         const team = current.teams[teamId] || {};
+        const color = normalizeTeamColor(team.color, { allowMissing: false });
         nextTeams[teamId] = {
           teamId,
-          teamName: String(team.teamName || teamId).trim() || teamId
+          teamName: String(team.teamName || teamId).trim() || teamId,
+          ...(color ? { color } : {})
         };
       }
 
@@ -660,7 +679,7 @@ export async function handler(event) {
       if (Array.isArray(body?.teams)) {
         for (const patch of body.teams) {
           if (!patch || patch.remove) continue;
-          resolver.upsertTeam(patch.teamId, patch.teamName);
+          resolver.upsertTeam(patch.teamId, patch.teamName, patch.color);
         }
       }
 

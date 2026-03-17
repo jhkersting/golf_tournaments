@@ -2012,13 +2012,14 @@ function combineAllRoundSimulation(tournamentJson, roundContexts, roundEvaluatio
           const gross = sumHoleArrays(teamGroups.map((entry) => entry.gross));
           const net = sumHoleArrays(teamGroups.map((entry) => entry.net));
           const groupCount = teamGroups.length || 1;
-          target.leaderboardTotal += Number(scoring === "stableford" ? (useHandicap ? netPointsSum : grossPointsSum) : (useHandicap ? netSum : grossSum)) / groupCount * weight;
+          const pointDivisor = scoring === "stableford" ? 1 : groupCount;
+          target.leaderboardTotal += Number(scoring === "stableford" ? (useHandicap ? netPointsSum : grossPointsSum) : (useHandicap ? netSum : grossSum)) / pointDivisor * weight;
           target.grossTotal += (grossSum / groupCount) * weight;
           target.netTotal += (netSum / groupCount) * weight;
           target.grossToParTotal += (grossToParSum / groupCount) * weight;
           target.netToParTotal += (netToParSum / groupCount) * weight;
-          target.grossStablefordTotal += (grossPointsSum / groupCount) * weight;
-          target.netStablefordTotal += (netPointsSum / groupCount) * weight;
+          target.grossStablefordTotal += (grossPointsSum / pointDivisor) * weight;
+          target.netStablefordTotal += (netPointsSum / pointDivisor) * weight;
           addWeightedHoleArrays(target.holeGrossByKey, target.holeNetByKey, roundIndex, gross, net, weight);
           continue;
         }
