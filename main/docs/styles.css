@@ -128,7 +128,7 @@ header {
   align-items: center;
   gap: 10px;
   font-family: var(--font-display);
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 400;
   /*font-style: italic;*/
   letter-spacing: 0.01em;
@@ -316,12 +316,11 @@ header {
 
 .enter-who-card {
   background: var(--surface);
-  border-left: 3px solid var(--brand);
   padding: 14px 16px;
 }
 
 .enter-who-card .enter-who-main b {
-  font-size: 15px;
+  font-size: 18px;
 }
 
 .enter-who-card .enter-who-main > div:first-child .small {
@@ -517,15 +516,15 @@ h3 {
 }
 
 h1 {
-  font-size: clamp(1.5rem, 4.5vw, 2rem);
+  font-size: 24px;
 }
 
 h2 {
-  font-size: clamp(1.15rem, 3.5vw, 1.45rem);
+  font-size: 22px;
 }
 
 h3 {
-  font-size: clamp(1rem, 3vw, 1.15rem);
+  font-size: 20px;
 }
 
 label {
@@ -1243,7 +1242,7 @@ hr {
     90deg,
     color-mix(
         in srgb,
-        var(--team-accent, var(--border-strong)) 18%,
+        var(--team-accent, var(--border-strong)) 15%,
         transparent
       )
       0%,
@@ -1405,6 +1404,8 @@ hr {
   margin-top: 12px;
 }
 
+
+
 .trend-graph-shell {
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1467,6 +1468,7 @@ hr {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
+  margin-top: 8px;
 }
 
 .trend-legend-item {
@@ -1507,6 +1509,14 @@ hr {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 700;
+}
+
+.trend-legend-meta {
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
 }
 
 .trend-legend-score {
@@ -1878,13 +1888,32 @@ th.dots {
   }
 
   .scoreboard-controls-inner {
-    flex-direction: column;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
     gap: 10px;
     padding: 10px;
   }
 
+  .scoreboard-control-group {
+    width: 100%;
+  }
+
+  .scoreboard-control-group select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .scoreboard-control-group .toggle {
+    width: 100%;
+  }
+
+  .scoreboard-control-group .toggle button {
+    flex: 1 1 0;
+  }
+
   .scoreboard-control-status {
+    grid-column: 1 / -1;
     margin-left: 0;
   }
 
@@ -2006,7 +2035,55 @@ th.dots {
   }
 
   .trend-legend {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  .trend-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    max-width: 100%;
+    padding: 6px 8px;
+    border-radius: 10px;
+  }
+
+  .trend-legend-top {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .trend-legend-name {
+    gap: 6px;
+  }
+
+  .trend-legend-label {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .trend-legend-meta {
+    font-size: 10px;
+  }
+
+  .trend-legend-score {
+    font-size: 11px;
+  }
+
+  .trend-legend-item .small {
+    display: none;
+  }
+
+  .trend-legend-swatch {
+    width: 14px;
+    flex-basis: 14px;
   }
 
   .stats-kpi {
@@ -2281,7 +2358,7 @@ th.dots {
 
 }
 #metric_summary {
-  font-size: 13px;
+  font-size: 18px;
 }
 
 .hole-map-controls-placeholder {
@@ -2307,6 +2384,7 @@ th.dots {
   min-width: 0;
   height: 32px;
   min-height: 32px;
+  font-family: JetBrains Mono, monospace;
 }
 
 .hole-map-nav button {
@@ -2337,11 +2415,13 @@ th.dots {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: center;
+  align-items: center;
 }
 
 .hole-map-zoom-toggle {
   display: inline-flex;
   justify-content: center;
+  align-items: center;
 }
 
 .hole-map-mode-toggle {
@@ -2478,7 +2558,7 @@ th.dots {
   }
 
   span[data-brand-title] {
-    font-size: 15px;
+    font-size: 17px;
     white-space: nowrap;
   }
 
@@ -2504,7 +2584,11 @@ th.dots {
   .hole-map-location-actions {
     width: 100%;
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hole-map-location-actions > :first-child {
+    grid-column: 1 / -1;
   }
 
   .hole-map-location .small {

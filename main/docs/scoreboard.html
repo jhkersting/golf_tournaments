@@ -16,6 +16,9 @@
     .mobile-header-link-secondary {
       right: 96px;
     }
+    #toggle_note{
+      display: none;
+    }
   </style>
 </head>
 
@@ -41,11 +44,9 @@
   <div class="scoreboard-controls">
     <div class="scoreboard-controls-inner">
       <div class="scoreboard-control-group">
-        <label for="round_filter">View</label>
         <select id="round_filter"></select>
       </div>
       <div class="scoreboard-control-group">
-        <label>Leaderboard</label>
         <div class="toggle" id="lb_toggle">
           <button id="btn_team">Team</button>
           <button id="btn_player" class="active">Individual</button>

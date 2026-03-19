@@ -950,6 +950,27 @@ function formatYards(value) {
   return Number.isFinite(value) ? String(Math.round(value)) : "-";
 }
 
+function holeYardagesForRound(tjson, roundIndex) {
+  const raw = courseForRoundRaw(tjson, roundIndex)?.holeYardages;
+  if (!Array.isArray(raw) || raw.length !== 18) return null;
+  const values = raw.map((value) => Number(value));
+  return values.every((value) => Number.isFinite(value)) ? values : null;
+}
+
+function fallbackHoleYardages() {
+  const candidates = [
+    state.bluegolfCourse?.holeYardages,
+    state.bluegolfCourse?.longestTees?.[0]?.holeYardages,
+    state.bluegolfCourse?.tees?.[0]?.holeYardages,
+  ];
+  for (const raw of candidates) {
+    if (!Array.isArray(raw) || raw.length !== 18) continue;
+    const values = raw.map((value) => Number(value));
+    if (values.every((value) => Number.isFinite(value))) return values;
+  }
+  return null;
+}
+
 function setMetricValue(el, primaryValue, secondaryValue) {
   if (!el) return;
   const primary = formatYards(primaryValue);
@@ -1791,10 +1812,15 @@ async function renderCurrentHole() {
       ? distanceYards(state.userLocation, state.tapPoint)
       : null;
   const showToPoint = usingTapPoint && Number.isFinite(userToTapYards);
+  const holeYardage = hole == null
+    ? null
+    : holeYardageForRound(entryState.tournament, entryState.selectedRoundIndex, Number(hole) - 1);
 
   if (els.metricSummary) {
     const label = state.mapLabel ? ` (${state.mapLabel})` : "";
-    els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}`;
+    const yardageText = Number.isFinite(holeYardage) ? `${Math.round(holeYardage)}y` : "—";
+    els.metricSummary.textContent =
+      `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)} | ${yardageText}`;
     //els.metricSummary.textContent = `Hole ${hole == null ? "—" : String(hole)} | Par ${par == null ? "—" : String(par)}${label}`;
   }
   if (els.metricToPointHead) els.metricToPointHead.style.display = showToPoint ? "" : "none";
@@ -2122,16 +2148,16 @@ function updateHoleNavControls() {
   const holes = state.holes || [];
   const hole = state.currentHole;
   if (!holes.length || hole == null) {
-    if (els.holePrev) els.holePrev.textContent = "<-";
-    if (els.holeNext) els.holeNext.textContent = "->";
+    if (els.holePrev) els.holePrev.textContent = "<";
+    if (els.holeNext) els.holeNext.textContent = ">";
     return;
   }
   const idx = holes.indexOf(hole);
   if (idx === -1) return;
   const prevHole = holes[(idx - 1 + holes.length) % holes.length];
   const nextHoleNumber = holes[(idx + 1) % holes.length];
-  if (els.holePrev) els.holePrev.textContent = `<- ${prevHole}`;
-  if (els.holeNext) els.holeNext.textContent = `${nextHoleNumber} ->`;
+  if (els.holePrev) els.holePrev.textContent = `< ${prevHole}`;
+  if (els.holeNext) els.holeNext.textContent = `${nextHoleNumber} >`;
   if (els.holeSelect) els.holeSelect.value = String(hole);
 }
 
@@ -2639,6 +2665,12 @@ function courseForRoundRaw(tjson, roundIndex) {
 function courseParsForRound(tjson, roundIndex) {
   const rawPars = courseForRoundRaw(tjson, roundIndex)?.pars;
   return Array.from({ length: 18 }, (_, idx) => Number(rawPars?.[idx]) || 4);
+}
+
+function holeYardageForRound(tjson, roundIndex, holeIndex) {
+  const roundYardages = holeYardagesForRound(tjson, roundIndex) || fallbackHoleYardages();
+  const value = Number(roundYardages?.[holeIndex]);
+  return Number.isFinite(value) ? value : null;
 }
 
 function scoreSourceForRound(roundData, roundCfg) {

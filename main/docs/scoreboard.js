@@ -3142,6 +3142,16 @@ function renderTrendGraph(data) {
     label.className = "trend-legend-label";
     label.textContent = isTeam ? (entry.row?.teamName || "Team") : (entry.row?.name || "Player");
     nameWrap.appendChild(label);
+
+    const meta = document.createElement("span");
+    meta.className = "trend-legend-meta";
+    const teeTime = String(entry.row?.teeTime || "").trim();
+    meta.textContent = entry.thru > 0
+      ? `(${displayThru(entry.thru)})`
+      : (teeTime ? `(${teeTime})` : "");
+    if (meta.textContent) {
+      nameWrap.appendChild(meta);
+    }
     top.appendChild(nameWrap);
 
     const score = document.createElement("b");
@@ -3162,7 +3172,7 @@ function renderTrendGraph(data) {
 }
 
 function viewRoundLabel(viewRound) {
-  return viewRound === "all" ? "All rounds" : `Round ${Number(viewRound) + 1}`;
+  return viewRound === "all" ? "Tournament" : `Round ${Number(viewRound) + 1}`;
 }
 
 function normalizeTeamId(teamId) {
@@ -4304,7 +4314,7 @@ async function loadTournament() {
 
 function syncRoundFilterOptions() {
   const previous = currentRound;
-  roundFilter.innerHTML = `<option value="all">All rounds (weighted)</option>`;
+  roundFilter.innerHTML = `<option value="all">Tournament</option>`;
   (TOURN?.tournament?.rounds || []).forEach((r, idx) => {
     roundFilter.innerHTML += `<option value="${idx}">Round ${idx + 1}: ${r.name || `Round ${idx + 1}`}</option>`;
   });
