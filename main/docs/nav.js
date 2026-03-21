@@ -32,7 +32,7 @@ function editHref(tournamentId) {
 }
 
 function enterHref(playerCode) {
-  return playerCode ? `./enter.html?code=${encodeURIComponent(playerCode)}` : "./enter.html";
+  return playerCode ? `./hole-map.html?code=${encodeURIComponent(playerCode)}` : "./hole-map.html";
 }
 
 function applyScoreboardLinks() {

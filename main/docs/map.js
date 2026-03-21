@@ -57,7 +57,7 @@ const MAP_PLAYER_REAR_PADDING_YARDS = 20; // Keep 20 yards behind the current pl
 const MAP_GREEN_BACK_PADDING_YARDS = 20; // Keep 20 yards past the back of the green in auto-zoom framing.
 const USER_ZOOM_MIN = 1;
 const USER_ZOOM_MAX = 3;
-const TAP_PREVIEW_DURATION_MS = 7000;
+const TAP_PREVIEW_DURATION_MS = 5000;
 const TAP_DOT_MOBILE_RADIUS_MULTIPLIER = 1.75;
 const PLAYER_DOT_MOBILE_RADIUS_MULTIPLIER = 1.65;
 const SCORE_AUTO_REFRESH_MS = 30_000;
@@ -77,6 +77,7 @@ const state = {
   userLocation: null,
   locationAccuracyM: null,
   locationError: "",
+  locationStatusText: "",
   locationWatchId: null,
   locationFixes: [],
   lastAcceptedLocationFix: null,
@@ -215,10 +216,11 @@ const els = {
   scoreSyncStatus: null,
   mapInfo: null,
   mapModeToggle: document.getElementById("map_mode_toggle"),
-  scoreOverrideInput: null,
   scoreSubmitDock: null,
   scoreHoleMeta: null,
   scoreSubmitButton: null,
+  scoreSubmitButtonLabel: null,
+  scoreSubmitButtonDetail: null,
   scoreSubmitInline: null,
   scoreCloseButton: null,
   scoreChangeCodeButton: null,
@@ -920,7 +922,12 @@ function holePar(features) {
 }
 
 function updateLocationStatus(text) {
-  void text;
+  const nextText = String(text || "").trim();
+  state.locationStatusText = nextText;
+  if (els.yardageDetail) {
+    els.yardageDetail.textContent = nextText;
+    els.yardageDetail.hidden = !nextText;
+  }
 }
 
 function secureContextMessage() {
@@ -1282,18 +1289,19 @@ function rememberMapModePreference(slug, mode) {
 }
 
 function updateTrackingButton() {
-  const locationInUse =
-    Array.isArray(state.userLocation) || state.locationWatchId != null || state.locationPending;
+  const hasLiveLocation = Array.isArray(state.userLocation);
+  const awaitingLocation = !hasLiveLocation && (state.locationPending || state.locationWatchId != null);
+  const locationInUse = hasLiveLocation || awaitingLocation;
 
   if (els.locBtn) {
-    els.locBtn.style.display = locationInUse ? "none" : "";
-    els.locBtn.disabled = Boolean(state.locationPending);
-    els.locBtn.textContent = state.locationPending ? "Locating..." : "Use My Location";
+    els.locBtn.style.display = hasLiveLocation ? "none" : "";
+    els.locBtn.disabled = awaitingLocation;
+    els.locBtn.textContent = awaitingLocation ? "Locating..." : "Use My Location";
   }
 
   if (els.locClear) {
     els.locClear.style.display = locationInUse ? "" : "none";
-    els.locClear.disabled = Boolean(state.locationPending);
+    els.locClear.disabled = false;
   }
 }
 
@@ -1569,11 +1577,12 @@ function stopLocationTracking(clearLocation, statusText) {
 function applyLocationFix(position) {
   const fix = parseLocationFix(position);
   if (!fix) {
+    state.locationPending = !Array.isArray(state.userLocation);
     state.locationError = "Location received, but coordinates were invalid.";
     updateLocationStatus(state.locationError);
     updateTrackingButton();
     renderCurrentHole();
-    return;
+    return Array.isArray(state.userLocation);
   }
 
   state.locationAccuracyM = Number.isFinite(fix.accuracyM) ? fix.accuracyM : null;
@@ -1582,19 +1591,21 @@ function applyLocationFix(position) {
   persistGeolocationGrant(true);
 
   if (!Number.isFinite(fix.accuracyM) || fix.accuracyM > LOCATION_HARD_REJECT_ACCURACY_M) {
+    state.locationPending = !Array.isArray(state.userLocation);
     updateLocationStatus(
       `GPS accuracy too low (${Math.round(fix.accuracyM)}m). Waiting for a better fix.`
     );
     updateTrackingButton();
     renderCurrentHole();
-    return;
+    return Array.isArray(state.userLocation);
   }
 
   if (isLocationOutlier(fix)) {
+    state.locationPending = !Array.isArray(state.userLocation);
     updateLocationStatus("Ignoring outlier GPS jump. Waiting for stable fix.");
     updateTrackingButton();
     renderCurrentHole();
-    return;
+    return Array.isArray(state.userLocation);
   }
 
   if (fix.accuracyM <= LOCATION_FILTER_MAX_ACCURACY_M) {
@@ -1613,11 +1624,13 @@ function applyLocationFix(position) {
     }
   }
 
+  state.locationPending = false;
   updateLocationStatus(
     `Tracking precise location (${Math.round(fix.accuracyM)}m, filtered).`
   );
   updateTrackingButton();
   renderCurrentHole();
+  return Array.isArray(state.userLocation);
 }
 
 function handleLocationFailure(error) {
@@ -1663,6 +1676,8 @@ function startLocationTracking() {
     state.locationWatchId = null;
   }
 
+  clearTapPreviewTimer();
+  state.tapPoint = null;
   state.locationFixes = [];
   state.lastAcceptedLocationFix = null;
   state.locationPending = true;
@@ -1671,7 +1686,6 @@ function startLocationTracking() {
   try {
     state.locationWatchId = navigator.geolocation.watchPosition(
       (position) => {
-        state.locationPending = false;
         applyLocationFix(position);
       },
       (error) => {
@@ -1690,6 +1704,7 @@ function startLocationTracking() {
     updateLocationStatus(state.locationError);
   }
   updateTrackingButton();
+  renderCurrentHole();
 }
 
 async function maybeAutoStartTracking() {
@@ -1888,11 +1903,12 @@ async function renderCurrentHole() {
     syncHoleSelectOptionLabel(hole, summaryText);
   }
   syncScoreHoleMeta(hole);
-  if (els.metricToPointHead) els.metricToPointHead.style.display = showToPoint ? "" : "none";
-  if (els.metricToPointRow) els.metricToPointRow.style.display = showToPoint ? "" : "none";
+  if (els.metricToPointHead) els.metricToPointHead.style.display = "none";
+  if (els.metricToPointRow) els.metricToPointRow.style.display = "none";
   if (els.metricToPoint) {
     els.metricToPoint.textContent = showToPoint ? formatYards(userToTapYards) : "—";
   }
+  updateScoreSubmitPointDetail(showToPoint ? `To Point ${formatYards(userToTapYards)}` : "");
   setMetricValue(
     els.metricFront,
     targetAvailable.front ? yardsFront : null,
@@ -1909,8 +1925,15 @@ async function renderCurrentHole() {
     usingTapPoint && targetAvailable.back ? userYardsBack : null
   );
 
+  const waitingForUsableLocation =
+    !Array.isArray(state.userLocation) &&
+    (state.locationPending || state.locationWatchId != null) &&
+    String(state.locationStatusText || "").trim();
+
   let detailText = "";
-  if (state.locationError) {
+  if (waitingForUsableLocation) {
+    detailText = state.locationStatusText;
+  } else if (state.locationError) {
     detailText = state.locationError;
   } else if (sourceLabel === "My Location") {
     detailText = "Live yardages from your location.";
@@ -1929,6 +1952,7 @@ async function renderCurrentHole() {
   }
   if (els.yardageDetail) {
     els.yardageDetail.textContent = detailText;
+    els.yardageDetail.hidden = !String(detailText || "").trim();
   }
 
   const hasHoleFeatures = usingFullMode ? features.length > 0 : !!holeData;
@@ -2537,22 +2561,6 @@ function toParText(v) {
   return d > 0 ? `+${d}` : `${d}`;
 }
 
-function holeDeltaText(scoreValue, parValue) {
-  const par = Number(parValue);
-  if (!Number.isFinite(par) || par <= 0) return "";
-  const score = Number(String(scoreValue ?? "").trim());
-  if (!Number.isFinite(score) || score <= 0) return "";
-  const diff = Math.round(score - par);
-  return diff >= 0 ? `+${diff}` : `${diff}`;
-}
-
-function syncHoleDeltaLabel(labelEl, scoreValue, parValue) {
-  if (!labelEl) return;
-  const text = holeDeltaText(scoreValue, parValue);
-  labelEl.textContent = text;
-  labelEl.style.visibility = text ? "visible" : "hidden";
-}
-
 function toParFromKeys(row, keys) {
   for (const key of keys) {
     if (row?.[key] != null) return toParText(row[key]);
@@ -2628,6 +2636,11 @@ function netToParText(row, pars) {
     return toParText(Number(net) - parTotal);
   }
   return toParText(row?.toPar);
+}
+
+function scoreEntryTitleParText(row, pars) {
+  if (!rowHasAnyData(row)) return "";
+  return `${grossToParText(row, pars)} [${netToParText(row, pars)}]`;
 }
 
 function leaderboardToParValue(row, pars, showGrossAndNet = false) {
@@ -3386,6 +3399,21 @@ function syncScoreHoleMeta(holeNumber = state.currentHole) {
   );
 }
 
+function updateScoreSubmitPointDetail(detail = "") {
+  const text = String(detail || "").trim();
+  if (els.scoreSubmitButtonDetail) {
+    els.scoreSubmitButtonDetail.textContent = text;
+    els.scoreSubmitButtonDetail.hidden = !text;
+  }
+  if (els.scoreSubmitButtonLabel) {
+    els.scoreSubmitButtonLabel.hidden = Boolean(text);
+  }
+  if (els.scoreSubmitButton) {
+    els.scoreSubmitButton.classList.toggle("has-point-detail", Boolean(text));
+  }
+  syncScoreNotifierOffset();
+}
+
 function syncTickerMount() {
   if (!tickerShell) return;
   const wantsScorePanelTicker =
@@ -3410,18 +3438,27 @@ function setScoreCardMode(mode = "scores") {
   syncTickerMount();
 }
 
-function updateScoreSubmitButton({ hidden = false, disabled = false, label = "Enter" } = {}) {
+function updateScoreSubmitButton({
+  hidden = false,
+  disabled = false,
+  dockLabel = "Enter",
+  inlineLabel = "Next Hole →",
+} = {}) {
   const collapsed = !entryState.scorePanelExpanded;
   const codeMode = entryState.scorePanelMode === "code";
   if (els.scoreSubmitDock) els.scoreSubmitDock.hidden = hidden || !collapsed || codeMode;
   if (els.scoreSubmitButton) {
     els.scoreSubmitButton.disabled = disabled;
-    els.scoreSubmitButton.textContent = label;
+    if (els.scoreSubmitButtonLabel) {
+      els.scoreSubmitButtonLabel.textContent = dockLabel;
+    } else {
+      els.scoreSubmitButton.textContent = dockLabel;
+    }
   }
   if (els.scoreSubmitInline) {
     els.scoreSubmitInline.hidden = hidden || collapsed || codeMode;
     els.scoreSubmitInline.disabled = disabled;
-    els.scoreSubmitInline.textContent = label;
+    els.scoreSubmitInline.textContent = inlineLabel;
   }
   syncScoreNotifierOffset();
 }
@@ -3441,7 +3478,8 @@ function setScoreCardExpanded(expanded, { focus = false } = {}) {
   updateScoreSubmitButton({
     hidden: !(entryState.currentInputs?.length > 0),
     disabled: entryState.submitting,
-    label: entryState.submitting ? "Entering…" : "Enter",
+    dockLabel: "Enter",
+    inlineLabel: entryState.submitting ? "Entering…" : "Next Hole →",
   });
   if (focus && entryState.scorePanelExpanded) {
     window.requestAnimationFrame(() => focusPrimaryScoreInput());
@@ -3469,10 +3507,11 @@ function normalizeScoreWheelValue(value) {
   return String(Math.max(SCORE_WHEEL_MIN, Math.min(SCORE_WHEEL_MAX, Math.round(parsed))));
 }
 
-function createScoreWheel(initialValue, { onChange } = {}) {
+function createScoreWheel(initialValue, { onChange, parValue } = {}) {
   const hiddenInput = document.createElement("input");
   hiddenInput.type = "hidden";
   hiddenInput.value = normalizeScoreWheelValue(initialValue);
+  const normalizedParValue = normalizeScoreWheelValue(parValue);
 
   const shell = document.createElement("div");
   shell.className = "score-wheel-shell";
@@ -3502,6 +3541,7 @@ function createScoreWheel(initialValue, { onChange } = {}) {
   let scrollSettleTimerId = 0;
   let isOpen = false;
   let removeOutsidePointerListener = null;
+  let suppressScrollSelection = false;
 
   function currentOption() {
     return optionByValue.get(selectedValue) || optionByValue.get("") || null;
@@ -3534,6 +3574,12 @@ function createScoreWheel(initialValue, { onChange } = {}) {
     });
   }
 
+  function defaultOpenOption() {
+    if (selectedValue) return currentOption();
+    if (normalizedParValue) return optionByValue.get(normalizedParValue) || currentOption();
+    return currentOption();
+  }
+
   function setValue(nextValue, { align = true, behavior = "smooth", emit = true } = {}) {
     const normalized = normalizeScoreWheelValue(nextValue);
     const changed = normalized !== selectedValue;
@@ -3554,7 +3600,9 @@ function createScoreWheel(initialValue, { onChange } = {}) {
     shell.classList.add("is-active");
     viewport.hidden = false;
     updateDisplayUi();
-    centerOption(currentOption(), "auto");
+    const openOption = defaultOpenOption();
+    suppressScrollSelection = !selectedValue && Boolean(openOption);
+    centerOption(openOption, "auto");
     entryState.activeScoreWheel = controls;
     if (!removeOutsidePointerListener) {
       const onPointerDownOutside = (event) => {
@@ -3574,6 +3622,13 @@ function createScoreWheel(initialValue, { onChange } = {}) {
         } catch (_) {
           viewport.focus();
         }
+      });
+    }
+    if (suppressScrollSelection) {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          suppressScrollSelection = false;
+        });
       });
     }
   }
@@ -3614,6 +3669,11 @@ function createScoreWheel(initialValue, { onChange } = {}) {
     const option = document.createElement("button");
     option.type = "button";
     option.className = "score-wheel-option";
+    if (value && value === normalizedParValue) {
+      option.classList.add("is-par");
+      option.setAttribute("aria-label", `Par ${value}`);
+      option.title = `Par ${value}`;
+    }
     option.id = `score_wheel_${index}_${Math.random().toString(36).slice(2, 8)}`;
     option.dataset.value = value;
     option.textContent = value || "—";
@@ -3637,6 +3697,7 @@ function createScoreWheel(initialValue, { onChange } = {}) {
   });
 
   viewport.addEventListener("scroll", () => {
+    if (suppressScrollSelection) return;
     setValue(nearestOptionValue(), { align: false, emit: true });
     if (scrollSettleTimerId) clearTimeout(scrollSettleTimerId);
     scrollSettleTimerId = window.setTimeout(() => {
@@ -3782,22 +3843,20 @@ function ensureScoreCard() {
             <div class="hole-map-score-hole-meta" id="map_score_hole_meta" hidden></div>
           </div>
           <div class="hole-map-score-head-actions">
-            <button id="map_change_code_btn" class="secondary" type="button">Change code</button>
+            <button id="map_close_scores_btn" class="secondary hole-map-score-close-btn" type="button" aria-label="Close scores">X</button>
           </div>
         </div>
         <div id="map_score_body">
           <div id="map_score_ticker_host" class="hole-map-score-ticker-host"></div>
           <div class="enter-tabs" id="map_round_tabs" style="margin-top:12px;"></div>
           <div id="map_score_rows" style="display:flex; flex-wrap:wrap; gap:8px; overflow:auto; padding:2px 1px; margin-top:10px;"></div>
-          <div class="actions hole-actions" id="map_score_actions" style="margin-top:10px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-            <label class="small" style="display:inline-flex; align-items:center; gap:6px; margin-right:auto;">
-              <input id="map_score_override" type="checkbox" />
-              Override existing
-            </label>
+          <div class="actions" id="map_score_actions" style="margin-top:10px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:center;">
             <div class="hole-map-score-action-buttons">
-              <button id="map_submit_hole_inline_btn" type="button">Enter</button>
-              <button id="map_close_scores_btn" class="secondary" type="button">Close</button>
+              <button id="map_submit_hole_inline_btn" type="button">Next Hole →</button>
             </div>
+          </div>
+          <div class="hole-map-score-secondary-actions">
+            <button id="map_change_code_btn" class="secondary" type="button">Change code</button>
           </div>
           <div class="small" id="map_score_status" style="margin-top:8px;"></div>
         </div>
@@ -3815,7 +3874,6 @@ function ensureScoreCard() {
     els.scoreStatus = card.querySelector("#map_score_status");
     els.scoreSyncStatus = card.querySelector("#map_score_sync_status");
     els.mapInfo = card.querySelector("#map_course_info");
-    els.scoreOverrideInput = card.querySelector("#map_score_override");
     els.scoreSubmitInline = card.querySelector("#map_submit_hole_inline_btn");
     els.scoreChangeCodeButton = card.querySelector("#map_change_code_btn");
     els.scoreCloseButton = card.querySelector("#map_close_scores_btn");
@@ -3824,10 +3882,17 @@ function ensureScoreCard() {
     dock.className = "hole-map-enter-dock";
     dock.id = "map_enter_dock";
     dock.hidden = true;
-    dock.innerHTML = `<button id="map_enter_hole_btn" type="button">Enter</button>`;
+    dock.innerHTML = `
+      <button id="map_enter_hole_btn" type="button">
+        <span class="hole-map-enter-dock-detail" id="map_enter_hole_detail" hidden></span>
+        <span class="hole-map-enter-dock-label" id="map_enter_hole_label">Enter</span>
+      </button>
+    `;
     document.body.appendChild(dock);
     els.scoreSubmitDock = dock;
     els.scoreSubmitButton = dock.querySelector("#map_enter_hole_btn");
+    els.scoreSubmitButtonDetail = dock.querySelector("#map_enter_hole_detail");
+    els.scoreSubmitButtonLabel = dock.querySelector("#map_enter_hole_label");
     syncScoreHoleMeta();
     syncTickerMount();
 
@@ -4218,6 +4283,102 @@ function roundTargets(roundIndex) {
   };
 }
 
+function scoreTitleStatsByTarget(roundIndex) {
+  const roundData = entryState.tournament?.score_data?.rounds?.[roundIndex] || {};
+  const pars = courseParsForRound(entryState.tournament, roundIndex);
+  const mode = roundModeForIndex(roundIndex);
+
+  if (mode === "team") {
+    const statsByTarget = Object.create(null);
+    for (const row of roundData?.leaderboard?.teams || []) {
+      const teamId = normalizeTeamId(row?.teamId);
+      if (!teamId) continue;
+      const summary = scoreEntryTitleParText(row, pars);
+      if (summary) statsByTarget[teamId] = summary;
+    }
+    return statsByTarget;
+  }
+
+  if (mode === "group") {
+    const playerRowById = Object.create(null);
+    for (const row of roundData?.leaderboard?.players || []) {
+      const playerId = String(row?.playerId || "").trim();
+      if (!playerId) continue;
+      playerRowById[playerId] = row;
+    }
+
+    function findTwoManGroupEntry(teamId, groupLabel) {
+      const groups = roundData?.team?.[teamId]?.groups || {};
+      const wanted = normalizeGroup(groupLabel);
+      for (const [rawLabel, entry] of Object.entries(groups)) {
+        if (normalizeGroup(rawLabel) === wanted) return entry || null;
+      }
+      return null;
+    }
+
+    function fallbackRowFromGroupEntry(groupEntry) {
+      const gross = (Array.isArray(groupEntry?.gross) ? groupEntry.gross : Array(18).fill(null))
+        .map((value) => (value == null || Number(value) <= 0 ? null : Number(value)));
+      const net = (Array.isArray(groupEntry?.net) ? groupEntry.net : gross)
+        .map((value) => (value == null || Number(value) <= 0 ? null : Number(value)));
+      const thru = gross.reduce((acc, value) => acc + (value != null ? 1 : 0), 0);
+      return {
+        thru,
+        scores: {
+          gross,
+          net,
+          grossTotal: sumHoles(gross),
+          netTotal: sumHoles(net),
+          thru,
+        },
+      };
+    }
+
+    const statsByTarget = Object.create(null);
+    const seenGroups = new Set();
+    function addGroup(teamIdRaw, groupLabelRaw) {
+      const teamId = normalizeTeamId(teamIdRaw);
+      const group = normalizeGroup(groupLabelRaw);
+      const groupId = twoManGroupId(teamId, group);
+      if (!groupId || seenGroups.has(groupId)) return;
+      seenGroups.add(groupId);
+
+      const groupPlayerIds = (entryState.players || [])
+        .filter((player) => normalizeTeamId(player?.teamId) === teamId && groupForPlayerRound(player, roundIndex) === group)
+        .map((player) => player?.playerId)
+        .filter(Boolean);
+
+      let row = groupPlayerIds.map((playerId) => playerRowById[playerId]).find(Boolean) || null;
+      if (!row) {
+        const groupEntry = findTwoManGroupEntry(teamId, group);
+        if (groupEntry) row = fallbackRowFromGroupEntry(groupEntry);
+      }
+
+      const summary = scoreEntryTitleParText(row, pars);
+      if (summary) statsByTarget[groupId] = summary;
+    }
+
+    allowedPlayerIdsForRound(roundIndex).forEach((playerId) => {
+      const player = entryState.playersById?.[playerId];
+      if (!player) return;
+      addGroup(player?.teamId, groupForPlayerRound(player, roundIndex));
+    });
+    Object.entries(roundData?.team || {}).forEach(([teamId, teamEntry]) => {
+      Object.keys(teamEntry?.groups || {}).forEach((groupLabel) => addGroup(teamId, groupLabel));
+    });
+    return statsByTarget;
+  }
+
+  const statsByTarget = Object.create(null);
+  for (const row of roundData?.leaderboard?.players || []) {
+    const playerId = String(row?.playerId || "").trim();
+    if (!playerId) continue;
+    const summary = scoreEntryTitleParText(row, pars);
+    if (summary) statsByTarget[playerId] = summary;
+  }
+  return statsByTarget;
+}
+
 function activeRoundIndexFromTournament() {
   const rounds = entryState.rounds || [];
   for (let i = 0; i < rounds.length; i += 1) {
@@ -4295,20 +4456,27 @@ function renderScoreRows() {
   const holeNumber = holeNumberFromIndex(holeIndex) ?? state.currentHole;
   const roundHolePar = courseParsForRound(entryState.tournament, roundIndex)?.[holeIndex];
   const holePar = Number.isFinite(roundHolePar) ? roundHolePar : parForHoleNumber(holeNumber);
-  const { targets, savedByTarget } = roundTargets(roundIndex);
+  const { targets, savedByTarget, progressTargetIds } = roundTargets(roundIndex);
+  const titleStatsByTarget = scoreTitleStatsByTarget(roundIndex);
   if (!targets.length) {
     els.scoreRows.innerHTML = `<div class="small">No score targets for this round.</div>`;
     updateScoreSubmitButton({ hidden: true });
     return;
   }
 
-  for (const target of targets) {
+  const primaryTargetIds = new Set(progressTargetIds || []);
+  const orderedTargets = [
+    ...targets.filter((target) => primaryTargetIds.has(target.id)),
+    ...targets.filter((target) => !primaryTargetIds.has(target.id)),
+  ];
+
+  for (const target of orderedTargets) {
     const existing = (savedByTarget[target.id] || Array(18).fill(null))[holeIndex];
     const draft = getHoleDraft(roundIndex, holeIndex, target.id);
-    const parDefault = Number.isFinite(holePar) && holePar > 0 ? String(Math.round(holePar)) : "";
-    const initial = draft !== undefined ? draft : existing == null ? parDefault : String(existing);
+    const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
     const row = document.createElement("div");
     row.className = "hole-row hole-score-row team-accent";
+    if (primaryTargetIds.has(target.id)) row.classList.add("is-primary-target");
     const accent = colorForTeam(target.teamId);
     if (accent) row.style.setProperty("--team-accent", accent);
     row.style.flex = "1 1 260px";
@@ -4316,23 +4484,26 @@ function renderScoreRows() {
 
     const title = document.createElement("div");
     title.className = "hole-score-row-title";
-    title.textContent = target.label;
+    title.appendChild(document.createTextNode(target.label));
+    const statText = String(titleStatsByTarget[target.id] || "").trim();
+    if (statText) {
+      const stats = document.createElement("span");
+      stats.className = "hole-score-row-stats";
+      stats.textContent = statText;
+      title.appendChild(stats);
+    }
     row.appendChild(title);
 
     const scoreWheel = createScoreWheel(initial, {
+      parValue: holePar,
       onChange(nextValue) {
         setHoleDraft(roundIndex, holeIndex, target.id, nextValue);
-        syncHoleDeltaLabel(delta, nextValue, holePar);
       },
     });
 
     const inputWrap = document.createElement("div");
     inputWrap.className = "score-wheel-row";
-    const delta = document.createElement("span");
-    delta.className = "small score-wheel-delta";
-    syncHoleDeltaLabel(delta, scoreWheel.input.value, holePar);
     inputWrap.appendChild(scoreWheel.root);
-    inputWrap.appendChild(delta);
     row.appendChild(inputWrap);
     els.scoreRows.appendChild(row);
     window.requestAnimationFrame(() => scoreWheel.sync());
@@ -4346,7 +4517,8 @@ function renderScoreRows() {
   updateScoreSubmitButton({
     hidden: false,
     disabled: entryState.submitting,
-    label: entryState.submitting ? "Entering…" : "Enter",
+    dockLabel: "Enter",
+    inlineLabel: entryState.submitting ? "Entering…" : "Next Hole →",
   });
 }
 
@@ -4372,11 +4544,10 @@ async function refreshTournamentJson({ quietSync = false } = {}) {
   return nextJson;
 }
 
-async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = false, override = null } = {}) {
+async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = false } = {}) {
   if (entryState.submitting) return { ok: false };
   const roundIndex = entryState.selectedRoundIndex;
   const holeIndex = entryState.currentHoleIndex;
-  const withOverride = override == null ? Boolean(els.scoreOverrideInput?.checked) : Boolean(override);
   const entries = [];
   for (const { targetId, input } of entryState.currentInputs || []) {
     const raw = String(input?.value ?? "").trim();
@@ -4393,7 +4564,7 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
   }
 
   entryState.submitting = true;
-  updateScoreSubmitButton({ hidden: false, disabled: true, label: "Entering…" });
+  updateScoreSubmitButton({ hidden: false, disabled: true, dockLabel: "Enter", inlineLabel: "Entering…" });
   setScoreStatus("Submitting…");
   const payload = {
     code: entryState.code,
@@ -4401,7 +4572,7 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
     mode: "hole",
     holeIndex,
     entries,
-    override: withOverride,
+    override: true,
   };
   try {
     await api(`/tournaments/${encodeURIComponent(entryState.tid)}/scores`, {
@@ -4465,11 +4636,7 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
       return { ok: true, submitted: true, queued: true };
     }
     if (error?.status === 409) {
-      if (withOverride) {
-        setScoreStatus("Conflict: existing scores could not be overridden for this player code.", true);
-      } else {
-        setScoreStatus('Conflict: scores already posted. Check "Override existing" and submit again.', true);
-      }
+      setScoreStatus("Conflict: existing scores could not be overridden for this player code.", true);
       return { ok: false, conflict: true };
     }
     setScoreStatus(`Error: ${error?.message || String(error)}`, true);
@@ -4479,7 +4646,8 @@ async function submitCurrentHole({ allowEmpty = false, advanceToSuggested = fals
     updateScoreSubmitButton({
       hidden: !(entryState.currentInputs?.length > 0),
       disabled: false,
-      label: "Enter",
+      dockLabel: "Enter",
+      inlineLabel: "Next Hole →",
     });
   }
 }

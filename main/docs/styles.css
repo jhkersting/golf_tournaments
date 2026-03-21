@@ -253,21 +253,70 @@ header {
   background: var(--brand);
 }
 
-.hole-header {
+.enter-round-tabs {
+  margin-top: 12px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.enter-round-pane {
+  min-width: 0;
+}
+
+.enter-change-code-actions {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  justify-content: center;
+  margin: 10px 0 0;
+}
+
+.hole-actions {
+  display: grid !important;
+  grid-template-columns: 56px minmax(0, 1fr) 56px;
+  gap: 8px !important;
+  align-items: stretch;
+}
+
+.hole-actions button {
+  width: 100%;
+}
+
+.hole-action-nav {
+  padding-left: 0;
+  padding-right: 0;
+  font-family: var(--font-mono);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.hole-action-submit {
+  font-size: 13px;
+}
+
+.hole-header {
+  display: block;
   margin-bottom: 10px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
 }
 
-.hole-header b {
+.hole-header-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 38px 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--field-bg);
+  color: var(--text);
   font-family: var(--font-display);
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   font-weight: 400;
+  line-height: 1.1;
+  text-align: center;
+  text-align-last: center;
+  border: none;
 }
 
 .hole-grid {
@@ -302,9 +351,9 @@ header {
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 18px;
-  margin: 0 0 14px;
+  margin: 0 0 8px;
   box-shadow: var(--shadow);
   max-width: 100%;
   overflow-x: hidden;
@@ -364,16 +413,44 @@ header {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.hole-map-score-panel .enter-who-head {
+  position: relative;
+  padding-right: 56px;
+}
+
+.hole-map-score-panel .hole-map-score-head-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: auto;
+  margin-left: 0;
 }
 
 .hole-map-score-action-buttons {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  width: min(220px, 100%);
+  width: min(320px, 100%);
+  margin: 0 auto;
 }
 
 .hole-map-score-action-buttons button {
   width: 100%;
+}
+
+.hole-map-score-secondary-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.hole-map-score-close-btn {
+  min-width: 44px;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .hole-map-score-hole-meta {
@@ -415,6 +492,48 @@ header {
 
 .hole-map-score-panel #map_score_body {
   flex: 1 1 auto;
+}
+
+.enter-inline-score-panel {
+  width: 100%;
+  min-height: 0;
+}
+
+.enter-inline-score-body {
+  flex: 1 1 auto;
+}
+
+.enter-inline-score-panel .hole-header {
+  margin: 12px 0 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.enter-inline-score-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  overflow: auto;
+  padding: 2px 1px;
+  margin-top: 10px;
+}
+
+.enter-inline-score-rows .hole-row {
+  margin: 0;
+  flex: 1 1 260px;
+}
+
+.enter-inline-score-actions {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.enter-inline-score-status {
+  margin-top: 8px;
 }
 
 body.hole-map-score-open {
@@ -513,7 +632,7 @@ body.hole-map-score-open {
   padding: 18px 18px 12px;
   background: color-mix(in srgb, var(--surface) 98%, var(--bg));
   border: 1px solid var(--border-strong);
-  border-radius: 14px 14px 0 0;
+  border-radius: 12px 14px 0 0;
   box-shadow: 0 10px 26px rgba(15, 34, 56, 0.14);
 }
 
@@ -936,7 +1055,7 @@ hr {
 
 .odds-sections {
   display: grid;
-  gap: 14px;
+  gap: 5px;
 }
 
 .odds-block {
@@ -1038,7 +1157,7 @@ hr {
 
 .odds-scorecards-panel {
   display: grid;
-  gap: 14px;
+  gap: 5px;
   margin-top: 10px;
   padding-top: 14px;
   border-top: 1px solid rgba(20, 33, 47, 0.1);
@@ -1064,7 +1183,7 @@ hr {
 
 .odds-scorecards {
   display: grid;
-  gap: 14px;
+  gap: 5px;
 }
 
 .odds-scorecard-block {
@@ -1428,7 +1547,7 @@ hr {
   right: auto;
   bottom: auto;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -1478,7 +1597,7 @@ hr {
 
 .trend-graph-shell {
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--link-bg) 26%, var(--surface-strong));
   overflow: hidden;
 }
@@ -1651,7 +1770,7 @@ hr {
 .scoregrid {
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--surface-strong);
 }
 
@@ -1785,11 +1904,25 @@ pre {
 }
 
 .hole-score-row-title {
-  font-family: var(--font-display);
+  font-family: var(--font-sans);
   font-size: 18px;
   font-weight: 400;
   line-height: 1.15;
   letter-spacing: 0.01em;
+}
+
+.hole-score-row-stats {
+  display: inline-block;
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.hole-score-row.is-primary-target .hole-score-row-title {
+  font-weight: 800;
 }
 
 .score-wheel-row {
@@ -1800,14 +1933,16 @@ pre {
 }
 
 .score-wheel-shell {
+  position: relative;
   display: grid;
-  gap: 8px;
+  gap: 0;
   min-width: 0;
+  min-height: 56px;
 }
 
 .score-wheel-display {
   width: 100%;
-  min-height: 46px;
+  min-height: 56px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   background: color-mix(in srgb, var(--surface-strong) 58%, transparent);
@@ -1822,8 +1957,8 @@ pre {
 }
 
 .score-wheel-shell.is-active .score-wheel-display {
-  border-color: color-mix(in srgb, var(--brand) 36%, var(--border));
-  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .score-wheel-display:hover,
@@ -1837,12 +1972,11 @@ pre {
   color: var(--muted);
 }
 
-.score-wheel-shell:not(.is-active) + .score-wheel-delta {
-  display: none;
-}
-
 .score-wheel {
+  position: absolute;
+  inset: 0;
   width: 100%;
+  height: 56px;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
@@ -1857,7 +1991,14 @@ pre {
 }
 
 .score-wheel[hidden] {
-  display: none;
+  display: block;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.score-wheel:not([hidden]) {
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .score-wheel::-webkit-scrollbar {
@@ -1869,6 +2010,7 @@ pre {
   align-items: center;
   gap: 8px;
   min-width: 100%;
+  min-height: 100%;
   padding: 6px calc(50% - 28px);
 }
 
@@ -1876,7 +2018,7 @@ pre {
   flex: 0 0 auto;
   min-width: 56px;
   min-height: 42px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
@@ -1904,13 +2046,12 @@ pre {
   box-shadow: 0 10px 22px rgba(15, 24, 34, 0.18);
 }
 
-.score-wheel-delta {
-  min-width: 28px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  text-align: right;
-  justify-self: end;
+.score-wheel-option.is-par {
+  border-color: color-mix(in srgb, var(--surface) 72%, var(--text));
+}
+
+.score-wheel-option.is-par.is-active {
+  border-color: color-mix(in srgb, var(--surface) 82%, white);
 }
 
 .toggle {
@@ -1986,7 +2127,7 @@ th.dots {
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-    gap: 14px;
+    gap: 5px;
   }
 
   .container {
@@ -2017,7 +2158,7 @@ th.dots {
   .menu-toggle {
     display: inline-flex;
     position: absolute;
-    top: 10px;
+    top: 12px;
     right: 10px;
   }
 
@@ -2037,7 +2178,7 @@ th.dots {
   .mobile-header-link {
     display: inline-flex;
     position: absolute;
-    top: 10px;
+    top: 12px;
     min-height: 25px;
     border-radius: 5px !important;
     padding: 1px 5px !important;
@@ -2147,7 +2288,7 @@ th.dots {
 
   .card {
     padding: 12px;
-    border-radius: 14px;
+    border-radius: 12px;
     box-shadow: none;
   }
 
@@ -2162,8 +2303,20 @@ th.dots {
     width: 100%;
   }
 
+  .hole-map-score-panel .enter-who-head {
+    padding-right: 56px;
+  }
+
+  .hole-map-score-panel .hole-map-score-head-actions {
+    width: auto;
+  }
+
   .hole-map-score-head-actions button {
     width: 100%;
+  }
+
+  .hole-map-score-panel .hole-map-score-head-actions button {
+    width: auto;
   }
 
   .scoreboard-enter-card .main-action-link {
@@ -2176,25 +2329,12 @@ th.dots {
   }
 
   .hole-header {
-    align-items: flex-start;
+    display: block;
   }
 
-  .hole-header > div:last-child {
-    width: 100%;
-  }
-
-  .hole-header select {
-    max-width: 180px;
-  }
-
-  .hole-actions {
-    display: grid !important;
-    grid-template-columns: 1fr;
-    gap: 8px !important;
-  }
-
-  .hole-actions button {
-    width: 100%;
+  .hole-header-select {
+    max-width: none;
+    font-size: 1rem;
   }
 
   .table {
@@ -2552,7 +2692,7 @@ th.dots {
 
 .hole-map-controls {
   display: grid;
-  gap: 12px;
+  gap: 1px;
   position: sticky;
   top: var(--hole-controls-stick-top, 74px);
   z-index: 45;
@@ -2567,7 +2707,7 @@ th.dots {
   left: var(--hole-controls-fixed-left, 0px);
   width: var(--hole-controls-fixed-width, auto);
   z-index: 85;
-  background: color-mix(in srgb, var(--surface-strong) 50%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
 }
 .hole-map-controls-placeholder {
   display: none;
@@ -2604,11 +2744,17 @@ th.dots {
   pointer-events: auto;
   width: min(280px, calc(100vw - 24px));
   min-height: 52px;
+  padding: 10px 18px;
   border-radius: 999px;
   border-color: color-mix(in srgb, var(--brand) 82%, var(--BLACK));
-  background: var(--brand);
+  background: color-mix(in srgb, var(--brand) 85%, transparent);
   color: var(--brand-contrast);
   box-shadow: 0 14px 34px rgba(15, 24, 34, 0.28);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 400;
@@ -2616,8 +2762,42 @@ th.dots {
   text-transform: none;
 }
 
+.hole-map-enter-dock-label {
+  display: block;
+  line-height: 1;
+}
+
+.hole-map-enter-dock-detail {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+  opacity: 0.88;
+}
+
+.hole-map-enter-dock button.has-point-detail {
+  gap: 4px;
+}
+
+.hole-map-enter-dock button.has-point-detail .hole-map-enter-dock-detail {
+  font-size: 14px;
+  font-weight: 800;
+  opacity: 0.95;
+}
+
+.hole-map-enter-dock button.has-point-detail .hole-map-enter-dock-label {
+  font-size: 17px;
+}
+
+.hole-map-enter-dock-detail[hidden] {
+  display: none;
+}
+
 .hole-map-enter-dock button:hover {
-  background: var(--brand);
+  background: color-mix(in srgb, var(--brand) 85%, transparent);
   border-color: color-mix(in srgb, var(--brand) 82%, var(--BLACK));
 }
 
@@ -2875,10 +3055,6 @@ th.dots {
     width: 100%;
     display: grid;
     grid-template-columns: 1fr 1fr;
-  }
-
-  .hole-map-location-actions > :first-child {
-    grid-column: 1 / -1;
   }
 
   .hole-map-location .small {

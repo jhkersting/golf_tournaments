@@ -2,6 +2,7 @@ import {
   api,
   staticJson,
   qs,
+  STATIC_BASE,
   createTeamColorRegistry,
   setHeaderTournamentName,
   STORAGE_KEYS,
@@ -28,7 +29,6 @@ const codeFromQuery = qs("code");
 const normalizedCodeFromQuery = normalizePlayerCode(codeFromQuery || qs("c"));
 if (normalizedCodeFromQuery) rememberPlayerCode(normalizedCodeFromQuery);
 let code = normalizedCodeFromQuery || normalizePlayerCode(getRememberedPlayerCode()) || "";
-const who = document.getElementById("who");
 const forms = document.getElementById("round_forms");
 const ticker = document.getElementById("enter_ticker");
 const tickerTitle = document.getElementById("enter_ticker_title");
@@ -60,10 +60,35 @@ const TICKER_NEXT_DELAY_MS = 3000;
 const SCORE_WHEEL_MIN = 1;
 const SCORE_WHEEL_MAX = 20;
 const SCORE_WHEEL_VALUES = ["", ...Array.from({ length: SCORE_WHEEL_MAX }, (_, index) => String(index + SCORE_WHEEL_MIN))];
+const DATA_ROOT_CANDIDATES = [
+  "./data",
+  `${STATIC_BASE}/course-data`,
+  "../../golf_course_hole_geo_data/data",
+  "/golf_tournaments/golf_course_hole_geo_data/data",
+  "/golf_course_hole_geo_data/data",
+];
+const MAP_INDEX_CANDIDATES = DATA_ROOT_CANDIDATES.map((root) => `${root}/courses_map_index.json`);
 let activeScoreWheel = null;
+let courseMapIndexPromise = null;
+let courseMapIndex = null;
+const roundHoleYardageFallbacks = new Map();
+const roundHoleYardageFallbackPromises = new Map();
+
+async function fetchJson(path) {
+  const response = await fetch(path, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Failed to load ${path}: ${response.status}`);
+  return response.json();
+}
 
 function normalizeTeamId(teamId) {
   return teamId == null ? "" : String(teamId).trim();
+}
+
+function normalizeKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function setBrandDotColor(color) {
@@ -298,6 +323,177 @@ function courseForRound(tjson, roundIndex) {
   return courses[idx] || courses[0] || defaultCourse();
 }
 
+function courseListFromTournamentRaw(tjson) {
+  const fromList = Array.isArray(tjson?.courses)
+    ? tjson.courses.filter((course) => course && typeof course === "object")
+    : [];
+  if (fromList.length) return fromList;
+  if (tjson?.course && typeof tjson.course === "object") return [tjson.course];
+  return [];
+}
+
+function courseForRoundRaw(tjson, roundIndex) {
+  const courses = courseListFromTournamentRaw(tjson);
+  if (!courses.length) return null;
+  const rounds = tjson?.tournament?.rounds || [];
+  const idxRaw = Number(rounds?.[roundIndex]?.courseIndex);
+  const idx = Number.isInteger(idxRaw) && idxRaw >= 0 && idxRaw < courses.length ? idxRaw : 0;
+  return courses[idx] || courses[0] || null;
+}
+
+function holeYardagesForRound(tjson, roundIndex) {
+  const raw = courseForRoundRaw(tjson, roundIndex)?.holeYardages;
+  if (!Array.isArray(raw) || raw.length !== 18) return null;
+  const values = raw.map((value) => Number(value));
+  return values.every((value) => Number.isFinite(value)) ? values : null;
+}
+
+function fallbackHoleYardagesForRound(roundIndex) {
+  return roundHoleYardageFallbacks.get(roundIndex) || null;
+}
+
+async function fetchCourseMapIndex() {
+  for (const candidate of MAP_INDEX_CANDIDATES) {
+    try {
+      const json = await fetchJson(candidate);
+      if (json && typeof json === "object") return json;
+    } catch (_) {
+      // try next path
+    }
+  }
+  return {
+    generated_at_utc: "",
+    data_root: "",
+    course_count: 0,
+    counts_by_map_level: { full: 0, simplified: 0, none: 0 },
+    courses_by_slug: {},
+    courses: [],
+  };
+}
+
+async function ensureCourseMapIndex() {
+  if (courseMapIndex) return courseMapIndex;
+  if (!courseMapIndexPromise) {
+    courseMapIndexPromise = fetchCourseMapIndex().catch(() => ({
+      generated_at_utc: "",
+      data_root: "",
+      course_count: 0,
+      counts_by_map_level: { full: 0, simplified: 0, none: 0 },
+      courses_by_slug: {},
+      courses: [],
+    }));
+  }
+  courseMapIndex = await courseMapIndexPromise;
+  return courseMapIndex;
+}
+
+function resolveCourseMapMeta(course, mapIndex) {
+  if (!course || !mapIndex) return null;
+  const bySlug = mapIndex?.courses_by_slug || {};
+  const courses = Array.isArray(mapIndex?.courses) ? mapIndex.courses : [];
+
+  const slugCandidates = [
+    course?.mapSlug,
+    course?.dataSlug,
+    course?.sourceCourseId,
+    course?.courseId,
+    course?.bluegolfCourseSlug,
+    course?.slug,
+    course?.courseSlug,
+    course?.course_slug,
+    course?.id,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  for (const slug of slugCandidates) {
+    if (bySlug[slug]) return { slug, ...bySlug[slug] };
+  }
+
+  const targetNameKey = normalizeKey(course?.name || course?.courseName || course?.title);
+  if (targetNameKey) {
+    const exact = courses.find((item) => normalizeKey(item?.name) === targetNameKey);
+    if (exact?.slug) return { slug: exact.slug, ...exact };
+  }
+
+  if (slugCandidates.length) {
+    return {
+      slug: slugCandidates[0],
+      name: course?.name || course?.courseName || course?.title || slugCandidates[0],
+    };
+  }
+  return null;
+}
+
+function dataCandidatesForSlug(slug) {
+  return DATA_ROOT_CANDIDATES.map((root) => `${root}/${slug}`);
+}
+
+async function resolveBluegolfCourseDataBase(slug) {
+  for (const candidate of dataCandidatesForSlug(slug)) {
+    const probe = `${candidate}/bluegolf_course_data.json`;
+    try {
+      const response = await fetch(probe, { cache: "no-store" });
+      if (response.ok) return candidate;
+    } catch (_) {
+      // continue
+    }
+  }
+  return "";
+}
+
+function extractFallbackHoleYardages(courseData) {
+  const candidates = [
+    courseData?.holeYardages,
+    courseData?.longestTees?.[0]?.holeYardages,
+    courseData?.tees?.[0]?.holeYardages,
+  ];
+  for (const raw of candidates) {
+    if (!Array.isArray(raw) || raw.length !== 18) continue;
+    const values = raw.map((value) => Number(value));
+    if (values.every((value) => Number.isFinite(value))) return values;
+  }
+  return null;
+}
+
+async function ensureHoleYardageFallbackForRound(tjson, roundIndex) {
+  const roundYardages = holeYardagesForRound(tjson, roundIndex);
+  if (Array.isArray(roundYardages)) return roundYardages;
+  if (roundHoleYardageFallbacks.has(roundIndex)) return roundHoleYardageFallbacks.get(roundIndex);
+  if (roundHoleYardageFallbackPromises.has(roundIndex)) {
+    return roundHoleYardageFallbackPromises.get(roundIndex);
+  }
+
+  const promise = (async () => {
+    let yardages = null;
+    const course = courseForRoundRaw(tjson, roundIndex);
+    if (course) {
+      const mapIndex = await ensureCourseMapIndex();
+      const meta = resolveCourseMapMeta(course, mapIndex);
+      const slug = String(meta?.slug || "").trim();
+      if (slug) {
+        const dataBase = await resolveBluegolfCourseDataBase(slug);
+        if (dataBase) {
+          const courseData = await fetchJson(`${dataBase}/bluegolf_course_data.json`);
+          yardages = extractFallbackHoleYardages(courseData);
+        }
+      }
+    }
+    roundHoleYardageFallbacks.set(roundIndex, yardages);
+    return yardages;
+  })()
+    .catch(() => {
+      roundHoleYardageFallbacks.set(roundIndex, null);
+      return null;
+    })
+    .finally(() => {
+      roundHoleYardageFallbackPromises.delete(roundIndex);
+    });
+
+  roundHoleYardageFallbackPromises.set(roundIndex, promise);
+  return promise;
+}
+
 /**
  * Draft (unsent) edits so auto-refresh + rerenders never clobber typing.
  * Structure:
@@ -373,26 +569,23 @@ function nextHoleIndexForGroup(savedByTarget, targetIds) {
   return 17;
 }
 
-function keyGroup(tid, roundIndex) {
-  return `group:${tid}:${roundIndex}:${code}`;
-}
-
-function loadGroup(tid, roundIndex, allPlayers, defaultIds) {
-  try {
-    const v = JSON.parse(localStorage.getItem(keyGroup(tid, roundIndex)) || "null");
-    if (Array.isArray(v) && v.length) return v.filter((id) => allPlayers[id]);
-  } catch { }
-  return defaultIds.slice();
-}
-
-function saveGroup(tid, roundIndex, ids) {
-  try {
-    localStorage.setItem(keyGroup(tid, roundIndex), JSON.stringify(ids));
-  } catch { }
-}
-
 function holeLabel(i) {
   return `Hole ${i + 1}`;
+}
+
+function holeYardageText(course, holeIndex, roundIndex = null) {
+  const yards = Number(course?.holeYardages?.[holeIndex]);
+  if (Number.isFinite(yards) && yards > 0) return `${Math.round(yards)}y`;
+  if (roundIndex == null) return "—";
+  const fallbackYards = Number(fallbackHoleYardagesForRound(roundIndex)?.[holeIndex]);
+  if (Number.isFinite(fallbackYards) && fallbackYards > 0) return `${Math.round(fallbackYards)}y`;
+  return "—";
+}
+
+function holeSummaryLabel(course, holeIndex, roundIndex = null) {
+  const par = Number(course?.pars?.[holeIndex]);
+  const parText = Number.isFinite(par) && par > 0 ? String(Math.round(par)) : "—";
+  return `${holeLabel(holeIndex)} | Par ${parText} | ${holeYardageText(course, holeIndex, roundIndex)}`;
 }
 
 function hasAnyScore(arr) {
@@ -432,22 +625,6 @@ function toParText(v) {
   return d > 0 ? `+${d}` : `${d}`;
 }
 
-function holeDeltaText(scoreValue, parValue) {
-  const par = Number(parValue);
-  if (!Number.isFinite(par) || par <= 0) return "";
-  const score = Number(String(scoreValue ?? "").trim());
-  if (!Number.isFinite(score) || score <= 0) return "";
-  const diff = Math.round(score - par);
-  return diff >= 0 ? `+${diff}` : `${diff}`;
-}
-
-function syncHoleDeltaLabel(labelEl, scoreValue, parValue) {
-  if (!labelEl) return;
-  const text = holeDeltaText(scoreValue, parValue);
-  labelEl.textContent = text;
-  labelEl.style.visibility = text ? "visible" : "hidden";
-}
-
 function normalizeScoreWheelValue(value) {
   if (value == null) return "";
   const raw = String(value).trim();
@@ -457,10 +634,11 @@ function normalizeScoreWheelValue(value) {
   return String(Math.max(SCORE_WHEEL_MIN, Math.min(SCORE_WHEEL_MAX, Math.round(parsed))));
 }
 
-function createScoreWheel(initialValue, { onChange } = {}) {
+function createScoreWheel(initialValue, { onChange, parValue } = {}) {
   const hiddenInput = document.createElement("input");
   hiddenInput.type = "hidden";
   hiddenInput.value = normalizeScoreWheelValue(initialValue);
+  const normalizedParValue = normalizeScoreWheelValue(parValue);
 
   const shell = document.createElement("div");
   shell.className = "score-wheel-shell";
@@ -490,6 +668,7 @@ function createScoreWheel(initialValue, { onChange } = {}) {
   let scrollSettleTimerId = 0;
   let isOpen = false;
   let removeOutsidePointerListener = null;
+  let suppressScrollSelection = false;
 
   function currentOption() {
     return optionByValue.get(selectedValue) || optionByValue.get("") || null;
@@ -522,6 +701,12 @@ function createScoreWheel(initialValue, { onChange } = {}) {
     });
   }
 
+  function defaultOpenOption() {
+    if (selectedValue) return currentOption();
+    if (normalizedParValue) return optionByValue.get(normalizedParValue) || currentOption();
+    return currentOption();
+  }
+
   function setValue(nextValue, { align = true, behavior = "smooth", emit = true } = {}) {
     const normalized = normalizeScoreWheelValue(nextValue);
     const changed = normalized !== selectedValue;
@@ -542,7 +727,9 @@ function createScoreWheel(initialValue, { onChange } = {}) {
     shell.classList.add("is-active");
     viewport.hidden = false;
     updateDisplayUi();
-    centerOption(currentOption(), "auto");
+    const openOption = defaultOpenOption();
+    suppressScrollSelection = !selectedValue && Boolean(openOption);
+    centerOption(openOption, "auto");
     activeScoreWheel = controls;
     if (!removeOutsidePointerListener) {
       const onPointerDownOutside = (event) => {
@@ -562,6 +749,13 @@ function createScoreWheel(initialValue, { onChange } = {}) {
         } catch (_) {
           viewport.focus();
         }
+      });
+    }
+    if (suppressScrollSelection) {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          suppressScrollSelection = false;
+        });
       });
     }
   }
@@ -602,6 +796,11 @@ function createScoreWheel(initialValue, { onChange } = {}) {
     const option = document.createElement("button");
     option.type = "button";
     option.className = "score-wheel-option";
+    if (value && value === normalizedParValue) {
+      option.classList.add("is-par");
+      option.setAttribute("aria-label", `Par ${value}`);
+      option.title = `Par ${value}`;
+    }
     option.id = `enter_score_wheel_${index}_${Math.random().toString(36).slice(2, 8)}`;
     option.dataset.value = value;
     option.textContent = value || "—";
@@ -625,6 +824,7 @@ function createScoreWheel(initialValue, { onChange } = {}) {
   });
 
   viewport.addEventListener("scroll", () => {
+    if (suppressScrollSelection) return;
     setValue(nearestOptionValue(), { align: false, emit: true });
     if (scrollSettleTimerId) clearTimeout(scrollSettleTimerId);
     scrollSettleTimerId = window.setTimeout(() => {
@@ -748,6 +948,11 @@ function netToParText(row, pars) {
     return toParText(Number(net) - parTotal);
   }
   return toParText(row?.toPar);
+}
+
+function scoreEntryTitleParText(row, pars) {
+  if (!rowHasAnyData(row)) return "";
+  return `${grossToParText(row, pars)} [${netToParText(row, pars)}]`;
 }
 
 function holeDisplayFromThru(row) {
@@ -1481,12 +1686,6 @@ async function main() {
     }
   );
   const teeRoundCount = (tjson?.tournament?.rounds || []).length;
-  const myGroupSummary = Array.from({ length: teeRoundCount }, (_, idx) => {
-    const g = groupForPlayerRound(enter?.player, idx);
-    return g ? `R${idx + 1}: Group ${g}` : "";
-  })
-    .filter(Boolean)
-    .join(" • ");
   const myTeeTimes = Array.from({ length: teeRoundCount }, (_, idx) => {
     const v = Array.isArray(enter?.player?.teeTimes) ? enter.player.teeTimes[idx] : null;
     return String(v || "").trim();
@@ -1494,29 +1693,9 @@ async function main() {
   if (!myTeeTimes.some((v) => !!v) && enter?.player?.teeTime && myTeeTimes.length > 0) {
     myTeeTimes[0] = String(enter.player.teeTime).trim();
   }
-  const myTeeSummary = myTeeTimes
-    .map((v, idx) => (v ? `R${idx + 1}: ${v}` : ""))
-    .filter(Boolean)
-    .join(" • ");
 
   // Code path: reveal only after required data has loaded.
   $('body').show();
-  who.style.display = "";
-  who.className = "card enter-who-card";
-  who.innerHTML = `
-    <div class="enter-who-head">
-      <div class="enter-who-main">
-        <div><b>${enter.player?.name || ""}</b> <span class="small">(code ${code})</span></div>
-        <div><b>${enter.team?.teamName || enter.team?.teamId || ""}</b></div>
-        ${myGroupSummary ? `<div class="small">${myGroupSummary}</div>` : ""}
-        ${myTeeSummary ? `<div class="small">Tee times: ${myTeeSummary}</div>` : ""}
-        <div class="small" id="team_current_score" style="margin-top:4px;">Current score: —</div>
-        <div class="small" id="entry_sync_status" style="margin-top:4px;"></div>
-      </div>
-      <button id="change_code_btn" class="secondary" type="button">Change code</button>
-    </div>
-  `;
-  document.getElementById("change_code_btn")?.addEventListener("click", clearCodeAndReload);
 
   const rounds = tjson.tournament?.rounds || [];
 
@@ -1612,10 +1791,39 @@ async function main() {
   }
   const defaultOpenRound = activeRoundIndex();
   let tickerRoundIndex = defaultOpenRound;
-  const roundSections = [];
+  let activeRoundPaneIndex = defaultOpenRound;
   let refreshTournamentPromise = null;
   let pendingSyncPromise = null;
   const syncStatusEl = document.getElementById("entry_sync_status");
+  const roundsCard = el("div", { class: "card enter-rounds-card" });
+  const roundTabs = el("div", { class: "enter-tabs enter-round-tabs" });
+  const roundPanesHost = el("div", { class: "enter-round-panes" });
+  const roundTabButtons = [];
+  const roundPanes = [];
+
+  if (rounds.length) {
+    roundsCard.appendChild(roundTabs);
+    roundsCard.appendChild(roundPanesHost);
+    forms.appendChild(roundsCard);
+  }
+
+  function setActiveRoundPane(nextRoundIndex) {
+    if (!roundPanes.length) return;
+    const safeRound = Number.isInteger(nextRoundIndex) && nextRoundIndex >= 0 && nextRoundIndex < roundPanes.length
+      ? nextRoundIndex
+      : 0;
+    if (safeRound !== activeRoundPaneIndex) closeActiveScoreWheel();
+    activeRoundPaneIndex = safeRound;
+    roundTabButtons.forEach((button, index) => {
+      button.classList.toggle("active", index === safeRound);
+    });
+    roundPanes.forEach((pane, index) => {
+      pane.style.display = index === safeRound ? "" : "none";
+    });
+    tickerRoundIndex = safeRound;
+    renderTeamCurrentScore();
+    renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
+  }
 
   function replaceTournamentJson(nextJson) {
     if (!nextJson || nextJson === tjson) return;
@@ -1838,37 +2046,108 @@ async function main() {
       allowedRoundGroups.sort((a, b) => a.displayName.localeCompare(b.displayName));
     }
 
-    const roundCard = el("div", { class: "card" });
-    const roundHead = el("div", { class: "actions", style: "justify-content:space-between; margin-bottom:6px;" });
-    roundHead.appendChild(el("h2", { style: "margin:0;" }, `${round.name || `Round ${r + 1}`} — ${fmtLabel}`));
-    const toggleRoundBtn = el("button", { class: "secondary", type: "button" }, "");
-    roundHead.appendChild(toggleRoundBtn);
-    roundCard.appendChild(roundHead);
+    function scoreTitleStatsByTarget() {
+      const roundData = tjson?.score_data?.rounds?.[r] || {};
+      const pars = courseForRound(tjson, r).pars || Array(18).fill(4);
 
-    const roundBody = el("div");
-    roundCard.appendChild(roundBody);
-    let collapsed = r !== defaultOpenRound;
-    function setCollapsed(nextCollapsed) {
-      if (nextCollapsed) closeActiveScoreWheel();
-      collapsed = !!nextCollapsed;
-      roundBody.style.display = collapsed ? "none" : "";
-      toggleRoundBtn.textContent = collapsed ? "Show round" : "Hide round";
-    }
-    setCollapsed(collapsed);
-    roundSections.push({ index: r, setCollapsed });
-    toggleRoundBtn.onclick = () => {
-      if (collapsed) {
-        for (const s of roundSections) {
-          if (s.index !== r) s.setCollapsed(true);
+      if (isScramble) {
+        const statsByTarget = Object.create(null);
+        for (const row of roundData?.leaderboard?.teams || []) {
+          const teamId = normalizeTeamId(row?.teamId);
+          if (!teamId) continue;
+          const summary = scoreEntryTitleParText(row, pars);
+          if (summary) statsByTarget[teamId] = summary;
         }
-        setCollapsed(false);
-        tickerRoundIndex = r;
-        renderTeamCurrentScore();
-        renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
-        return;
+        return statsByTarget;
       }
-      setCollapsed(true);
+
+      if (isTwoManGroupRound) {
+        const playerRowById = Object.create(null);
+        for (const row of roundData?.leaderboard?.players || []) {
+          const playerId = String(row?.playerId || "").trim();
+          if (!playerId) continue;
+          playerRowById[playerId] = row;
+        }
+
+        function findTwoManGroupEntry(teamId, groupLabel) {
+          const groups = roundData?.team?.[teamId]?.groups || {};
+          const wanted = normalizeGroup(groupLabel);
+          for (const [rawLabel, entry] of Object.entries(groups)) {
+            if (normalizeGroup(rawLabel) === wanted) return entry || null;
+          }
+          return null;
+        }
+
+        function fallbackRowFromGroupEntry(groupEntry) {
+          const gross = (Array.isArray(groupEntry?.gross) ? groupEntry.gross : Array(18).fill(null))
+            .map((value) => (value == null || Number(value) <= 0 ? null : Number(value)));
+          const net = (Array.isArray(groupEntry?.net) ? groupEntry.net : gross)
+            .map((value) => (value == null || Number(value) <= 0 ? null : Number(value)));
+          const thru = gross.reduce((acc, value) => acc + (value != null ? 1 : 0), 0);
+          return {
+            thru,
+            scores: {
+              gross,
+              net,
+              grossTotal: sumHoles(gross),
+              netTotal: sumHoles(net),
+              thru,
+            },
+          };
+        }
+
+        const statsByTarget = Object.create(null);
+        const seenGroups = new Set();
+        function addGroup(teamIdRaw, groupLabelRaw) {
+          const teamId = normalizeTeamId(teamIdRaw);
+          const group = normalizeGroup(groupLabelRaw);
+          const groupId = twoManGroupId(teamId, group);
+          if (!groupId || seenGroups.has(groupId)) return;
+          seenGroups.add(groupId);
+
+          const groupPlayerIds = playersArr
+            .filter((player) => normalizeTeamId(player?.teamId) === teamId && groupForPlayerRound(player, r) === group)
+            .map((player) => player?.playerId)
+            .filter(Boolean);
+
+          let row = groupPlayerIds.map((playerId) => playerRowById[playerId]).find(Boolean) || null;
+          if (!row) {
+            const groupEntry = findTwoManGroupEntry(teamId, group);
+            if (groupEntry) row = fallbackRowFromGroupEntry(groupEntry);
+          }
+
+          const summary = scoreEntryTitleParText(row, pars);
+          if (summary) statsByTarget[groupId] = summary;
+        }
+
+        allowedRoundGroups.forEach((group) => addGroup(group.teamId, group.group));
+        Object.entries(roundData?.team || {}).forEach(([teamId, teamEntry]) => {
+          Object.keys(teamEntry?.groups || {}).forEach((groupLabel) => addGroup(teamId, groupLabel));
+        });
+        return statsByTarget;
+      }
+
+      const statsByTarget = Object.create(null);
+      for (const row of roundData?.leaderboard?.players || []) {
+        const playerId = String(row?.playerId || "").trim();
+        if (!playerId) continue;
+        const summary = scoreEntryTitleParText(row, pars);
+        if (summary) statsByTarget[playerId] = summary;
+      }
+      return statsByTarget;
+    }
+
+    const roundTab = el("button", { class: "secondary", type: "button" }, `Round ${r + 1}`);
+    roundTab.onclick = () => {
+      setActiveRoundPane(r);
     };
+    roundTabs.appendChild(roundTab);
+    roundTabButtons.push(roundTab);
+
+    const roundBody = el("div", { class: "enter-round-pane" });
+    roundBody.style.display = r === defaultOpenRound ? "" : "none";
+    roundPanesHost.appendChild(roundBody);
+    roundPanes.push(roundBody);
 
     const myRoundTee = String(myTeeTimes[r] || "").trim();
     if (myRoundTee) {
@@ -1877,37 +2156,19 @@ async function main() {
       );
     }
 
-    // Group picker
-    let groupIds = canGroup
-      ? loadGroup(
-        tid,
-        r,
-        isTwoManGroupRound ? allowedRoundGroupById : playersById,
+    const groupIds = canGroup
+      ? (
         isTwoManGroupRound
           ? allowedRoundGroups.map((g) => g.groupId)
           : allowedRoundPlayerIds.length
-            ? allowedRoundPlayerIds
+            ? allowedRoundPlayerIds.slice()
             : [myId].filter(Boolean)
       )
       : [];
-    if (canGroup) {
-      if (isTwoManGroupRound) {
-        const allowedGroupSet = new Set(allowedRoundGroups.map((g) => g.groupId));
-        groupIds = groupIds.filter((id) => allowedGroupSet.has(id));
-        if (!groupIds.length) {
-          const myGroup = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], r));
-          groupIds = myGroup && allowedGroupSet.has(myGroup)
-            ? [myGroup]
-            : allowedRoundGroups.map((g) => g.groupId).slice(0, 1);
-        }
-      } else {
-        groupIds = groupIds.filter((id) => allowedRoundPlayerSet.has(id));
-        if (!groupIds.length) {
-          groupIds = allowedRoundPlayerIds.length ? allowedRoundPlayerIds.slice() : [myId].filter(Boolean);
-        }
-      }
-    }
-    const groupPicker = el("div", { class: "small", style: canGroup ? "margin:10px 0;" : "display:none;" });
+    const changeCodeActions = el("div", { class: "enter-change-code-actions" });
+    const changeCodeBtn = el("button", { class: "secondary", type: "button" }, "Change code");
+    changeCodeBtn.onclick = clearCodeAndReload;
+    changeCodeActions.appendChild(changeCodeBtn);
 
     // panes/tabs created early so render functions can close over them
     const tabs = el("div", { class: "enter-tabs" });
@@ -1937,104 +2198,6 @@ async function main() {
       tabBulk.classList.add("active");
       tabHole.classList.remove("active");
     };
-
-    if (canGroup) {
-      const pickerTop = el("div", { style: "display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:6px;" });
-      pickerTop.appendChild(el("b", {}, "Playing with:"));
-      if ((isTwoManGroupRound ? allowedRoundGroups.length : allowedRoundPlayerIds.length) <= 1) {
-        pickerTop.appendChild(
-          el(
-            "span",
-            { class: "small" },
-            isTwoManGroupRound ? "Only your pair is on this tee time." : "Only your code can enter this tee time."
-          )
-        );
-      }
-      const list = el("div", {
-        style:
-          "display:flex; flex-wrap:wrap; gap:10px; max-height:220px; overflow:auto; padding:8px; border:1px solid var(--border); border-radius:10px; background:var(--surface-strong);",
-      });
-
-      function syncGroupChecks() {
-        const boxes = list.querySelectorAll("input[type='checkbox'][data-target-id]");
-        boxes.forEach((cb) => {
-          const targetId = cb.getAttribute("data-target-id");
-          cb.checked = !!targetId && groupIds.includes(targetId);
-        });
-      }
-
-      const btnMeTeam = el("button", { class: "secondary", type: "button" }, "My team");
-      btnMeTeam.onclick = () => {
-        if (isTwoManGroupRound) {
-          const myGroup = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], r));
-          groupIds = myGroup ? [myGroup] : [];
-        } else {
-          groupIds = allowedRoundPlayerIds.length ? allowedRoundPlayerIds.slice() : [myId].filter(Boolean);
-        }
-        saveGroup(tid, r, groupIds);
-        syncGroupChecks();
-        renderHoleForm();
-        renderBulkTable();
-      };
-
-      btnMeTeam.textContent = isTwoManGroupRound ? "My pair" : "My tee time";
-
-      const btnAll = el("button", { class: "secondary", type: "button" }, "All on tee time");
-      btnAll.onclick = () => {
-        groupIds = isTwoManGroupRound
-          ? allowedRoundGroups.map((g) => g.groupId)
-          : allowedRoundPlayerIds.slice();
-        saveGroup(tid, r, groupIds);
-        syncGroupChecks();
-        renderHoleForm();
-        renderBulkTable();
-      };
-
-      pickerTop.appendChild(btnMeTeam);
-      pickerTop.appendChild(btnAll);
-      groupPicker.appendChild(pickerTop);
-
-      const listItems = isTwoManGroupRound
-        ? allowedRoundGroups.map((g) => ({ id: g.groupId, text: `${g.displayName} (${g.names.join(", ") || "—"})` }))
-        : allowedRoundPlayerIds
-          .map((id) => {
-            const p = playersById[id];
-            if (!p) return null;
-            const groupLabel = hasTwoManTournament ? groupLabelForPlayer({ ...p, group: groupForPlayerRound(p, r) }) : "";
-            const groupText = groupLabel ? ` ${groupLabel}` : "";
-            return { id, text: `${p.name}${groupText}${p.teamId ? ` (${p.teamId})` : ""}` };
-          })
-          .filter(Boolean);
-
-      for (const item of listItems) {
-        const id = item.id;
-        const checked = groupIds.includes(id);
-        const lbl = el("label", { style: "display:flex; align-items:center; gap:6px; cursor:pointer;" });
-        const cb = el("input", { type: "checkbox" });
-        cb.setAttribute("data-target-id", id);
-        cb.checked = checked;
-        cb.onchange = () => {
-          if (cb.checked) {
-            if (!groupIds.includes(id)) groupIds.push(id);
-          } else {
-            groupIds = groupIds.filter((x) => x !== id);
-          }
-          if (!isTwoManGroupRound && !groupIds.includes(myId) && myId && allowedRoundPlayerSet.has(myId)) {
-            groupIds.unshift(myId);
-          }
-          saveGroup(tid, r, groupIds);
-          syncGroupChecks();
-          renderHoleForm();
-          renderBulkTable();
-        };
-        lbl.appendChild(cb);
-        lbl.appendChild(el("span", {}, item.text));
-        list.appendChild(lbl);
-      }
-
-      groupPicker.appendChild(list);
-      roundBody.appendChild(groupPicker);
-    }
 
     // Current saved holes from tournament json
     function getSavedForRound() {
@@ -2083,10 +2246,8 @@ async function main() {
 
     let currentHole = null;      // not chosen yet
     let holeManuallySet = false; // only true after user clicks prev/next or selects a hole
-    let pendingHoleConflict = null;
 
-    const status = el("div", { class: "small", style: "margin-top:10px;" }, "");
-    const conflictBox = el("div", { class: "card", style: "display:none; border:2px solid var(--bad); margin-top:10px;" });
+    const status = el("div", { class: "small enter-inline-score-status" }, "");
 
     function captureActiveInputState() {
       const active = document.activeElement;
@@ -2134,6 +2295,8 @@ async function main() {
       holePane.innerHTML = "";
 
       const { type, savedByTarget, targetIds, progressTargetIds } = getSavedForRound();
+      const titleStatsByTarget = scoreTitleStatsByTarget();
+      const primaryTargetIds = new Set(progressTargetIds || []);
       // set currentHole to next unplayed, but keep user-selected if they already moved it manually
       const progressIds = progressTargetIds?.length ? progressTargetIds : targetIds;
       const suggested = nextHoleIndexForGroup(savedByTarget, progressIds);
@@ -2142,25 +2305,24 @@ async function main() {
       if (!holeManuallySet || currentHole == null || Number.isNaN(currentHole) || currentHole < 0 || currentHole > 17) {
         currentHole = suggested;
       }
-      if (pendingHoleConflict && pendingHoleConflict.holeIndex !== currentHole) {
-        pendingHoleConflict = null;
-      }
-      conflictBox.style.display = "none";
       status.textContent = "";
       const holeCourse = courseForRound(tjson, r);
 
-      const header = el("div", { class: "hole-header" });
-      header.appendChild(
-        el(
-          "div",
-          {},
-          `<b>${holeLabel(currentHole)}</b> <span class="small">Par ${holeCourse.pars[currentHole]} • SI ${holeCourse.strokeIndex[currentHole]}</span>`
-        )
-      );
+      const panel = el("div", { class: "card enter-who-card hole-map-score-panel enter-inline-score-panel" });
+      const panelHead = el("div", { class: "enter-who-head" });
+      const panelMain = el("div", { class: "enter-who-main" });
+      const panelTitle = el("h2", { style: "margin:0;" }, "Enter Scores");
+      panelMain.appendChild(panelTitle);
+      panelHead.appendChild(panelMain);
+      panel.appendChild(panelHead);
 
-      const holeSel = el("select", { style: "padding:6px 10px; border-radius:10px; border:1px solid var(--border);" });
+      const panelBody = el("div", { class: "enter-inline-score-body" });
+      panel.appendChild(panelBody);
+
+      const header = el("div", { class: "hole-header" });
+      const holeSel = el("select", { class: "hole-header-select", "aria-label": "Current hole" });
       for (let i = 0; i < 18; i++) {
-        const opt = el("option", { value: String(i) }, `${i + 1}`);
+        const opt = el("option", { value: String(i) }, holeSummaryLabel(holeCourse, i, r));
         if (i === currentHole) opt.selected = true;
         holeSel.appendChild(opt);
       }
@@ -2169,23 +2331,30 @@ async function main() {
         holeManuallySet = true;
         renderHoleForm();
       };
+      header.appendChild(holeSel);
+      panelBody.appendChild(header);
 
-      header.appendChild(el("div", {}, `<span class="small">Jump to hole</span><br/>`));
-      header.lastChild.appendChild(holeSel);
-      holePane.appendChild(header);
+      const syncHoleSummaryUi = () => {
+        Array.from(holeSel.options).forEach((option, holeIndex) => {
+          option.textContent = holeSummaryLabel(holeCourse, holeIndex, r);
+        });
+      };
+      syncHoleSummaryUi();
+      void ensureHoleYardageFallbackForRound(tjson, r).then((yardages) => {
+        if (!Array.isArray(yardages) || !panel.isConnected) return;
+        syncHoleSummaryUi();
+      });
 
-      const grid = el("div", { class: "hole-grid" });
+      const grid = el("div", { class: "enter-inline-score-rows" });
 
       const inputs = [];
       const holePar = Number(holeCourse?.pars?.[currentHole]);
-      const parDefault = Number.isFinite(holePar) && holePar > 0 ? String(Math.round(holePar)) : "";
 
       function makeScoreInput(initialStr, { targetId, onValueChange } = {}) {
         const wrap = el("div", { class: "score-wheel-row" });
-        const delta = el("span", { class: "small score-wheel-delta" }, "");
         const scoreWheel = createScoreWheel(initialStr, {
+          parValue: holePar,
           onChange(nextValue) {
-            syncHoleDeltaLabel(delta, nextValue, holePar);
             if (typeof onValueChange === "function") onValueChange(nextValue);
           },
         });
@@ -2199,9 +2368,7 @@ async function main() {
           scoreWheel.focusTarget.setAttribute(key, value);
           scoreWheel.viewport.setAttribute(key, value);
         }
-        syncHoleDeltaLabel(delta, scoreWheel.input.value, holePar);
         wrap.appendChild(scoreWheel.root);
-        wrap.appendChild(delta);
         window.requestAnimationFrame(() => scoreWheel.sync());
         return { wrap, input: scoreWheel.input, focusTarget: scoreWheel.focusTarget };
       }
@@ -2211,7 +2378,16 @@ async function main() {
           class: "hole-row hole-score-row team-accent",
           style: `--team-accent:${teamColor}; max-width:100%;`,
         });
-        row.appendChild(el("div", { class: "hole-score-row-title" }, titleText));
+        if (primaryTargetIds.has(targetId)) row.classList.add("is-primary-target");
+        row.style.flex = "1 1 260px";
+        row.style.maxWidth = "100%";
+        const title = el("div", { class: "hole-score-row-title" });
+        title.appendChild(document.createTextNode(titleText));
+        const statText = String(titleStatsByTarget[targetId] || "").trim();
+        if (statText) {
+          title.appendChild(el("span", { class: "hole-score-row-stats" }, statText));
+        }
+        row.appendChild(title);
         const { wrap, input, focusTarget } = makeScoreInput(initialValue, { targetId, onValueChange });
         row.appendChild(wrap);
         grid.appendChild(row);
@@ -2225,7 +2401,7 @@ async function main() {
         const existing = isEmptyScore(existingRaw) ? null : existingRaw;
 
         const draft = getHoleDraft(r, currentHole, teamId);
-        const initial = draft !== undefined ? draft : existing == null ? parDefault : String(existing);
+        const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
         addScoreRow({
           titleText: enter.team?.teamName || "Team",
           teamColor,
@@ -2242,13 +2418,17 @@ async function main() {
             const g = twoManGroupId(myTeamId, groupForPlayerRound(playersById[myId], r));
             return g ? [g] : [];
           })();
-        for (const gid of ids) {
+        const orderedIds = [
+          ...ids.filter((id) => primaryTargetIds.has(id)),
+          ...ids.filter((id) => !primaryTargetIds.has(id)),
+        ];
+        for (const gid of orderedIds) {
           const meta = allowedRoundGroupById[gid] || { displayName: gid, names: [], teamId: parseTwoManGroupId(gid).teamId };
           const teamColor = colorForTeam(meta.teamId);
           const existingRaw = (savedByTarget[gid] || Array(18).fill(null))[currentHole];
           const existing = isEmptyScore(existingRaw) ? null : existingRaw;
           const draft = getHoleDraft(r, currentHole, gid);
-          const initial = draft !== undefined ? draft : existing == null ? parDefault : String(existing);
+          const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
           const names = uniqueDisplayNames(meta.names || []);
           addScoreRow({
             titleText: names.length ? names.join(", ") : meta.teamName || meta.displayName || gid,
@@ -2264,7 +2444,11 @@ async function main() {
         const ids = targetIds.length
           ? targetIds
           : [myId].filter((id) => Boolean(id) && allowedRoundPlayerSet.has(id));
-        for (const pid of ids) {
+        const orderedIds = [
+          ...ids.filter((id) => primaryTargetIds.has(id)),
+          ...ids.filter((id) => !primaryTargetIds.has(id)),
+        ];
+        for (const pid of orderedIds) {
           const p = playersById[pid];
           if (!p) continue;
           const teamColor = colorForTeam(p.teamId);
@@ -2273,7 +2457,7 @@ async function main() {
           const existing = isEmptyScore(existingRaw) ? null : existingRaw;
 
           const draft = getHoleDraft(r, currentHole, pid);
-          const initial = draft !== undefined ? draft : existing == null ? parDefault : String(existing);
+          const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
           addScoreRow({
             titleText: p.name || pid,
             teamColor,
@@ -2286,37 +2470,28 @@ async function main() {
         }
       }
 
-      holePane.appendChild(grid);
+      panelBody.appendChild(grid);
 
-      const actions = el("div", { class: "actions hole-actions", style: "margin-top:10px;" });
-      const btnSubmit = el("button", { class: "", type: "button" }, "Submit hole");
-      const btnNext = el("button", { class: "secondary", type: "button" }, "Next hole →");
-      const btnPrev = el("button", { class: "secondary", type: "button" }, "← Prev hole");
-      actions.appendChild(btnSubmit);
-      actions.appendChild(btnPrev);
-      actions.appendChild(btnNext);
-      holePane.appendChild(actions);
-      holePane.appendChild(status);
-      holePane.appendChild(conflictBox);
+      const actions = el("div", { class: "actions enter-inline-score-actions" });
+      const actionButtons = el("div", { class: "hole-map-score-action-buttons" });
+      const btnPrev = el("button", { class: "secondary", type: "button", "aria-label": "Previous hole" }, "← Last Hole");
+      const btnNext = el("button", { type: "button", "aria-label": "Submit scores and go to next hole" }, "Next Hole →");
+      actionButtons.appendChild(btnPrev);
+      actionButtons.appendChild(btnNext);
+      actions.appendChild(actionButtons);
+      panelBody.appendChild(actions);
+      panelBody.appendChild(changeCodeActions);
+      panelBody.appendChild(status);
+      holePane.appendChild(panel);
 
       btnPrev.onclick = () => {
         currentHole = Math.max(0, currentHole - 1);
         holeManuallySet = true;
         renderHoleForm();
       };
-      btnNext.onclick = async () => {
-        const result = await doSubmit(false, { quietIfEmpty: true, advanceMode: "sequential" });
-        if (result?.skipped) {
-          currentHole = Math.min(17, currentHole + 1);
-          holeManuallySet = true;
-          renderHoleForm();
-        }
-      };
 
-      async function doSubmit(withOverride = false, { quietIfEmpty = false, advanceMode = "next-unplayed" } = {}) {
+      async function doSubmit({ quietIfEmpty = false, advanceMode = "next-unplayed" } = {}) {
         status.textContent = "Submitting…";
-        pendingHoleConflict = null;
-        conflictBox.style.display = "none";
         const submittedHoleIndex = currentHole;
 
         const entries = [];
@@ -2340,7 +2515,7 @@ async function main() {
           mode: "hole",
           holeIndex: submittedHoleIndex,
           entries,
-          override: withOverride,
+          override: true,
         };
 
         try {
@@ -2350,7 +2525,6 @@ async function main() {
           });
 
           await clearPendingScoreSubmissionsMatching({ tid, code, payload });
-          pendingHoleConflict = null;
           status.textContent = "Saved.";
 
           // clear drafts ONLY for the targets you actually submitted (for this hole)
@@ -2407,43 +2581,15 @@ async function main() {
             renderBulkTable();
             return { ok: true, queued: true };
           }
-          if (err?.status === 409 && err?.data) {
-            showConflict(err.data);
+          if (err?.status === 409) {
+            status.textContent = "Conflict: existing scores could not be overridden for this player code.";
             return { conflict: true };
           }
           status.textContent = `Error: ${err?.message || String(err)}`;
           return { error: true };
         }
       }
-
-      function showConflict(j) {
-        pendingHoleConflict = { holeIndex: currentHole, data: j };
-        const conflicts = j.conflicts || [];
-        const names = conflicts.map((c) => {
-          if (type === "group") {
-            return allowedRoundGroupById[c.targetId]?.displayName || c.targetId;
-          }
-          const p = playersById[c.targetId];
-          return p ? p.name : c.targetId;
-        });
-        conflictBox.style.display = "";
-        conflictBox.innerHTML = `
-          <b>Scores already posted for ${holeLabel(currentHole)}.</b><br/>
-          <div class="small" style="margin-top:6px;">
-            ${names.length ? `Conflicts: ${names.join(", ")}` : "Conflict."}<br/>
-            You must press Override to replace existing scores.
-          </div>
-        `;
-        const btn = el("button", { class: "", type: "button", style: "margin-top:10px;" }, "Override hole and submit");
-        btn.onclick = () => doSubmit(true);
-        conflictBox.appendChild(btn);
-        status.textContent = "Not saved (conflict).";
-      }
-
-      btnSubmit.onclick = () => doSubmit(false);
-      if (pendingHoleConflict && pendingHoleConflict.holeIndex === currentHole) {
-        showConflict(pendingHoleConflict.data);
-      }
+      btnNext.onclick = () => doSubmit({ advanceMode: "sequential" });
     }
 
     function renderBulkTable() {
@@ -2525,21 +2671,17 @@ async function main() {
             step: "1",
             class: "hole-input bulk-hole-input",
           });
-          const delta = el("span", { class: "small", style: "min-width:18px; font-weight:700;" }, "");
           const dv = getBulkDraft(r, id, i);
           const initial = dv !== undefined ? dv : holes[i] == null ? "" : String(holes[i]);
           inp.value = initial ?? "";
           inp.setAttribute("data-enter-scope", "bulk");
           inp.setAttribute("data-target-id", id);
           inp.setAttribute("data-hole-index", String(i));
-          syncHoleDeltaLabel(delta, inp.value, coursePars[i]);
           inp.addEventListener("input", () => {
             setBulkDraft(r, id, i, inp.value);
-            syncHoleDeltaLabel(delta, inp.value, coursePars[i]);
           });
           rowInputs[id][i] = inp;
           inputWrap.appendChild(inp);
-          inputWrap.appendChild(delta);
           td.appendChild(inputWrap);
           frontRow.appendChild(td);
         }
@@ -2556,21 +2698,17 @@ async function main() {
             step: "1",
             class: "hole-input bulk-hole-input",
           });
-          const delta = el("span", { class: "small", style: "min-width:18px; font-weight:700;" }, "");
           const dv = getBulkDraft(r, id, i);
           const initial = dv !== undefined ? dv : holes[i] == null ? "" : String(holes[i]);
           inp.value = initial ?? "";
           inp.setAttribute("data-enter-scope", "bulk");
           inp.setAttribute("data-target-id", id);
           inp.setAttribute("data-hole-index", String(i));
-          syncHoleDeltaLabel(delta, inp.value, coursePars[i]);
           inp.addEventListener("input", () => {
             setBulkDraft(r, id, i, inp.value);
-            syncHoleDeltaLabel(delta, inp.value, coursePars[i]);
           });
           rowInputs[id][i] = inp;
           inputWrap.appendChild(inp);
-          inputWrap.appendChild(delta);
           td.appendChild(inputWrap);
           backRow.appendChild(td);
         }
@@ -2670,13 +2808,10 @@ async function main() {
     }, 30_000);
 
     // keep the timer from being GC'd (optional)
-    roundCard._refreshTimer = refreshTimer;
-
-    forms.appendChild(roundCard);
+    roundBody._refreshTimer = refreshTimer;
   }
 
-  renderTeamCurrentScore();
-  renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
+  setActiveRoundPane(activeRoundPaneIndex);
   await renderSyncStatus();
 
   window.addEventListener("online", () => {
