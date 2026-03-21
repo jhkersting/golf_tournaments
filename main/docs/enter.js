@@ -57,6 +57,10 @@ const SCORE_NOTIFIER_GAP_MS = 200;
 const TICKER_SPEED_PX_PER_SEC = 52;
 const TICKER_START_DELAY_MS = 3000;
 const TICKER_NEXT_DELAY_MS = 3000;
+const SCORE_WHEEL_MIN = 1;
+const SCORE_WHEEL_MAX = 20;
+const SCORE_WHEEL_VALUES = ["", ...Array.from({ length: SCORE_WHEEL_MAX }, (_, index) => String(index + SCORE_WHEEL_MIN))];
+let activeScoreWheel = null;
 
 function normalizeTeamId(teamId) {
   return teamId == null ? "" : String(teamId).trim();
@@ -442,6 +446,231 @@ function syncHoleDeltaLabel(labelEl, scoreValue, parValue) {
   const text = holeDeltaText(scoreValue, parValue);
   labelEl.textContent = text;
   labelEl.style.visibility = text ? "visible" : "hidden";
+}
+
+function normalizeScoreWheelValue(value) {
+  if (value == null) return "";
+  const raw = String(value).trim();
+  if (!raw) return "";
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return "";
+  return String(Math.max(SCORE_WHEEL_MIN, Math.min(SCORE_WHEEL_MAX, Math.round(parsed))));
+}
+
+function createScoreWheel(initialValue, { onChange } = {}) {
+  const hiddenInput = document.createElement("input");
+  hiddenInput.type = "hidden";
+  hiddenInput.value = normalizeScoreWheelValue(initialValue);
+
+  const shell = document.createElement("div");
+  shell.className = "score-wheel-shell";
+
+  const displayButton = document.createElement("button");
+  displayButton.type = "button";
+  displayButton.className = "score-wheel-display";
+  displayButton.setAttribute("aria-haspopup", "listbox");
+  shell.appendChild(displayButton);
+
+  const viewport = document.createElement("div");
+  viewport.className = "score-wheel";
+  viewport.tabIndex = 0;
+  viewport.setAttribute("data-score-wheel", "true");
+  viewport.setAttribute("role", "listbox");
+  viewport.setAttribute("aria-label", "Hole score");
+  viewport.hidden = true;
+
+  const track = document.createElement("div");
+  track.className = "score-wheel-track";
+  viewport.appendChild(track);
+  shell.appendChild(viewport);
+  shell.appendChild(hiddenInput);
+
+  const optionByValue = new Map();
+  let selectedValue = hiddenInput.value;
+  let scrollSettleTimerId = 0;
+  let isOpen = false;
+  let removeOutsidePointerListener = null;
+
+  function currentOption() {
+    return optionByValue.get(selectedValue) || optionByValue.get("") || null;
+  }
+
+  function updateDisplayUi() {
+    const text = selectedValue || "—";
+    displayButton.textContent = text;
+    displayButton.classList.toggle("is-empty", !selectedValue);
+    displayButton.setAttribute("aria-label", selectedValue ? `Hole score ${selectedValue}` : "Set hole score");
+    displayButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
+
+  function updateSelectionUi() {
+    for (const [value, option] of optionByValue.entries()) {
+      const isActive = value === selectedValue;
+      option.classList.toggle("is-active", isActive);
+      option.setAttribute("aria-selected", isActive ? "true" : "false");
+    }
+    const activeOption = currentOption();
+    if (activeOption?.id) viewport.setAttribute("aria-activedescendant", activeOption.id);
+  }
+
+  function centerOption(option, behavior = "smooth") {
+    if (!option) return;
+    const left = option.offsetLeft - (viewport.clientWidth - option.offsetWidth) / 2;
+    viewport.scrollTo({
+      left: Math.max(0, left),
+      behavior,
+    });
+  }
+
+  function setValue(nextValue, { align = true, behavior = "smooth", emit = true } = {}) {
+    const normalized = normalizeScoreWheelValue(nextValue);
+    const changed = normalized !== selectedValue;
+    selectedValue = normalized;
+    hiddenInput.value = normalized;
+    updateSelectionUi();
+    updateDisplayUi();
+    if (align) centerOption(currentOption(), behavior);
+    if (changed && typeof onChange === "function") onChange(normalized);
+  }
+
+  function open({ focusViewport = false } = {}) {
+    if (isOpen) return;
+    if (activeScoreWheel && activeScoreWheel !== controls) {
+      activeScoreWheel.close({ restoreFocus: false });
+    }
+    isOpen = true;
+    shell.classList.add("is-active");
+    viewport.hidden = false;
+    updateDisplayUi();
+    centerOption(currentOption(), "auto");
+    activeScoreWheel = controls;
+    if (!removeOutsidePointerListener) {
+      const onPointerDownOutside = (event) => {
+        if (shell.contains(event.target)) return;
+        close({ restoreFocus: false });
+      };
+      document.addEventListener("pointerdown", onPointerDownOutside, true);
+      removeOutsidePointerListener = () => {
+        document.removeEventListener("pointerdown", onPointerDownOutside, true);
+        removeOutsidePointerListener = null;
+      };
+    }
+    if (focusViewport) {
+      window.requestAnimationFrame(() => {
+        try {
+          viewport.focus({ preventScroll: true });
+        } catch (_) {
+          viewport.focus();
+        }
+      });
+    }
+  }
+
+  function close({ restoreFocus = false } = {}) {
+    if (!isOpen) return;
+    isOpen = false;
+    shell.classList.remove("is-active");
+    viewport.hidden = true;
+    if (removeOutsidePointerListener) removeOutsidePointerListener();
+    updateDisplayUi();
+    if (activeScoreWheel === controls) activeScoreWheel = null;
+    if (restoreFocus) {
+      try {
+        displayButton.focus({ preventScroll: true });
+      } catch (_) {
+        displayButton.focus();
+      }
+    }
+  }
+
+  function nearestOptionValue() {
+    const viewportCenter = viewport.scrollLeft + viewport.clientWidth / 2;
+    let nearestValue = selectedValue;
+    let nearestDistance = Infinity;
+    for (const [value, option] of optionByValue.entries()) {
+      const optionCenter = option.offsetLeft + option.offsetWidth / 2;
+      const distance = Math.abs(optionCenter - viewportCenter);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestValue = value;
+      }
+    }
+    return nearestValue;
+  }
+
+  SCORE_WHEEL_VALUES.forEach((value, index) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "score-wheel-option";
+    option.id = `enter_score_wheel_${index}_${Math.random().toString(36).slice(2, 8)}`;
+    option.dataset.value = value;
+    option.textContent = value || "—";
+    option.tabIndex = -1;
+    option.addEventListener("click", (event) => {
+      event.preventDefault();
+      setValue(value, { align: true, behavior: "smooth", emit: true });
+      close({ restoreFocus: true });
+    });
+    track.appendChild(option);
+    optionByValue.set(value, option);
+  });
+
+  displayButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (isOpen) {
+      close({ restoreFocus: false });
+      return;
+    }
+    open();
+  });
+
+  viewport.addEventListener("scroll", () => {
+    setValue(nearestOptionValue(), { align: false, emit: true });
+    if (scrollSettleTimerId) clearTimeout(scrollSettleTimerId);
+    scrollSettleTimerId = window.setTimeout(() => {
+      scrollSettleTimerId = 0;
+      setValue(nearestOptionValue(), { align: true, behavior: "smooth", emit: true });
+    }, 90);
+  });
+
+  viewport.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      close({ restoreFocus: true });
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const currentIndex = Math.max(0, SCORE_WHEEL_VALUES.indexOf(selectedValue));
+    const nextIndex = Math.max(
+      0,
+      Math.min(SCORE_WHEEL_VALUES.length - 1, currentIndex + (event.key === "ArrowRight" ? 1 : -1))
+    );
+    setValue(SCORE_WHEEL_VALUES[nextIndex], { align: true, behavior: "smooth", emit: true });
+  });
+
+  updateDisplayUi();
+  updateSelectionUi();
+
+  const controls = {
+    root: shell,
+    input: hiddenInput,
+    focusTarget: displayButton,
+    viewport,
+    open,
+    close,
+    sync() {
+      setValue(selectedValue, { align: isOpen, behavior: "auto", emit: false });
+    },
+  };
+  return controls;
+}
+
+function closeActiveScoreWheel() {
+  if (activeScoreWheel?.close) activeScoreWheel.close({ restoreFocus: false });
+  activeScoreWheel = null;
 }
 
 function toParFromKeys(row, keys) {
@@ -1620,6 +1849,7 @@ async function main() {
     roundCard.appendChild(roundBody);
     let collapsed = r !== defaultOpenRound;
     function setCollapsed(nextCollapsed) {
+      if (nextCollapsed) closeActiveScoreWheel();
       collapsed = !!nextCollapsed;
       roundBody.style.display = collapsed ? "none" : "";
       toggleRoundBtn.textContent = collapsed ? "Show round" : "Hide round";
@@ -1694,12 +1924,14 @@ async function main() {
 
     tabHole.classList.add("active");
     tabHole.onclick = () => {
+      closeActiveScoreWheel();
       holePane.style.display = "";
       bulkPane.style.display = "none";
       tabHole.classList.add("active");
       tabBulk.classList.remove("active");
     };
     tabBulk.onclick = () => {
+      closeActiveScoreWheel();
       holePane.style.display = "none";
       bulkPane.style.display = "";
       tabBulk.classList.add("active");
@@ -1858,39 +2090,47 @@ async function main() {
 
     function captureActiveInputState() {
       const active = document.activeElement;
-      if (!(active instanceof HTMLInputElement)) return null;
+      if (!(active instanceof HTMLElement)) return null;
       if (!holePane.contains(active) && !bulkPane.contains(active)) return null;
       const scope = active.getAttribute("data-enter-scope");
       const targetId = active.getAttribute("data-target-id");
       const holeIndex = active.getAttribute("data-hole-index");
       if (!scope || !targetId || holeIndex == null) return null;
-      return {
+      const state = {
         scope,
         targetId,
         holeIndex,
-        selectionStart: active.selectionStart,
-        selectionEnd: active.selectionEnd,
-        selectionDirection: active.selectionDirection
       };
+      if (active instanceof HTMLInputElement) {
+        state.selectionStart = active.selectionStart;
+        state.selectionEnd = active.selectionEnd;
+        state.selectionDirection = active.selectionDirection;
+      }
+      return state;
     }
 
     function restoreActiveInputState(state) {
       if (!state) return;
       const root = state.scope === "bulk" ? bulkPane : holePane;
       const candidates = root.querySelectorAll(
-        `input[data-enter-scope="${state.scope}"][data-hole-index="${state.holeIndex}"]`
+        `[data-enter-scope="${state.scope}"][data-hole-index="${state.holeIndex}"]`
       );
-      const input = Array.from(candidates).find((n) => n.getAttribute("data-target-id") === state.targetId);
-      if (!input) return;
-      input.focus({ preventScroll: true });
-      if (typeof state.selectionStart === "number" && typeof state.selectionEnd === "number") {
+      const target = Array.from(candidates).find((node) => node.getAttribute("data-target-id") === state.targetId);
+      if (!(target instanceof HTMLElement)) return;
+      target.focus({ preventScroll: true });
+      if (
+        target instanceof HTMLInputElement &&
+        typeof state.selectionStart === "number" &&
+        typeof state.selectionEnd === "number"
+      ) {
         try {
-          input.setSelectionRange(state.selectionStart, state.selectionEnd, state.selectionDirection || undefined);
+          target.setSelectionRange(state.selectionStart, state.selectionEnd, state.selectionDirection || undefined);
         } catch { }
       }
     }
 
     function renderHoleForm() {
+      closeActiveScoreWheel();
       holePane.innerHTML = "";
 
       const { type, savedByTarget, targetIds, progressTargetIds } = getSavedForRound();
@@ -1937,25 +2177,45 @@ async function main() {
       const grid = el("div", { class: "hole-grid" });
 
       const inputs = [];
+      const holePar = Number(holeCourse?.pars?.[currentHole]);
+      const parDefault = Number.isFinite(holePar) && holePar > 0 ? String(Math.round(holePar)) : "";
 
-      function makeScoreInput(initialStr) {
-        const wrap = el("div", { style: "display:flex; align-items:center; gap:6px; margin-top:8px;" });
-        const inp = el("input", {
-          type: "number",
-          min: "1",
-          max: "20",
-          step: "1",
-          style: "width:78px; min-height:38px; padding:6px 8px; border-radius:10px; border:1px solid var(--border); background:var(--field-bg); color:var(--text); font-size:16px; margin-top:0;",
+      function makeScoreInput(initialStr, { targetId, onValueChange } = {}) {
+        const wrap = el("div", { class: "score-wheel-row" });
+        const delta = el("span", { class: "small score-wheel-delta" }, "");
+        const scoreWheel = createScoreWheel(initialStr, {
+          onChange(nextValue) {
+            syncHoleDeltaLabel(delta, nextValue, holePar);
+            if (typeof onValueChange === "function") onValueChange(nextValue);
+          },
         });
-        const delta = el("span", { class: "small", style: "min-width:22px; font-weight:700;" }, "");
-        inp.value = initialStr ?? "";
-        syncHoleDeltaLabel(delta, inp.value, holeCourse?.pars?.[currentHole]);
-        inp.addEventListener("input", () => {
-          syncHoleDeltaLabel(delta, inp.value, holeCourse?.pars?.[currentHole]);
-        });
-        wrap.appendChild(inp);
+        const attrs = {
+          "data-enter-scope": "hole",
+          "data-target-id": String(targetId || ""),
+          "data-hole-index": String(currentHole),
+        };
+        for (const [key, value] of Object.entries(attrs)) {
+          scoreWheel.input.setAttribute(key, value);
+          scoreWheel.focusTarget.setAttribute(key, value);
+          scoreWheel.viewport.setAttribute(key, value);
+        }
+        syncHoleDeltaLabel(delta, scoreWheel.input.value, holePar);
+        wrap.appendChild(scoreWheel.root);
         wrap.appendChild(delta);
-        return { wrap, inp };
+        window.requestAnimationFrame(() => scoreWheel.sync());
+        return { wrap, input: scoreWheel.input, focusTarget: scoreWheel.focusTarget };
+      }
+
+      function addScoreRow({ titleText, teamColor, targetId, initialValue, onValueChange }) {
+        const row = el("div", {
+          class: "hole-row hole-score-row team-accent",
+          style: `--team-accent:${teamColor}; max-width:100%;`,
+        });
+        row.appendChild(el("div", { class: "hole-score-row-title" }, titleText));
+        const { wrap, input, focusTarget } = makeScoreInput(initialValue, { targetId, onValueChange });
+        row.appendChild(wrap);
+        grid.appendChild(row);
+        inputs.push({ targetId, input, focusTarget });
       }
 
       if (type === "team") {
@@ -1965,27 +2225,16 @@ async function main() {
         const existing = isEmptyScore(existingRaw) ? null : existingRaw;
 
         const draft = getHoleDraft(r, currentHole, teamId);
-        const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
-
-        const row = el("div", { class: "hole-row team-accent", style: `--team-accent:${teamColor};` });
-        row.appendChild(
-          el(
-            "div",
-            { style: "min-width:0;" },
-            `<b>${enter.team?.teamName || "Team"}</b> <span class="small">(team score)</span><br/><span class="small">Existing: ${existing == null ? "—" : existing
-            }</span>`
-          )
-        );
-
-        const { wrap, inp } = makeScoreInput(initial);
-        inp.setAttribute("data-enter-scope", "hole");
-        inp.setAttribute("data-target-id", teamId);
-        inp.setAttribute("data-hole-index", String(currentHole));
-        inp.addEventListener("input", () => setHoleDraft(r, currentHole, teamId, inp.value));
-        inputs.push({ targetId: teamId, input: inp });
-
-        row.appendChild(wrap);
-        grid.appendChild(row);
+        const initial = draft !== undefined ? draft : existing == null ? parDefault : String(existing);
+        addScoreRow({
+          titleText: enter.team?.teamName || "Team",
+          teamColor,
+          targetId: teamId,
+          initialValue: initial,
+          onValueChange(nextValue) {
+            setHoleDraft(r, currentHole, teamId, nextValue);
+          },
+        });
       } else if (type === "group") {
         const ids = targetIds.length
           ? targetIds
@@ -1999,26 +2248,17 @@ async function main() {
           const existingRaw = (savedByTarget[gid] || Array(18).fill(null))[currentHole];
           const existing = isEmptyScore(existingRaw) ? null : existingRaw;
           const draft = getHoleDraft(r, currentHole, gid);
-          const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
-
-          const row = el("div", { class: "hole-row team-accent", style: `--team-accent:${teamColor};` });
-          row.appendChild(
-            el(
-              "div",
-              { style: "min-width:0;" },
-              `<b>${meta.displayName || gid}</b> <span class="small">(${(meta.names || []).join(", ") || "pair"})</span><br/><span class="small">Existing: ${existing == null ? "—" : existing}</span>`
-            )
-          );
-
-          const { wrap, inp } = makeScoreInput(initial);
-          inp.setAttribute("data-enter-scope", "hole");
-          inp.setAttribute("data-target-id", gid);
-          inp.setAttribute("data-hole-index", String(currentHole));
-          inp.addEventListener("input", () => setHoleDraft(r, currentHole, gid, inp.value));
-          inputs.push({ targetId: gid, input: inp });
-
-          row.appendChild(wrap);
-          grid.appendChild(row);
+          const initial = draft !== undefined ? draft : existing == null ? parDefault : String(existing);
+          const names = uniqueDisplayNames(meta.names || []);
+          addScoreRow({
+            titleText: names.length ? names.join(", ") : meta.teamName || meta.displayName || gid,
+            teamColor,
+            targetId: gid,
+            initialValue: initial,
+            onValueChange(nextValue) {
+              setHoleDraft(r, currentHole, gid, nextValue);
+            },
+          });
         }
       } else {
         const ids = targetIds.length
@@ -2033,27 +2273,16 @@ async function main() {
           const existing = isEmptyScore(existingRaw) ? null : existingRaw;
 
           const draft = getHoleDraft(r, currentHole, pid);
-          const initial = draft !== undefined ? draft : existing == null ? "" : String(existing);
-
-          const row = el("div", { class: "hole-row team-accent", style: `--team-accent:${teamColor};` });
-          row.appendChild(
-            el(
-              "div",
-              { style: "min-width:0;" },
-              `<b>${p.name}</b> <span class="small">${hasTwoManTournament && groupForPlayerRound(p, r) ? `(Group ${groupForPlayerRound(p, r)}) ` : ""}${p.handicap != null ? `(hcp ${p.handicap})` : ""}</span><br/><span class="small">Existing: ${existing == null ? "—" : existing
-              }</span>`
-            )
-          );
-
-          const { wrap, inp } = makeScoreInput(initial);
-          inp.setAttribute("data-enter-scope", "hole");
-          inp.setAttribute("data-target-id", pid);
-          inp.setAttribute("data-hole-index", String(currentHole));
-          inp.addEventListener("input", () => setHoleDraft(r, currentHole, pid, inp.value));
-          inputs.push({ targetId: pid, input: inp });
-
-          row.appendChild(wrap);
-          grid.appendChild(row);
+          const initial = draft !== undefined ? draft : existing == null ? parDefault : String(existing);
+          addScoreRow({
+            titleText: p.name || pid,
+            teamColor,
+            targetId: pid,
+            initialValue: initial,
+            onValueChange(nextValue) {
+              setHoleDraft(r, currentHole, pid, nextValue);
+            },
+          });
         }
       }
 

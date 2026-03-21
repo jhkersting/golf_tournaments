@@ -359,6 +359,68 @@ header {
   gap: 4px;
 }
 
+.hole-map-score-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hole-map-score-action-buttons {
+  display: grid;
+  gap: 8px;
+  width: min(220px, 100%);
+}
+
+.hole-map-score-action-buttons button {
+  width: 100%;
+}
+
+.hole-map-score-hole-meta {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.hole-map-score-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  padding: max(14px, env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, rgba(8, 12, 18, 0.18) 36%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  overflow-y: auto;
+}
+
+.hole-map-score-overlay[hidden] {
+  display: none;
+}
+
+.hole-map-score-panel {
+  width: min(100%, 1080px);
+  min-height: calc(100vh - max(28px, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom) + 28px)));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: color-mix(in srgb, var(--surface-strong) 62%, transparent);
+  border-color: color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: 0 18px 42px rgba(15, 24, 34, 0.16);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.hole-map-score-panel #map_score_body {
+  flex: 1 1 auto;
+}
+
+body.hole-map-score-open {
+  overflow: hidden;
+}
+
 .scoreboard-controls {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -1352,6 +1414,10 @@ hr {
   border-radius: 4px;
 }
 
+.map-ticker-home {
+  margin-top: 12px;
+}
+
 .map-ticker-shell {
   margin-bottom: 12px;
 }
@@ -1389,6 +1455,10 @@ hr {
 
 .hole-map-page .map-ticker-shell .enter-ticker.is-stuck .enter-ticker-inner {
   width: min(100%, 1080px);
+}
+
+.hole-map-score-ticker-host {
+  margin-top: 12px;
 }
 
 .stats-kpis {
@@ -1709,6 +1779,140 @@ pre {
   font-variant-numeric: tabular-nums;
 }
 
+.hole-score-row {
+  display: grid;
+  gap: 10px;
+}
+
+.hole-score-row-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+
+.score-wheel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.score-wheel-shell {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.score-wheel-display {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 58%, transparent);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  box-shadow: none;
+}
+
+.score-wheel-shell.is-active .score-wheel-display {
+  border-color: color-mix(in srgb, var(--brand) 36%, var(--border));
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+}
+
+.score-wheel-display:hover,
+.score-wheel-display:active {
+  background: color-mix(in srgb, var(--surface-strong) 64%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 72%, transparent);
+  transform: none;
+}
+
+.score-wheel-display.is-empty {
+  color: var(--muted);
+}
+
+.score-wheel-shell:not(.is-active) + .score-wheel-delta {
+  display: none;
+}
+
+.score-wheel {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--field-bg) 70%, transparent);
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+.score-wheel[hidden] {
+  display: none;
+}
+
+.score-wheel::-webkit-scrollbar {
+  display: none;
+}
+
+.score-wheel-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 100%;
+  padding: 6px calc(50% - 28px);
+}
+
+.score-wheel-option {
+  flex: 0 0 auto;
+  min-width: 56px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  scroll-snap-align: center;
+  padding: 0 14px;
+}
+
+.score-wheel-option:hover,
+.score-wheel-option:active {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+  transform: none;
+}
+
+.score-wheel-option.is-active {
+  background: var(--brand);
+  color: var(--brand-contrast);
+  box-shadow: 0 10px 22px rgba(15, 24, 34, 0.18);
+}
+
+.score-wheel-delta {
+  min-width: 28px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  justify-self: end;
+}
+
 .toggle {
   display: inline-flex;
   align-items: center;
@@ -1953,7 +2157,12 @@ th.dots {
     gap: 10px;
   }
 
-  .enter-who-head > button {
+  .enter-who-head > button,
+  .hole-map-score-head-actions {
+    width: 100%;
+  }
+
+  .hole-map-score-head-actions button {
     width: 100%;
   }
 
@@ -2347,6 +2556,9 @@ th.dots {
   position: sticky;
   top: var(--hole-controls-stick-top, 74px);
   z-index: 45;
+  background: color-mix(in srgb, var(--surface-strong) 97%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
 .hole-map-controls.is-stuck {
@@ -2355,12 +2567,8 @@ th.dots {
   left: var(--hole-controls-fixed-left, 0px);
   width: var(--hole-controls-fixed-width, auto);
   z-index: 85;
-
+  background: color-mix(in srgb, var(--surface-strong) 50%, transparent);
 }
-#metric_summary {
-  font-size: 18px;
-}
-
 .hole-map-controls-placeholder {
   display: none;
   width: 100%;
@@ -2368,37 +2576,93 @@ th.dots {
 }
 
 .hole-map-page .container {
-  padding-bottom: calc(138px + env(safe-area-inset-bottom));
+  padding-bottom: calc(118px + env(safe-area-inset-bottom));
+}
+
+.hole-map-score-open .hole-map-footer {
+  display: none;
+}
+
+.hole-map-enter-dock {
+  position: fixed;
+  left: 50%;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 95;
+  width: min(100%, 1080px);
+  padding: 0 12px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.hole-map-enter-dock[hidden] {
+  display: none;
+}
+
+.hole-map-enter-dock button {
+  pointer-events: auto;
+  width: min(280px, calc(100vw - 24px));
+  min-height: 52px;
+  border-radius: 999px;
+  border-color: color-mix(in srgb, var(--brand) 82%, var(--BLACK));
+  background: var(--brand);
+  color: var(--brand-contrast);
+  box-shadow: 0 14px 34px rgba(15, 24, 34, 0.28);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+.hole-map-enter-dock button:hover {
+  background: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 82%, var(--BLACK));
 }
 
 .hole-map-nav {
   display: grid;
-  grid-template-columns: 1fr 110px 1fr;
+  grid-template-columns: 54px minmax(0, 1fr) 54px;
   gap: 10px;
   align-items: center;
 }
 
-.hole-map-nav button,
-.hole-map-nav select {
+.hole-map-nav button {
   width: 100%;
   min-width: 0;
-  height: 32px;
-  min-height: 32px;
+  height: 36px;
+  min-height: 36px;
   font-family: JetBrains Mono, monospace;
-}
-
-.hole-map-nav button {
+  font-size: 15px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
 .hole-map-nav select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  font-family: var(--font-display);
+  font-size: 18px;
   padding-top: 0;
   padding-bottom: 0;
+  padding-left: 8px;
+  padding-right: 8px;
   text-align: center;
   text-align-last: center;
-  font-weight: 700;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  border: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .hole-map-location {
@@ -2443,11 +2707,21 @@ th.dots {
 }
 
 .hole-map-summary {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  text-align: center;
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.hole-map-summary .hole-map-footer-point-head,
+.hole-map-summary .hole-map-footer-point-value,
+.hole-map-summary .hole-map-footer-head,
+.hole-map-summary .hole-map-footer-values {
+  width: 100%;
+  margin: 0;
+}
+
+.hole-map-summary .hole-map-footer-point-value {
+  margin-bottom: 2px;
 }
 
 .hole-map-stage-wrap {
@@ -2554,7 +2828,7 @@ th.dots {
 
 @media (max-width: 560px) {
   .hole-map-page .container {
-    padding-bottom: calc(150px + env(safe-area-inset-bottom));
+    padding-bottom: calc(126px + env(safe-area-inset-bottom));
   }
 
   span[data-brand-title] {
@@ -2563,7 +2837,7 @@ th.dots {
   }
 
   .hole-map-nav {
-    grid-template-columns: 1fr 96px 1fr;
+    grid-template-columns: 48px minmax(0, 1fr) 48px;
     gap: 8px;
     align-items: center;
   }
@@ -2572,6 +2846,22 @@ th.dots {
   .hole-map-nav select {
     width: 100%;
     min-width: 0;
+  }
+
+  .hole-map-nav select {
+    font-size: 18px;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .hole-map-enter-dock {
+    padding: 0 10px;
+  }
+
+  .hole-map-enter-dock button {
+    width: min(260px, calc(100vw - 20px));
+    min-height: 50px;
+    font-size: 18px;
   }
 
 

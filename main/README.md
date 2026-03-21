@@ -6,6 +6,11 @@ This is a static site with:
 - Player code entry + per-hole score input
 - Scoreboard + scorecard viewer
 
+## Mobile-first focus
+This frontend should be treated as a phone-first app, especially for the player flows like score entry and the hole map.
+
+When making layout or UX changes, optimize for mobile ergonomics first, then make sure tablet and desktop still work as secondary targets.
+
 ## Configure
 Open `docs/app.js` and set:
 

@@ -48,25 +48,32 @@
       </div>
     </div>-->
 
-    <div id="map_ticker_shell" class="map-ticker-shell">
-      <div class="enter-ticker" id="enter_ticker" style="display:none;">
-        <div class="enter-ticker-inner">
-          <div class="enter-ticker-title" id="enter_ticker_title"></div>
-          <div class="enter-ticker-viewport">
-            <div class="enter-ticker-track" id="enter_ticker_track"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="card hole-map-controls">
       <div class="hole-map-nav">
-        <button id="hole_prev" class="secondary" type="button"><-</button>
+        <button id="hole_prev" class="secondary" type="button">—</button>
             <select id="hole_select" aria-label="Current hole"></select>
-            <button id="hole_next" class="secondary" type="button">-></button>
+            <button id="hole_next" class="secondary" type="button">—</button>
       </div>
 
-      <div class="hole-map-summary" id="metric_summary">Hole — | Par —</div>
+      <div id="metric_summary" hidden>Hole — | Par — | —</div>
+      <div class="hole-map-summary" aria-live="polite">
+        <div class="hole-map-footer-point-head" id="metric_to_point_head">
+          <span>To Point</span>
+        </div>
+        <div class="hole-map-footer-point-value" id="metric_to_point_row">
+          <span id="metric_to_point">—</span>
+        </div>
+        <div class="hole-map-footer-head">
+          <span>front</span>
+          <span>center</span>
+          <span>back</span>
+        </div>
+        <div class="hole-map-footer-values">
+          <span id="metric_front">—</span>
+          <span id="metric_center">—</span>
+          <span id="metric_back">—</span>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -75,11 +82,6 @@
           aria-label="Hole layout"></canvas>
         <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
         <div class="hole-map-location">
-          <div id="map_mode_toggle" class="toggle hole-map-mode-toggle" role="group" aria-label="Map mode"
-            style="display:none;">
-            <button type="button" data-map-mode="simplified">Satellite</button>
-            <button type="button" data-map-mode="full">Advanced</button>
-          </div>
           <div class="hole-map-location-actions">
             <button id="loc_btn" type="button">Use My Location</button>
             <button id="loc_clear" class="secondary" type="button">Clear Location</button>
@@ -88,24 +90,18 @@
         </div>
       </div>
     </div>
-  </div>
 
-  <div class="hole-map-footer" aria-live="polite">
-    <div class="hole-map-footer-point-head" id="metric_to_point_head">
-      <span>To Point</span>
-    </div>
-    <div class="hole-map-footer-point-value" id="metric_to_point_row">
-      <span id="metric_to_point">—</span>
-    </div>
-    <div class="hole-map-footer-head">
-      <span>front</span>
-      <span>CENTER</span>
-      <span>back</span>
-    </div>
-    <div class="hole-map-footer-values">
-      <span id="metric_front">—</span>
-      <span id="metric_center">—</span>
-      <span id="metric_back">—</span>
+    <div id="map_ticker_home" class="map-ticker-home">
+      <div id="map_ticker_shell" class="map-ticker-shell">
+        <div class="enter-ticker" id="enter_ticker" style="display:none;">
+          <div class="enter-ticker-inner">
+            <div class="enter-ticker-title" id="enter_ticker_title"></div>
+            <div class="enter-ticker-viewport">
+              <div class="enter-ticker-track" id="enter_ticker_track"></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
