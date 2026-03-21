@@ -205,6 +205,8 @@ const els = {
   holeCanvas: document.getElementById("hole_canvas"),
   holeEmpty: document.getElementById("hole_empty"),
   holeFooter: document.querySelector(".hole-map-footer"),
+  pageBottomActions: document.getElementById("map_page_bottom_actions"),
+  pageChangeCodeButton: document.getElementById("map_change_code_page_btn"),
   scoreCard: null,
   scoreBody: null,
   scoreTitle: null,
@@ -3463,6 +3465,29 @@ function updateScoreSubmitButton({
   syncScoreNotifierOffset();
 }
 
+function bindImmediateButtonAction(button, action) {
+  if (!(button instanceof HTMLElement) || typeof action !== "function") return;
+  let suppressPointerClick = false;
+  button.addEventListener("pointerdown", (event) => {
+    if (button instanceof HTMLButtonElement && button.disabled) return;
+    if (typeof event.button === "number" && event.button !== 0) return;
+    suppressPointerClick = true;
+    event.preventDefault();
+    void action(event);
+    window.setTimeout(() => {
+      suppressPointerClick = false;
+    }, 0);
+  });
+  button.addEventListener("click", (event) => {
+    if (button instanceof HTMLButtonElement && button.disabled) return;
+    if (suppressPointerClick && event.detail !== 0) {
+      event.preventDefault();
+      return;
+    }
+    void action(event);
+  });
+}
+
 function setScoreCardExpanded(expanded, { focus = false } = {}) {
   entryState.scorePanelExpanded = Boolean(expanded);
   if (!entryState.scorePanelExpanded && entryState.activeScoreWheel?.close) {
@@ -3607,6 +3632,12 @@ function createScoreWheel(initialValue, { onChange, parValue } = {}) {
     if (!removeOutsidePointerListener) {
       const onPointerDownOutside = (event) => {
         if (shell.contains(event.target)) return;
+        if (
+          event.target instanceof Element &&
+          event.target.closest('button, a, input, select, textarea, label, [role="button"]')
+        ) {
+          return;
+        }
         close({ restoreFocus: false });
       };
       document.addEventListener("pointerdown", onPointerDownOutside, true);
@@ -3638,6 +3669,10 @@ function createScoreWheel(initialValue, { onChange, parValue } = {}) {
     isOpen = false;
     shell.classList.remove("is-active");
     viewport.hidden = true;
+    if (scrollSettleTimerId) {
+      clearTimeout(scrollSettleTimerId);
+      scrollSettleTimerId = 0;
+    }
     if (removeOutsidePointerListener) removeOutsidePointerListener();
     updateDisplayUi();
     if (entryState.activeScoreWheel === controls) entryState.activeScoreWheel = null;
@@ -3855,9 +3890,6 @@ function ensureScoreCard() {
               <button id="map_submit_hole_inline_btn" type="button">Next Hole →</button>
             </div>
           </div>
-          <div class="hole-map-score-secondary-actions">
-            <button id="map_change_code_btn" class="secondary" type="button">Change code</button>
-          </div>
           <div class="small" id="map_score_status" style="margin-top:8px;"></div>
         </div>
       </div>
@@ -3875,7 +3907,6 @@ function ensureScoreCard() {
     els.scoreSyncStatus = card.querySelector("#map_score_sync_status");
     els.mapInfo = card.querySelector("#map_course_info");
     els.scoreSubmitInline = card.querySelector("#map_submit_hole_inline_btn");
-    els.scoreChangeCodeButton = card.querySelector("#map_change_code_btn");
     els.scoreCloseButton = card.querySelector("#map_close_scores_btn");
 
     const dock = document.createElement("div");
@@ -3897,6 +3928,7 @@ function ensureScoreCard() {
     syncTickerMount();
 
     const submitFromPanel = async () => {
+      if (entryState.activeScoreWheel?.close) entryState.activeScoreWheel.close({ restoreFocus: false });
       const submitted = await submitCurrentHole({ allowEmpty: false, advanceToSuggested: false });
       if (submitted?.ok && submitted?.submitted) {
         setScoreCardExpanded(false);
@@ -3904,7 +3936,7 @@ function ensureScoreCard() {
       }
     };
 
-    els.scoreSubmitButton?.addEventListener("click", async () => {
+    bindImmediateButtonAction(els.scoreSubmitButton, async () => {
       if (!entryState.scorePanelExpanded) {
         setScoreCardMode("scores");
         setScoreCardExpanded(true, { focus: true });
@@ -3912,10 +3944,10 @@ function ensureScoreCard() {
       }
       await submitFromPanel();
     });
-    els.scoreSubmitInline?.addEventListener("click", submitFromPanel);
-    els.scoreChangeCodeButton?.addEventListener("click", clearCodeAndReload);
-    els.scoreCloseButton?.addEventListener("click", () => {
+    bindImmediateButtonAction(els.scoreSubmitInline, submitFromPanel);
+    bindImmediateButtonAction(els.scoreCloseButton, () => {
       if (entryState.submitting) return;
+      if (entryState.activeScoreWheel?.close) entryState.activeScoreWheel.close({ restoreFocus: false });
       setScoreCardExpanded(false);
     });
     card.addEventListener("click", (event) => {
@@ -4774,6 +4806,8 @@ async function initializeEntryContext() {
   entryState.tid = tid;
   rememberPlayerCode(entryState.code);
   rememberTournamentId(tid);
+  if (els.pageBottomActions) els.pageBottomActions.hidden = false;
+  if (els.pageChangeCodeButton) els.pageChangeCodeButton.onclick = clearCodeAndReload;
 
   document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {
     link.setAttribute("href", `./scoreboard.html?t=${encodeURIComponent(tid)}`);

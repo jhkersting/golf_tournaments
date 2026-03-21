@@ -30,6 +30,8 @@ const normalizedCodeFromQuery = normalizePlayerCode(codeFromQuery || qs("c"));
 if (normalizedCodeFromQuery) rememberPlayerCode(normalizedCodeFromQuery);
 let code = normalizedCodeFromQuery || normalizePlayerCode(getRememberedPlayerCode()) || "";
 const forms = document.getElementById("round_forms");
+const pageBottomActions = document.getElementById("enter_page_bottom_actions");
+const pageChangeCodeButton = document.getElementById("enter_change_code_page_btn");
 const ticker = document.getElementById("enter_ticker");
 const tickerTitle = document.getElementById("enter_ticker_title");
 const tickerTrack = document.getElementById("enter_ticker_track");
@@ -60,12 +62,25 @@ const TICKER_NEXT_DELAY_MS = 3000;
 const SCORE_WHEEL_MIN = 1;
 const SCORE_WHEEL_MAX = 20;
 const SCORE_WHEEL_VALUES = ["", ...Array.from({ length: SCORE_WHEEL_MAX }, (_, index) => String(index + SCORE_WHEEL_MIN))];
+const GEO_GRANTED_KEY = "hole-map:geo-granted";
+const ENTER_LOCATION_TIMEOUT_MS = 15000;
+const IS_LOCALHOST = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/i.test(window.location.hostname);
 const DATA_ROOT_CANDIDATES = [
-  "./data",
-  `${STATIC_BASE}/course-data`,
-  "../../golf_course_hole_geo_data/data",
-  "/golf_tournaments/golf_course_hole_geo_data/data",
-  "/golf_course_hole_geo_data/data",
+  ...(IS_LOCALHOST
+    ? [
+      "../../golf_course_hole_geo_data/data",
+      "./data",
+      "/golf_tournaments/golf_course_hole_geo_data/data",
+      "/golf_course_hole_geo_data/data",
+      `${STATIC_BASE}/course-data`,
+    ]
+    : [
+      `${STATIC_BASE}/course-data`,
+      "./data",
+      "../../golf_course_hole_geo_data/data",
+      "/golf_tournaments/golf_course_hole_geo_data/data",
+      "/golf_course_hole_geo_data/data",
+    ]),
 ];
 const MAP_INDEX_CANDIDATES = DATA_ROOT_CANDIDATES.map((root) => `${root}/courses_map_index.json`);
 let activeScoreWheel = null;
@@ -73,6 +88,281 @@ let courseMapIndexPromise = null;
 let courseMapIndex = null;
 const roundHoleYardageFallbacks = new Map();
 const roundHoleYardageFallbackPromises = new Map();
+const roundHoleCoordinateRowMaps = new Map();
+const roundHoleCoordinateRowMapPromises = new Map();
+const bluegolfCourseDataBases = new Map();
+const bluegolfCourseDataBasePromises = new Map();
+const enterLocationState = {
+  granted: false,
+  pending: false,
+  error: "",
+  autoPrompted: false,
+  userLocation: null,
+  locationAccuracyM: null,
+  watchId: null,
+  onMetricsChange: null,
+};
+const enterLocationPromptRefs = new Set();
+
+function secureContextMessage() {
+  if (window.isSecureContext) return "";
+  return "Location requires HTTPS or localhost. Open this page via https:// (not file:// or plain http://).";
+}
+
+function readGeolocationGrant() {
+  try {
+    return localStorage.getItem(GEO_GRANTED_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function persistGeolocationGrant(granted) {
+  try {
+    localStorage.setItem(GEO_GRANTED_KEY, granted ? "1" : "0");
+  } catch (_) {
+    // ignore
+  }
+}
+
+function enterLocationErrorText(error) {
+  const codeMap = {
+    1: "Location permission was denied.",
+    2: "Location is unavailable.",
+    3: "Location request timed out.",
+  };
+  const base = codeMap[error?.code] || "Could not get current location.";
+  const detail = error?.message ? ` ${error.message}` : "";
+  return `${base}${detail}`.trim();
+}
+
+function syncEnterLocationPromptUi() {
+  for (const ref of Array.from(enterLocationPromptRefs)) {
+    if (!ref?.root?.isConnected) enterLocationPromptRefs.delete(ref);
+  }
+  const secureMsg = secureContextMessage();
+  const statusText = secureMsg || enterLocationState.error || "";
+  const hasLiveLocation = Array.isArray(enterLocationState.userLocation);
+  const trackingActive = hasLiveLocation || enterLocationState.watchId != null;
+  for (const ref of enterLocationPromptRefs) {
+    if (!ref?.root || !ref?.button || !ref?.status) continue;
+    ref.root.hidden = false;
+    ref.button.disabled = enterLocationState.pending && !trackingActive;
+    ref.button.textContent = enterLocationState.pending && !trackingActive
+      ? "Locating..."
+      : trackingActive
+        ? "Clear Location"
+        : "Use My Location";
+    ref.status.textContent = statusText;
+    ref.status.hidden = !statusText;
+  }
+}
+
+function notifyEnterLocationMetricsChanged() {
+  if (typeof enterLocationState.onMetricsChange === "function") {
+    try {
+      enterLocationState.onMetricsChange();
+    } catch (_) {
+      // ignore UI update failures from stale callbacks
+    }
+  }
+}
+
+function stopEnterLocationTracking({ clearLocation = false } = {}) {
+  if (enterLocationState.watchId != null && "geolocation" in navigator) {
+    navigator.geolocation.clearWatch(enterLocationState.watchId);
+    enterLocationState.watchId = null;
+  }
+  enterLocationState.pending = false;
+  if (clearLocation) {
+    enterLocationState.userLocation = null;
+    enterLocationState.locationAccuracyM = null;
+    enterLocationState.granted = false;
+    enterLocationState.error = "";
+    persistGeolocationGrant(false);
+  }
+  syncEnterLocationPromptUi();
+  notifyEnterLocationMetricsChanged();
+}
+
+function parseEnterLocationFix(position) {
+  const lon = Number(position?.coords?.longitude);
+  const lat = Number(position?.coords?.latitude);
+  const accuracyM = Number(position?.coords?.accuracy);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return {
+    coords: [lon, lat],
+    accuracyM: Number.isFinite(accuracyM) ? accuracyM : null,
+  };
+}
+
+function applyEnterLocationFix(position) {
+  const fix = parseEnterLocationFix(position);
+  if (!fix) {
+    enterLocationState.error = "Location received, but coordinates were invalid.";
+    syncEnterLocationPromptUi();
+    notifyEnterLocationMetricsChanged();
+    return false;
+  }
+  enterLocationState.userLocation = fix.coords;
+  enterLocationState.locationAccuracyM = fix.accuracyM;
+  enterLocationState.granted = true;
+  enterLocationState.pending = false;
+  enterLocationState.error = "";
+  persistGeolocationGrant(true);
+  syncEnterLocationPromptUi();
+  notifyEnterLocationMetricsChanged();
+  return true;
+}
+
+function handleEnterLocationFailure(error) {
+  enterLocationState.pending = false;
+  enterLocationState.error = enterLocationErrorText(error);
+  if (error?.code === 1) {
+    enterLocationState.granted = false;
+    persistGeolocationGrant(false);
+    stopEnterLocationTracking({ clearLocation: true });
+    enterLocationState.error = enterLocationErrorText(error);
+  }
+  syncEnterLocationPromptUi();
+  notifyEnterLocationMetricsChanged();
+}
+
+async function requestEnterLocation() {
+  const secureMsg = secureContextMessage();
+  if (secureMsg) {
+    enterLocationState.error = secureMsg;
+    syncEnterLocationPromptUi();
+    return false;
+  }
+  if (!("geolocation" in navigator)) {
+    enterLocationState.error = "This browser does not support geolocation.";
+    syncEnterLocationPromptUi();
+    return false;
+  }
+  if (enterLocationState.pending) return false;
+  if (enterLocationState.watchId != null && Array.isArray(enterLocationState.userLocation)) {
+    enterLocationState.granted = true;
+    enterLocationState.error = "";
+    syncEnterLocationPromptUi();
+    notifyEnterLocationMetricsChanged();
+    return true;
+  }
+  if (enterLocationState.watchId != null) {
+    navigator.geolocation.clearWatch(enterLocationState.watchId);
+    enterLocationState.watchId = null;
+  }
+  enterLocationState.pending = true;
+  enterLocationState.error = "";
+  syncEnterLocationPromptUi();
+  const granted = await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    try {
+      enterLocationState.watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const ok = applyEnterLocationFix(position);
+          finish(ok);
+        },
+        (error) => {
+          handleEnterLocationFailure(error);
+          finish(error || false);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: ENTER_LOCATION_TIMEOUT_MS,
+          maximumAge: 0,
+        }
+      );
+    } catch (error) {
+      finish(error || false);
+    }
+  });
+  if (granted === true) {
+    return true;
+  }
+  if (!enterLocationState.error) {
+    enterLocationState.pending = false;
+    enterLocationState.granted = false;
+    enterLocationState.error = enterLocationErrorText(granted);
+    if (granted?.code === 1) persistGeolocationGrant(false);
+    syncEnterLocationPromptUi();
+    notifyEnterLocationMetricsChanged();
+  }
+  return false;
+}
+
+async function maybePromptForEnterLocation() {
+  if (enterLocationState.autoPrompted) return;
+  enterLocationState.autoPrompted = true;
+  const secureMsg = secureContextMessage();
+  if (secureMsg) {
+    enterLocationState.error = secureMsg;
+    syncEnterLocationPromptUi();
+    return;
+  }
+  if (!("geolocation" in navigator)) {
+    enterLocationState.error = "This browser does not support geolocation.";
+    syncEnterLocationPromptUi();
+    return;
+  }
+
+  const savedGranted = readGeolocationGrant();
+  if (navigator.permissions?.query) {
+    try {
+      const perm = await navigator.permissions.query({ name: "geolocation" });
+      if (perm.state === "granted") {
+        enterLocationState.granted = true;
+        enterLocationState.error = "";
+        persistGeolocationGrant(true);
+        syncEnterLocationPromptUi();
+        void requestEnterLocation();
+        return;
+      }
+      if (perm.state === "denied") {
+        enterLocationState.granted = false;
+        enterLocationState.error = "Location permission was denied.";
+        persistGeolocationGrant(false);
+        syncEnterLocationPromptUi();
+        return;
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  if (!savedGranted) {
+    void requestEnterLocation();
+    return;
+  }
+  enterLocationState.granted = true;
+  syncEnterLocationPromptUi();
+  void requestEnterLocation();
+}
+
+function createEnterLocationPrompt() {
+  const root = el("div", { class: "enter-location-request" });
+  const button = el("button", { class: "secondary", type: "button" }, "Use My Location");
+  const status = el("div", { class: "small enter-location-request-status" }, "");
+  status.hidden = true;
+  bindImmediateButtonAction(button, () => {
+    if (Array.isArray(enterLocationState.userLocation) || enterLocationState.watchId != null) {
+      stopEnterLocationTracking({ clearLocation: true });
+      return;
+    }
+    void requestEnterLocation();
+  });
+  root.appendChild(button);
+  root.appendChild(status);
+  enterLocationPromptRefs.add({ root, button, status });
+  syncEnterLocationPromptUi();
+  return root;
+}
 
 async function fetchJson(path) {
   const response = await fetch(path, { cache: "no-store" });
@@ -89,6 +379,55 @@ function normalizeKey(value) {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeCourseLookupKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((token) => token
+      .replace(/^bluegolf/, "")
+      .replace(/countryclub/g, "")
+      .replace(/golf/g, "")
+      .replace(/course/g, "")
+      .replace(/club/g, "")
+      .replace(/gc$/g, ""))
+    .filter(Boolean)
+    .join("");
+}
+
+function toRad(value) {
+  return (Number(value) * Math.PI) / 180;
+}
+
+function distanceYards(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length < 2 || b.length < 2) return null;
+  const [lon1, lat1] = a;
+  const [lon2, lat2] = b;
+  if (![lon1, lat1, lon2, lat2].every((value) => Number.isFinite(Number(value)))) return null;
+  const earthRadiusMeters = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const lat1Rad = toRad(lat1);
+  const lat2Rad = toRad(lat2);
+  const haversine =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(dLon / 2) ** 2;
+  const meters = 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
+  return meters * 1.0936133;
+}
+
+function readLonLatFromRow(row, prefix) {
+  const rawLat = row?.[`${prefix}_lat`];
+  const rawLon = row?.[`${prefix}_lon`];
+  if (rawLat == null || rawLon == null) return null;
+  if (String(rawLat).trim() === "" || String(rawLon).trim() === "") return null;
+  const lat = Number(rawLat);
+  const lon = Number(rawLon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return [lon, lat];
 }
 
 function setBrandDotColor(color) {
@@ -391,6 +730,7 @@ function resolveCourseMapMeta(course, mapIndex) {
   if (!course || !mapIndex) return null;
   const bySlug = mapIndex?.courses_by_slug || {};
   const courses = Array.isArray(mapIndex?.courses) ? mapIndex.courses : [];
+  const courseName = course?.name || course?.courseName || course?.title;
 
   const slugCandidates = [
     course?.mapSlug,
@@ -416,10 +756,23 @@ function resolveCourseMapMeta(course, mapIndex) {
     if (exact?.slug) return { slug: exact.slug, ...exact };
   }
 
+  const lookupKeys = new Set([
+    normalizeCourseLookupKey(courseName),
+    ...slugCandidates.map((value) => normalizeCourseLookupKey(value)),
+  ].filter(Boolean));
+  if (lookupKeys.size) {
+    const relaxed = courses.find((item) => [
+      item?.slug,
+      item?.name,
+      item?.path,
+    ].some((value) => lookupKeys.has(normalizeCourseLookupKey(value))));
+    if (relaxed?.slug) return { slug: relaxed.slug, ...relaxed };
+  }
+
   if (slugCandidates.length) {
     return {
       slug: slugCandidates[0],
-      name: course?.name || course?.courseName || course?.title || slugCandidates[0],
+      name: courseName || slugCandidates[0],
     };
   }
   return null;
@@ -430,16 +783,32 @@ function dataCandidatesForSlug(slug) {
 }
 
 async function resolveBluegolfCourseDataBase(slug) {
-  for (const candidate of dataCandidatesForSlug(slug)) {
-    const probe = `${candidate}/bluegolf_course_data.json`;
-    try {
-      const response = await fetch(probe, { cache: "no-store" });
-      if (response.ok) return candidate;
-    } catch (_) {
-      // continue
+  const normalizedSlug = String(slug || "").trim();
+  if (!normalizedSlug) return "";
+  if (bluegolfCourseDataBases.has(normalizedSlug)) return bluegolfCourseDataBases.get(normalizedSlug) || "";
+  if (bluegolfCourseDataBasePromises.has(normalizedSlug)) return bluegolfCourseDataBasePromises.get(normalizedSlug);
+
+  const promise = (async () => {
+    for (const candidate of dataCandidatesForSlug(normalizedSlug)) {
+      const probe = `${candidate}/bluegolf_course_data.json`;
+      try {
+        const response = await fetch(probe, { cache: "no-store" });
+        if (response.ok) {
+          bluegolfCourseDataBases.set(normalizedSlug, candidate);
+          return candidate;
+        }
+      } catch (_) {
+        // continue
+      }
     }
-  }
-  return "";
+    bluegolfCourseDataBases.set(normalizedSlug, "");
+    return "";
+  })().finally(() => {
+    bluegolfCourseDataBasePromises.delete(normalizedSlug);
+  });
+
+  bluegolfCourseDataBasePromises.set(normalizedSlug, promise);
+  return promise;
 }
 
 function extractFallbackHoleYardages(courseData) {
@@ -492,6 +861,89 @@ async function ensureHoleYardageFallbackForRound(tjson, roundIndex) {
 
   roundHoleYardageFallbackPromises.set(roundIndex, promise);
   return promise;
+}
+
+async function ensureHoleCoordinateRowsForRound(tjson, roundIndex) {
+  if (roundHoleCoordinateRowMaps.has(roundIndex)) return roundHoleCoordinateRowMaps.get(roundIndex);
+  if (roundHoleCoordinateRowMapPromises.has(roundIndex)) {
+    return roundHoleCoordinateRowMapPromises.get(roundIndex);
+  }
+
+  const promise = (async () => {
+    let rowMap = null;
+    const course = courseForRoundRaw(tjson, roundIndex);
+    if (course) {
+      const mapIndex = await ensureCourseMapIndex();
+      const meta = resolveCourseMapMeta(course, mapIndex);
+      const slug = String(meta?.slug || "").trim();
+      if (slug) {
+        const dataBase = await resolveBluegolfCourseDataBase(slug);
+        if (dataBase) {
+          const [rows, courseData] = await Promise.all([
+            fetchJson(`${dataBase}/bluegolf_tee_green_coordinates.json`).catch(() => []),
+            fetchJson(`${dataBase}/bluegolf_course_data.json`).catch(() => null),
+          ]);
+          if (!roundHoleYardageFallbacks.has(roundIndex)) {
+            roundHoleYardageFallbacks.set(roundIndex, extractFallbackHoleYardages(courseData));
+          }
+          rowMap = new Map();
+          for (const row of Array.isArray(rows) ? rows : []) {
+            const hole = Number(row?.hole);
+            if (!Number.isFinite(hole)) continue;
+            rowMap.set(hole, row);
+          }
+        }
+      }
+    }
+    roundHoleCoordinateRowMaps.set(roundIndex, rowMap);
+    return rowMap;
+  })()
+    .catch(() => {
+      roundHoleCoordinateRowMaps.set(roundIndex, null);
+      return null;
+    })
+    .finally(() => {
+      roundHoleCoordinateRowMapPromises.delete(roundIndex);
+    });
+
+  roundHoleCoordinateRowMapPromises.set(roundIndex, promise);
+  return promise;
+}
+
+function formatMetricYards(value) {
+  return Number.isFinite(value) ? String(Math.round(value)) : "—";
+}
+
+function hasBluegolfYardageDataForRound(roundIndex) {
+  const rowMap = roundHoleCoordinateRowMaps.get(roundIndex);
+  if (rowMap instanceof Map && rowMap.size > 0) return true;
+  const fallbackYardages = fallbackHoleYardagesForRound(roundIndex);
+  return Array.isArray(fallbackYardages) && fallbackYardages.some((value) => Number.isFinite(Number(value)));
+}
+
+function holeMetricValues(course, holeIndex, roundIndex) {
+  const holeNumber = Number(holeIndex) + 1;
+  const row = roundHoleCoordinateRowMaps.get(roundIndex)?.get(holeNumber) || null;
+  const tee = readLonLatFromRow(row, "tee");
+  const yardageSource = Array.isArray(enterLocationState.userLocation) ? enterLocationState.userLocation : tee;
+  let front = Array.isArray(yardageSource) ? distanceYards(yardageSource, readLonLatFromRow(row, "green_front")) : null;
+  let center = Array.isArray(yardageSource) ? distanceYards(yardageSource, readLonLatFromRow(row, "green_center")) : null;
+  let back = Array.isArray(yardageSource) ? distanceYards(yardageSource, readLonLatFromRow(row, "green_back")) : null;
+
+  if (!Number.isFinite(center)) center = Number.isFinite(front) ? front : back;
+  if (!Number.isFinite(front)) front = Number.isFinite(center) ? center : back;
+  if (!Number.isFinite(back)) back = Number.isFinite(center) ? center : front;
+
+  const totalYardage = Number(course?.holeYardages?.[holeIndex]);
+  const fallbackTotal = Number(fallbackHoleYardagesForRound(roundIndex)?.[holeIndex]);
+  const defaultTotal = Number.isFinite(totalYardage) ? totalYardage : fallbackTotal;
+  if (Number.isFinite(defaultTotal)) {
+    if (!Number.isFinite(front)) front = defaultTotal;
+    if (!Number.isFinite(center)) center = defaultTotal;
+    if (!Number.isFinite(back)) back = defaultTotal;
+  }
+
+  return { front, center, back };
 }
 
 /**
@@ -734,6 +1186,12 @@ function createScoreWheel(initialValue, { onChange, parValue } = {}) {
     if (!removeOutsidePointerListener) {
       const onPointerDownOutside = (event) => {
         if (shell.contains(event.target)) return;
+        if (
+          event.target instanceof Element &&
+          event.target.closest('button, a, input, select, textarea, label, [role="button"]')
+        ) {
+          return;
+        }
         close({ restoreFocus: false });
       };
       document.addEventListener("pointerdown", onPointerDownOutside, true);
@@ -765,6 +1223,10 @@ function createScoreWheel(initialValue, { onChange, parValue } = {}) {
     isOpen = false;
     shell.classList.remove("is-active");
     viewport.hidden = true;
+    if (scrollSettleTimerId) {
+      clearTimeout(scrollSettleTimerId);
+      scrollSettleTimerId = 0;
+    }
     if (removeOutsidePointerListener) removeOutsidePointerListener();
     updateDisplayUi();
     if (activeScoreWheel === controls) activeScoreWheel = null;
@@ -871,6 +1333,29 @@ function createScoreWheel(initialValue, { onChange, parValue } = {}) {
 function closeActiveScoreWheel() {
   if (activeScoreWheel?.close) activeScoreWheel.close({ restoreFocus: false });
   activeScoreWheel = null;
+}
+
+function bindImmediateButtonAction(button, action) {
+  if (!(button instanceof HTMLElement) || typeof action !== "function") return;
+  let suppressPointerClick = false;
+  button.addEventListener("pointerdown", (event) => {
+    if (button instanceof HTMLButtonElement && button.disabled) return;
+    if (typeof event.button === "number" && event.button !== 0) return;
+    suppressPointerClick = true;
+    event.preventDefault();
+    void action(event);
+    window.setTimeout(() => {
+      suppressPointerClick = false;
+    }, 0);
+  });
+  button.addEventListener("click", (event) => {
+    if (button instanceof HTMLButtonElement && button.disabled) return;
+    if (suppressPointerClick && event.detail !== 0) {
+      event.preventDefault();
+      return;
+    }
+    void action(event);
+  });
 }
 
 function toParFromKeys(row, keys) {
@@ -1672,6 +2157,8 @@ async function main() {
   }
   rememberPlayerCode(code);
   rememberTournamentId(tid);
+  if (pageBottomActions) pageBottomActions.hidden = false;
+  pageChangeCodeButton?.addEventListener("click", clearCodeAndReload);
   document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {
     link.setAttribute("href", `./scoreboard.html?t=${encodeURIComponent(tid)}`);
   });
@@ -1795,16 +2282,14 @@ async function main() {
   let refreshTournamentPromise = null;
   let pendingSyncPromise = null;
   const syncStatusEl = document.getElementById("entry_sync_status");
-  const roundsCard = el("div", { class: "card enter-rounds-card" });
   const roundTabs = el("div", { class: "enter-tabs enter-round-tabs" });
-  const roundPanesHost = el("div", { class: "enter-round-panes" });
+  const roundPanesHost = el("div", { class: "enter-round-panes enter-score-page-shell" });
   const roundTabButtons = [];
   const roundPanes = [];
+  const roundHoleRenderers = [];
 
   if (rounds.length) {
-    roundsCard.appendChild(roundTabs);
-    roundsCard.appendChild(roundPanesHost);
-    forms.appendChild(roundsCard);
+    forms.appendChild(roundPanesHost);
   }
 
   function setActiveRoundPane(nextRoundIndex) {
@@ -1823,6 +2308,8 @@ async function main() {
     tickerRoundIndex = safeRound;
     renderTeamCurrentScore();
     renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
+    const rerender = roundHoleRenderers[safeRound];
+    if (typeof rerender === "function") rerender();
   }
 
   function replaceTournamentJson(nextJson) {
@@ -2149,13 +2636,6 @@ async function main() {
     roundPanesHost.appendChild(roundBody);
     roundPanes.push(roundBody);
 
-    const myRoundTee = String(myTeeTimes[r] || "").trim();
-    if (myRoundTee) {
-      roundBody.appendChild(
-        el("div", { class: "small", style: "margin-bottom:8px;" }, `<b>Your tee time:</b> ${myRoundTee}`)
-      );
-    }
-
     const groupIds = canGroup
       ? (
         isTwoManGroupRound
@@ -2165,39 +2645,10 @@ async function main() {
             : [myId].filter(Boolean)
       )
       : [];
-    const changeCodeActions = el("div", { class: "enter-change-code-actions" });
-    const changeCodeBtn = el("button", { class: "secondary", type: "button" }, "Change code");
-    changeCodeBtn.onclick = clearCodeAndReload;
-    changeCodeActions.appendChild(changeCodeBtn);
-
-    // panes/tabs created early so render functions can close over them
-    const tabs = el("div", { class: "enter-tabs" });
-    const tabHole = el("button", { class: "secondary", type: "button" }, "Hole-by-hole");
-    const tabBulk = el("button", { class: "secondary", type: "button" }, "Bulk input");
-    tabs.appendChild(tabHole);
-    tabs.appendChild(tabBulk);
-    roundBody.appendChild(tabs);
-
-    const holePane = el("div");
-    const bulkPane = el("div", { style: "display:none;" });
-    roundBody.appendChild(holePane);
-    roundBody.appendChild(bulkPane);
-
-    tabHole.classList.add("active");
-    tabHole.onclick = () => {
-      closeActiveScoreWheel();
-      holePane.style.display = "";
-      bulkPane.style.display = "none";
-      tabHole.classList.add("active");
-      tabBulk.classList.remove("active");
-    };
-    tabBulk.onclick = () => {
-      closeActiveScoreWheel();
-      holePane.style.display = "none";
-      bulkPane.style.display = "";
-      tabBulk.classList.add("active");
-      tabHole.classList.remove("active");
-    };
+    const holePane = roundBody;
+    const bulkPane = document.createElement("div");
+    bulkPane.className = "enter-bulk-input-pane";
+    bulkPane.style.display = "none";
 
     // Current saved holes from tournament json
     function getSavedForRound() {
@@ -2308,6 +2759,45 @@ async function main() {
       status.textContent = "";
       const holeCourse = courseForRound(tjson, r);
 
+      const controlsCard = el("div", { class: "card hole-map-controls enter-page-hole-controls" });
+      const nav = el("div", { class: "hole-map-nav" });
+      const btnHolePrev = el("button", { class: "secondary", type: "button", "aria-label": "Previous hole" }, "—");
+      const holeSel = el("select", { "aria-label": "Current hole" });
+      const btnHoleNext = el("button", { class: "secondary", type: "button", "aria-label": "Next hole" }, "—");
+      for (let i = 0; i < 18; i++) {
+        const opt = el("option", { value: String(i) }, holeSummaryLabel(holeCourse, i, r));
+        if (i === currentHole) opt.selected = true;
+        holeSel.appendChild(opt);
+      }
+      holeSel.onchange = () => {
+        currentHole = Number(holeSel.value);
+        holeManuallySet = true;
+        renderHoleForm();
+      };
+      nav.appendChild(btnHolePrev);
+      nav.appendChild(holeSel);
+      nav.appendChild(btnHoleNext);
+      controlsCard.appendChild(nav);
+
+      const yardageSummary = el("div", { class: "hole-map-summary" });
+      const yardageHead = el(
+        "div",
+        { class: "hole-map-footer-head" },
+        "<span>front</span><span>center</span><span>back</span>"
+      );
+      const yardageValues = el("div", { class: "hole-map-footer-values" });
+      const metricFront = el("span", {}, "—");
+      const metricCenter = el("span", {}, "—");
+      const metricBack = el("span", {}, "—");
+      yardageSummary.hidden = true;
+      yardageValues.appendChild(metricFront);
+      yardageValues.appendChild(metricCenter);
+      yardageValues.appendChild(metricBack);
+      yardageSummary.appendChild(yardageHead);
+      yardageSummary.appendChild(yardageValues);
+      controlsCard.appendChild(yardageSummary);
+      holePane.appendChild(controlsCard);
+
       const panel = el("div", { class: "card enter-who-card hole-map-score-panel enter-inline-score-panel" });
       const panelHead = el("div", { class: "enter-who-head" });
       const panelMain = el("div", { class: "enter-who-main" });
@@ -2319,29 +2809,41 @@ async function main() {
       const panelBody = el("div", { class: "enter-inline-score-body" });
       panel.appendChild(panelBody);
 
-      const header = el("div", { class: "hole-header" });
-      const holeSel = el("select", { class: "hole-header-select", "aria-label": "Current hole" });
-      for (let i = 0; i < 18; i++) {
-        const opt = el("option", { value: String(i) }, holeSummaryLabel(holeCourse, i, r));
-        if (i === currentHole) opt.selected = true;
-        holeSel.appendChild(opt);
-      }
-      holeSel.onchange = () => {
-        currentHole = Number(holeSel.value);
-        holeManuallySet = true;
-        renderHoleForm();
-      };
-      header.appendChild(holeSel);
-      panelBody.appendChild(header);
+      const tickerHost = el("div", { class: "hole-map-score-ticker-host" });
+      if (activeRoundPaneIndex === r && ticker) tickerHost.appendChild(ticker);
+      panelBody.appendChild(tickerHost);
+
+      const roundTabsHost = el("div", { class: "enter-page-round-tabs-host" });
+      if (activeRoundPaneIndex === r) roundTabsHost.appendChild(roundTabs);
+      panelBody.appendChild(roundTabsHost);
 
       const syncHoleSummaryUi = () => {
         Array.from(holeSel.options).forEach((option, holeIndex) => {
           option.textContent = holeSummaryLabel(holeCourse, holeIndex, r);
         });
+        const showYardages = hasBluegolfYardageDataForRound(r);
+        yardageSummary.hidden = !showYardages;
+        if (showYardages) {
+          const metricValues = holeMetricValues(holeCourse, currentHole, r);
+          metricFront.textContent = formatMetricYards(metricValues.front);
+          metricCenter.textContent = formatMetricYards(metricValues.center);
+          metricBack.textContent = formatMetricYards(metricValues.back);
+        }
+        holeSel.value = String(currentHole);
+        btnHolePrev.textContent = currentHole > 0 ? String(currentHole) : "—";
+        btnHolePrev.disabled = currentHole <= 0;
+        btnHoleNext.textContent = currentHole < 17 ? String(currentHole + 2) : "—";
+        btnHoleNext.disabled = currentHole >= 17;
       };
+      if (r === activeRoundPaneIndex) {
+        enterLocationState.onMetricsChange = syncHoleSummaryUi;
+      }
       syncHoleSummaryUi();
-      void ensureHoleYardageFallbackForRound(tjson, r).then((yardages) => {
-        if (!Array.isArray(yardages) || !panel.isConnected) return;
+      void Promise.all([
+        ensureHoleYardageFallbackForRound(tjson, r),
+        ensureHoleCoordinateRowsForRound(tjson, r),
+      ]).then(() => {
+        if (!panel.isConnected) return;
         syncHoleSummaryUi();
       });
 
@@ -2474,18 +2976,25 @@ async function main() {
 
       const actions = el("div", { class: "actions enter-inline-score-actions" });
       const actionButtons = el("div", { class: "hole-map-score-action-buttons" });
-      const btnPrev = el("button", { class: "secondary", type: "button", "aria-label": "Previous hole" }, "← Last Hole");
       const btnNext = el("button", { type: "button", "aria-label": "Submit scores and go to next hole" }, "Next Hole →");
-      actionButtons.appendChild(btnPrev);
       actionButtons.appendChild(btnNext);
       actions.appendChild(actionButtons);
       panelBody.appendChild(actions);
-      panelBody.appendChild(changeCodeActions);
       panelBody.appendChild(status);
       holePane.appendChild(panel);
+      holePane.appendChild(createEnterLocationPrompt());
+      holePane.appendChild(bulkPane);
 
-      btnPrev.onclick = () => {
+      btnHolePrev.onclick = () => {
+        closeActiveScoreWheel();
         currentHole = Math.max(0, currentHole - 1);
+        holeManuallySet = true;
+        renderHoleForm();
+      };
+
+      btnHoleNext.onclick = () => {
+        closeActiveScoreWheel();
+        currentHole = Math.min(17, currentHole + 1);
         holeManuallySet = true;
         renderHoleForm();
       };
@@ -2589,41 +3098,54 @@ async function main() {
           return { error: true };
         }
       }
-      btnNext.onclick = () => doSubmit({ advanceMode: "sequential" });
+      bindImmediateButtonAction(btnNext, () => {
+        closeActiveScoreWheel();
+        return doSubmit({ advanceMode: "sequential" });
+      });
     }
+    roundHoleRenderers[r] = renderHoleForm;
 
     function renderBulkTable() {
       bulkPane.innerHTML = "";
 
-      const { type, savedByTarget, targetIds } = getSavedForRound();
-      const coursePars = courseForRound(tjson, r).pars || Array(18).fill(4);
-      const ids =
-        type === "team"
-          ? targetIds
-          : targetIds.length
-            ? targetIds
-            : [myId].filter((id) => Boolean(id) && allowedRoundPlayerSet.has(id));
-      const typeInfoText = type === "team"
-        ? "Scramble round: enter one team score per hole."
-        : type === "group"
-          ? "Two man scramble: enter one pair score per hole."
-          : twoManFormat
-            ? `${fmtLabel}: enter player scores and the pair/team totals are derived automatically.`
-            : "Player-based round: enter one score per player per hole.";
+      const roundData = tjson?.score_data?.rounds?.[r] || {};
+      const bulkPlayerId = [myId].filter((id) => Boolean(id) && allowedRoundPlayerSet.has(id))[0] || "";
+      if (!bulkPlayerId) {
+        bulkPane.style.display = "none";
+        return;
+      }
+      bulkPane.style.display = "";
 
-      const info = el(
-        "div",
-        { class: "small", style: "margin-bottom:10px;" },
-        `${typeInfoText} Bulk input: paste/update multiple holes, then submit. Bulk submit overrides existing scores.`
+      const savedByTarget = Object.create(null);
+      for (const pid of Object.keys(roundData.player || {})) {
+        const gross = (roundData.player[pid]?.gross || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
+        savedByTarget[pid] = gross;
+      }
+
+      const ids = [bulkPlayerId];
+      const bulkCard = el("div", { class: "card enter-bulk-input-card" });
+      bulkCard.appendChild(el("h3", { style: "margin:0 0 8px 0;" }, "Bulk Input"));
+      const bulkPlayerName = playersById[bulkPlayerId]?.name || bulkPlayerId;
+      const bulkPlayerTeamId = playersById[bulkPlayerId]?.teamId;
+      const bulkPlayerColor = colorForTeam(bulkPlayerTeamId);
+      bulkCard.appendChild(
+        el(
+          "div",
+          {
+            class: "bulk-table-player-title team-accent",
+            style: `--team-accent:${bulkPlayerColor};`,
+          },
+          `<b>${bulkPlayerName}</b>`
+        )
       );
-      bulkPane.appendChild(info);
+
+      bulkPane.appendChild(bulkCard);
 
       const tableWrap = el("div", { class: "bulk-table-wrap" });
       const tbl = el("table", { class: "table bulk-table" });
       const thead = el("thead");
       const trH = el("tr");
       trH.innerHTML =
-        `<th class="left">${type === "team" ? "Team" : type === "group" ? "Group" : "Player"}</th>` +
         `<th>Side</th>` +
         Array.from({ length: 9 }, (_, i) => `<th>${i + 1}</th>`).join("");
       thead.appendChild(trH);
@@ -2633,32 +3155,11 @@ async function main() {
       const rowInputs = {};
 
       for (const id of ids) {
-        const meta = type === "group" ? allowedRoundGroupById[id] : null;
-        const name = type === "team"
-          ? enter.team?.teamName || id
-          : type === "group"
-            ? meta?.displayName || id
-            : playersById[id]?.name || id;
-        const groupLabel = type === "team"
-          ? ""
-          : type === "group"
-            ? ((meta?.names || []).join(", "))
-              : hasTwoManTournament
-              ? (groupForPlayerRound(playersById[id], r) ? `Group ${groupForPlayerRound(playersById[id], r)}` : "")
-              : "";
-        const teamId = type === "team" ? id : type === "group" ? meta?.teamId : playersById[id]?.teamId;
-        const teamColor = colorForTeam(teamId);
         const holes = (savedByTarget[id] || Array(18).fill(null)).map((v) => (isEmptyScore(v) ? null : v));
 
         rowInputs[id] = Array(18).fill(null);
 
         const frontRow = el("tr");
-        const nameCell = el(
-          "td",
-          { class: "left bulk-player team-accent", rowspan: "2", style: `--team-accent:${teamColor};` },
-          `<b>${name}</b>${groupLabel ? ` <span class="small">(${groupLabel})</span>` : ""}`
-        );
-        frontRow.appendChild(nameCell);
         frontRow.appendChild(el("td", { class: "bulk-side" }, "Front 9"));
 
         for (let i = 0; i < 9; i++) {
@@ -2719,14 +3220,14 @@ async function main() {
 
       tbl.appendChild(tbody);
       tableWrap.appendChild(tbl);
-      bulkPane.appendChild(tableWrap);
+      bulkCard.appendChild(tableWrap);
 
       const bulkStatus = el("div", { class: "small", style: "margin-top:10px;" }, "");
       const btnRow = el("div", { style: "display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;" });
-      const btnSubmit = el("button", { class: "", type: "button" }, "Override & submit bulk");
+      const btnSubmit = el("button", { class: "", type: "button" }, "Submit Player Bulk");
       btnRow.appendChild(btnSubmit);
-      bulkPane.appendChild(btnRow);
-      bulkPane.appendChild(bulkStatus);
+      bulkCard.appendChild(btnRow);
+      bulkCard.appendChild(bulkStatus);
 
       async function submitBulk() {
         bulkStatus.textContent = "Submitting…";
@@ -2811,8 +3312,11 @@ async function main() {
     roundBody._refreshTimer = refreshTimer;
   }
 
+  enterLocationState.granted = readGeolocationGrant();
+  syncEnterLocationPromptUi();
   setActiveRoundPane(activeRoundPaneIndex);
   await renderSyncStatus();
+  void maybePromptForEnterLocation();
 
   window.addEventListener("online", () => {
     void (async () => {
@@ -2822,6 +3326,9 @@ async function main() {
   });
   window.addEventListener("offline", () => {
     void renderSyncStatus();
+  });
+  window.addEventListener("pagehide", () => {
+    stopEnterLocationTracking({ clearLocation: false });
   });
   void syncPendingScores({ quiet: true });
 }

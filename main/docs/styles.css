@@ -265,6 +265,73 @@ header {
   min-width: 0;
 }
 
+.enter-score-page-shell {
+  display: grid;
+  gap: 8px;
+}
+
+.enter-page-hole-controls {
+  position: static;
+  top: auto;
+  left: auto;
+  width: 100%;
+  z-index: auto;
+  gap: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.enter-page-hole-controls.is-stuck {
+  position: static;
+  top: auto;
+  left: auto;
+  width: 100%;
+  z-index: auto;
+  background: transparent;
+}
+
+.enter-page-round-tabs-host {
+  margin-top: 12px;
+}
+
+.enter-bulk-input-pane {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.enter-location-request {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.enter-location-request button {
+  min-width: min(100%, 260px);
+}
+
+.enter-location-request-status {
+  text-align: center;
+  max-width: 420px;
+}
+
+.enter-bulk-input-card {
+  margin-bottom: 0;
+}
+
+.page-bottom-actions {
+  display: flex;
+  justify-content: center;
+  margin: 18px 0 0;
+  padding-bottom: 12px;
+}
+
+.page-bottom-actions[hidden] {
+  display: none;
+}
+
 .enter-change-code-actions {
   display: flex;
   justify-content: center;
@@ -345,7 +412,8 @@ header {
 }
 
 .enter-page .container {
-  padding-bottom: 96px;
+  padding-top: 8px;
+  padding-bottom: calc(168px + env(safe-area-inset-bottom));
 }
 
 .card {
@@ -467,8 +535,6 @@ header {
   z-index: 120;
   padding: max(14px, env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));
   background: color-mix(in srgb, rgba(8, 12, 18, 0.18) 36%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   overflow-y: auto;
 }
 
@@ -483,11 +549,9 @@ header {
   display: flex;
   flex-direction: column;
   gap: 0;
-  background: color-mix(in srgb, var(--surface-strong) 62%, transparent);
-  border-color: color-mix(in srgb, var(--border) 72%, transparent);
+  background: var(--surface-strong);
+  border-color: var(--border);
   box-shadow: 0 18px 42px rgba(15, 24, 34, 0.16);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
 }
 
 .hole-map-score-panel #map_score_body {
@@ -507,6 +571,12 @@ header {
   margin: 12px 0 0;
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+
+.enter-page-hole-controls{
+  margin-top: 0px !important;
+  background-color: var(--surface-strong) !important
 }
 
 .enter-inline-score-rows {
@@ -1382,13 +1452,19 @@ hr {
 }
 
 .bulk-table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
 }
 
 .bulk-table th,
 .bulk-table td {
   padding: 4px 3px;
+}
+
+.bulk-table-player-title {
+  margin: 0 0 10px;
+  font-size: 16px;
 }
 
 .bulk-table .bulk-player {
@@ -1557,6 +1633,46 @@ hr {
 }
 
 .hole-map-page .map-ticker-shell .enter-ticker-title {
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+.enter-page .enter-ticker {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.enter-page .enter-ticker-inner {
+  width: 100%;
+}
+
+.enter-page .enter-ticker-title {
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+.enter-page .hole-map-score-ticker-host .enter-ticker {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.enter-page .hole-map-score-ticker-host .enter-ticker-inner {
+  width: 100%;
+}
+
+.enter-page .hole-map-score-ticker-host .enter-ticker-title {
   background: color-mix(in srgb, var(--surface) 92%, var(--bg));
 }
 
@@ -2136,7 +2252,8 @@ th.dots {
   }
 
   .enter-page .container {
-    padding-bottom: 104px;
+    padding-top: 10px;
+    padding-bottom: calc(168px + env(safe-area-inset-bottom));
   }
 
   .row {
@@ -2282,8 +2399,27 @@ th.dots {
     bottom: calc(126px + env(safe-area-inset-bottom));
   }
 
+  .hole-map-score-overlay {
+    display: flex;
+    align-items: flex-end;
+    padding: max(52px, env(safe-area-inset-top)) 10px 0;
+  }
+
+  .hole-map-score-panel {
+    width: 100%;
+    min-height: 0;
+    max-height: calc(100vh - max(62px, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom) + 20px)));
+    margin: auto auto 0;
+  }
+
+  .hole-map-score-panel #map_score_body {
+    flex: 0 1 auto;
+    overflow-y: auto;
+  }
+
   .enter-page .container {
-    padding-bottom: 88px;
+    padding-top: 8px;
+    padding-bottom: calc(168px + env(safe-area-inset-bottom));
   }
 
   .card {
@@ -2352,21 +2488,39 @@ th.dots {
 
   .bulk-table th,
   .bulk-table td {
-    padding: 3px 2px;
+    padding: 2px 1px;
   }
 
-  .bulk-table .bulk-player {
-    min-width: 98px;
+  .bulk-table {
+    table-layout: fixed;
   }
 
   .bulk-table .bulk-side {
-    min-width: 54px;
+    width: 42px;
+    min-width: 42px;
+    font-size: 10px;
+    line-height: 1.05;
   }
 
   .bulk-hole-input {
-    width: 34px;
-    min-height: 28px;
-    padding: 2px;
+    width: 100%;
+    max-width: 28px;
+    min-width: 0;
+    min-height: 26px;
+    padding: 1px;
+    margin: 0 auto;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .bulk-table th {
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+
+  .bulk-table-player-title {
+    margin-bottom: 8px;
+    font-size: 15px;
   }
 
   .stats-kpis {
@@ -2709,6 +2863,19 @@ th.dots {
   z-index: 85;
   background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
 }
+
+.enter-page .hole-map-controls.enter-page-hole-controls,
+.enter-page .hole-map-controls.enter-page-hole-controls.is-stuck {
+  position: static;
+  top: auto;
+  left: auto;
+  width: 100%;
+  z-index: auto;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .hole-map-controls-placeholder {
   display: none;
   width: 100%;

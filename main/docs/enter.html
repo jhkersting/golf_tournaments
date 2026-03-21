@@ -37,11 +37,6 @@
 <div class="container">
 
 <div id="round_forms"></div>
-<div id="score_notifier" class="score-notifier" role="status" aria-live="polite" aria-atomic="true"></div>
-
-<script type="module" src="enter.js"></script>
-
-</div>
 <div class="enter-ticker" id="enter_ticker" style="display:none;">
   <div class="enter-ticker-inner">
     <div class="enter-ticker-title" id="enter_ticker_title"></div>
@@ -49,6 +44,14 @@
       <div class="enter-ticker-track" id="enter_ticker_track"></div>
     </div>
   </div>
+</div>
+<div class="page-bottom-actions" id="enter_page_bottom_actions" hidden>
+  <button id="enter_change_code_page_btn" class="secondary" type="button">Change code</button>
+</div>
+<div id="score_notifier" class="score-notifier" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<script type="module" src="enter.js"></script>
+
 </div>
 </body>
 </html>
