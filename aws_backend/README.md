@@ -21,10 +21,21 @@ Parameters:
 - GET  `/tournaments/{tid}/admin` (admin + tournament `editCode`; editable payload: rounds/players/codes/groups/per-round tee times)
 - POST `/tournaments/{tid}/admin` (admin + tournament `editCode`; update tournament settings + players)
 - POST `/tournaments/{tid}/scores` (players)
+- GET  `/push/vapid-public-key`
+- POST `/tournaments/{tid}/push/subscribe`
+- POST `/tournaments/{tid}/push/unsubscribe`
 - GET  `/enter/{code}` (compat, reads from PUBLIC_BUCKET)
 - GET  `/courses` (list saved courses)
 - GET  `/courses/{courseId}` (get one saved course)
 - POST `/courses` (admin, create/update a saved course)
+
+## Push notifications
+Set these environment variables when deploying:
+- `VAPID_SUBJECT` - typically a `mailto:` URL
+- `VAPID_PUBLIC_KEY`
+- `VAPID_PRIVATE_KEY`
+
+The frontend fetches the public key from the API and uses it to subscribe devices for score alerts.
 
 ### Round formats
 - `singles`

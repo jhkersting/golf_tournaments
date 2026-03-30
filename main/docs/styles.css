@@ -427,6 +427,35 @@ header {
   overflow-x: hidden;
 }
 
+.pwa-card {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--surface) 92%, #184635 8%), var(--surface) 55%),
+    var(--surface);
+}
+
+.pwa-card .pwa-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.pwa-card .pwa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.pwa-card .pwa-actions button {
+  min-height: 40px;
+}
+
+.pwa-card .pwa-status {
+  margin-top: 10px;
+}
+
 .enter-page .card {
   border-radius: 12px;
 }

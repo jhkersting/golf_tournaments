@@ -4,7 +4,17 @@
       try {
         const registrations = await navigator.serviceWorker.getRegistrations();
         await Promise.allSettled(
-          registrations.map((registration) => registration.unregister())
+          registrations.map((registration) => {
+            const scriptUrl =
+              registration?.active?.scriptURL ||
+              registration?.waiting?.scriptURL ||
+              registration?.installing?.scriptURL ||
+              "";
+            if (String(scriptUrl).endsWith("/sw.js")) {
+              return Promise.resolve(false);
+            }
+            return registration.unregister();
+          })
         );
       } catch (error) {
         console.warn("Service worker cleanup failed:", error);

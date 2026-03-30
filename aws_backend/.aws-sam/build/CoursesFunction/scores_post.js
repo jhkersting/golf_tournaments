@@ -1,4 +1,5 @@
 import { json, parseBody, normalizeHoles, updateStateWithRetry, appendEvent, writePublicObjectsFromState } from "./utils.js";
+import { notifyScoreSubscribers } from "./push_notifications.js";
 
 function asInt(v){
   const n = Number(v);
@@ -327,6 +328,18 @@ export async function handler(event){
 
     // Write public (static) json objects
     await writePublicObjectsFromState(nextState);
+    try {
+      await notifyScoreSubscribers(tid, nextState, {
+        actorPlayerId,
+        code,
+        roundIndex,
+        mode,
+        holeIndex,
+        entries: body.entries || []
+      });
+    } catch (pushError) {
+      console.warn("Push notification dispatch failed:", pushError?.message || pushError);
+    }
 
     return json(200, { ok:true, version: nextState.version, updatedAt: nextState.updatedAt });
 

@@ -6,6 +6,16 @@ Parameters:
   AdminKey:
     Type: String
     Default: CHANGE_ME_ADMIN_KEY
+  VapidSubject:
+    Type: String
+    Default: mailto:admin@example.com
+  VapidPublicKey:
+    Type: String
+    Default: ''
+  VapidPrivateKey:
+    Type: String
+    Default: ''
+    NoEcho: true
   EventsBucketName:
     Type: String
     Default: golf-events
@@ -24,6 +34,12 @@ Globals:
       Variables:
         ADMIN_KEY:
           Ref: AdminKey
+        VAPID_SUBJECT:
+          Ref: VapidSubject
+        VAPID_PUBLIC_KEY:
+          Ref: VapidPublicKey
+        VAPID_PRIVATE_KEY:
+          Ref: VapidPrivateKey
         EVENTS_BUCKET:
           Ref: EventsBucketName
         STATE_BUCKET:
@@ -188,6 +204,42 @@ Resources:
             Method: post
     Metadata:
       SamResourceId: PostScoresFunction
+  PushNotificationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: push_notifications.handler
+      CodeUri: PushNotificationsFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: StateBucketName
+      Events:
+        GetPushPublicKey:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /push/vapid-public-key
+            Method: get
+        SubscribePush:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /tournaments/{tid}/push/subscribe
+            Method: post
+        UnsubscribePush:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /tournaments/{tid}/push/unsubscribe
+            Method: post
+    Metadata:
+      SamResourceId: PushNotificationsFunction
   OddsMaterializeFunction:
     Type: AWS::Serverless::Function
     Properties:

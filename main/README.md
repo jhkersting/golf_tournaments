@@ -25,3 +25,8 @@ Example:
 Reads come directly from the published static JSON without service-worker or browser persistence for tournament payloads.
 
 Writes still go to the API (`/scores`) and the backend re-materializes the static JSON immediately.
+
+## PWA + push alerts
+- The frontend now ships a service worker and web app manifest so it can be installed to a home screen.
+- Score-entry pages can subscribe a device to push alerts for new score posts.
+- The backend expects `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` to be set during deployment.
