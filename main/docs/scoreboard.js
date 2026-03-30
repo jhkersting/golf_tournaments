@@ -1046,7 +1046,7 @@ function leaderboardToParValue(row) {
 
 function scoreSourceForRound(roundData, roundCfg) {
   const format = String(roundCfg?.format || "").toLowerCase();
-  if (format === "scramble") {
+  if (format === "scramble" || format === "team_best_ball") {
     const teamEntries = Object.entries(roundData?.team || {});
     return { type: "team", entries: teamEntries };
   }
@@ -1055,6 +1055,26 @@ function scoreSourceForRound(roundData, roundCfg) {
   if (playerEntries.length) return { type: "player", entries: playerEntries };
   const teamEntries = Object.entries(roundData?.team || {});
   return { type: "team", entries: teamEntries };
+}
+
+function scoreNotifierRoundLabel(roundIndex) {
+  const idx = Number(roundIndex);
+  return Number.isInteger(idx) && idx >= 0 ? `Round ${idx + 1}` : "Round";
+}
+
+function scoreNotifierThruText(thru) {
+  const n = Number(thru);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return String(Math.floor(n));
+}
+
+function scoreNotifierThruValue(row, fallbackHoleIndex) {
+  const candidates = [row?.thru, row?.scores?.thru];
+  for (const candidate of candidates) {
+    const n = Number(candidate);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return fallbackHoleIndex + 1;
 }
 
 function collectNewScoreEvents(prevTournament, nextTournament) {
@@ -1084,6 +1104,7 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
     const nextRoundCfg = nextRoundCfgs[roundIndex] || {};
     const prevRoundCfg = prevRoundCfgs[roundIndex] || nextRoundCfg;
     const coursePars = courseForRoundIndex(roundIndex, nextTournament).pars || Array(18).fill(4);
+    const roundLabel = scoreNotifierRoundLabel(roundIndex);
     const nextSource = scoreSourceForRound(nextRound, nextRoundCfg);
     if (!nextSource.entries.length) continue;
 
@@ -1140,12 +1161,14 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
           entityType: nextSource.type,
           entityId: id,
           roundIndex,
+          roundLabel,
           name,
           result: scoreResultLabel(diffToPar),
           toPar: hasGrossAndNetToPar ? `${grossToPar} [${netToPar}]` : leaderboardToParValue(row),
           grossToPar,
           netToPar,
           hole: holeIndex + 1,
+          thru: scoreNotifierThruValue(row, holeIndex),
           diffToPar
         });
       }
@@ -1189,7 +1212,9 @@ function renderScoreNotifierEvent(event) {
 
   const line = document.createElement("div");
   line.className = "score-notifier-line";
-  line.appendChild(document.createTextNode(`${event.name} ${event.result} (`));
+  const roundLabel = String(event.roundLabel || "").trim() || "Round";
+  const thruLabel = scoreNotifierThruText(event.thru);
+  line.appendChild(document.createTextNode(`${roundLabel} | ${event.name} | ${event.result} `));
   if (event.grossToPar != null && event.netToPar != null) {
     const grossEl = document.createElement("span");
     grossEl.className = "score-emph-gross";
@@ -1204,7 +1229,8 @@ function renderScoreNotifierEvent(event) {
   } else {
     line.appendChild(document.createTextNode(String(event.toPar ?? "E")));
   }
-  line.appendChild(document.createTextNode(`) ${event.hole}`));
+  line.appendChild(document.createTextNode(")"));
+  if (thruLabel) line.appendChild(document.createTextNode(` Thru ${thruLabel}`));
   scoreNotifier.appendChild(line);
 }
 
