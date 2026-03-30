@@ -70,6 +70,11 @@ function setAlertsButtonText(text) {
   state.alertsButton.textContent = text;
 }
 
+function setPanelVisible(visible) {
+  if (!state.panel) return;
+  state.panel.hidden = !visible;
+}
+
 async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   if (!state.registrationPromise) {
@@ -180,6 +185,7 @@ async function refreshSubscriptionState() {
   const alertsTarget = hasAlertsTarget();
   const promptVisible = Boolean(state.installPromptEvent) && !isStandalone();
   const hasPermission = typeof Notification !== "undefined" ? Notification.permission : "default";
+  const hidePanel = Boolean(subscription) && alertsTarget;
 
   if (state.panelHint) {
     if (subscription) {
@@ -216,6 +222,8 @@ async function refreshSubscriptionState() {
         : "Open Enter Scores with your player code to subscribe this device."
     );
   }
+
+  setPanelVisible(!hidePanel);
 
   return Boolean(subscription);
 }
