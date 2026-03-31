@@ -32,15 +32,6 @@ function normalizeChatMessageInput(value) {
     .trim();
 }
 
-function formatChatTimestamp(value) {
-  const ts = Number(value);
-  if (!Number.isFinite(ts) || ts <= 0) return "";
-  return new Intl.DateTimeFormat([], {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(ts));
-}
-
 const codeFromQuery = qs("code");
 const normalizedCodeFromQuery = normalizePlayerCode(codeFromQuery || qs("c"));
 if (normalizedCodeFromQuery) rememberPlayerCode(normalizedCodeFromQuery);
@@ -55,7 +46,6 @@ const brandDot = document.querySelector(".brand .dot");
 const scoreNotifier = document.getElementById("score_notifier");
 const chatMount = document.getElementById("enter_chat_mount");
 const CHAT_MESSAGE_MAX_LENGTH = 240;
-const CHAT_REFRESH_MS = 30000;
 
 const teamColors = createTeamColorRegistry();
 let tickerSectionIndex = 0;
@@ -3484,11 +3474,7 @@ async function main() {
   void maybePromptForEnterLocation();
 
   const chatState = {
-    messages: Array.isArray(enter?.chat) ? enter.chat.slice(-100) : [],
-    refreshPromise: null,
     panel: null,
-    list: null,
-    count: null,
     input: null,
     form: null,
     sendButton: null,
@@ -3510,24 +3496,15 @@ async function main() {
     const heading = el("div", { class: "enter-chat-heading" });
     heading.appendChild(el("div", { class: "small enter-chat-kicker" }, "Tournament chat"));
     heading.appendChild(el("h3", { style: "margin:0;" }, "Send updates to every player"));
-    const count = el("div", { class: "pill enter-chat-count" }, "");
     head.appendChild(heading);
-    head.appendChild(count);
     panel.appendChild(head);
     panel.appendChild(
       el(
         "div",
         { class: "small enter-chat-summary" },
-        "Messages post to the shared feed and trigger PWA notifications for subscribed players."
+        "Messages are pushed directly to subscribed players and are not stored."
       )
     );
-
-    const list = el("div", {
-      class: "enter-chat-list",
-      "aria-live": "polite",
-      "aria-relevant": "additions text",
-    });
-    panel.appendChild(list);
 
     const form = el("form", { class: "enter-chat-form" });
     const input = el("input", {
@@ -3554,8 +3531,6 @@ async function main() {
     chatMount.appendChild(panel);
 
     chatState.panel = panel;
-    chatState.list = list;
-    chatState.count = count;
     chatState.input = input;
     chatState.form = form;
     chatState.sendButton = sendButton;
@@ -3571,91 +3546,6 @@ async function main() {
     });
 
     return panel;
-  }
-
-  function renderChatMessages(nextMessages, { forceScroll = false } = {}) {
-    if (!chatState.list) return;
-    const list = chatState.list;
-    const shouldStickToBottom =
-      forceScroll || list.scrollHeight - list.scrollTop - list.clientHeight < 120;
-    const messages = Array.isArray(nextMessages) ? nextMessages.slice(-100) : [];
-    chatState.messages = messages;
-    list.innerHTML = "";
-
-    if (!messages.length) {
-      list.appendChild(
-        el("div", { class: "enter-chat-empty" }, "No messages yet. Send the first update.")
-      );
-    } else {
-      for (const message of messages) {
-        const item = el("article", {
-          class: "enter-chat-item",
-          style: `--team-accent:${colorForTeam(message?.teamId) || "var(--brand)"}`,
-        });
-        if (message?.playerId && message.playerId === myId) {
-          item.classList.add("is-me");
-        }
-
-        const topRow = el("div", { class: "enter-chat-item-top" });
-        const sender = String(message?.playerName || "Player").trim() || "Player";
-        const teamName = String(message?.teamName || "").trim();
-        const senderLabel = teamName ? `${sender} • ${teamName}` : sender;
-        topRow.appendChild(el("div", { class: "enter-chat-sender" }, senderLabel));
-
-        const timeValue = Number(message?.createdAt);
-        const timeText = formatChatTimestamp(timeValue);
-        const timeEl = el("time", { class: "enter-chat-time" }, timeText || "");
-        if (Number.isFinite(timeValue) && timeValue > 0) {
-          timeEl.setAttribute("datetime", new Date(timeValue).toISOString());
-        }
-        topRow.appendChild(timeEl);
-
-        const body = el("div", { class: "enter-chat-message" });
-        body.textContent = String(message?.message || "");
-
-        item.appendChild(topRow);
-        item.appendChild(body);
-        list.appendChild(item);
-      }
-    }
-
-    if (chatState.count) {
-      const total = messages.length;
-      chatState.count.textContent = `${total} message${total === 1 ? "" : "s"}`;
-    }
-
-    if (shouldStickToBottom) {
-      list.scrollTop = list.scrollHeight;
-    }
-  }
-
-  async function loadChatMessages({ quiet = false } = {}) {
-    ensureChatPanel();
-    if (!tid || !code) return chatState.messages;
-    if (chatState.refreshPromise) return chatState.refreshPromise;
-
-    chatState.refreshPromise = (async () => {
-      try {
-        const payload = await api(
-          `/tournaments/${encodeURIComponent(tid)}/chat?code=${encodeURIComponent(code)}`
-        );
-        const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-        renderChatMessages(messages);
-        if (!quiet) {
-          setChatStatus("");
-        }
-        return messages;
-      } catch (error) {
-        if (!quiet) {
-          setChatStatus(error instanceof Error ? error.message : "Could not load chat.", true);
-        }
-        return chatState.messages;
-      } finally {
-        chatState.refreshPromise = null;
-      }
-    })();
-
-    return chatState.refreshPromise;
   }
 
   async function submitChatMessage() {
@@ -3680,10 +3570,12 @@ async function main() {
           message,
         },
       });
-      const messages = Array.isArray(payload?.messages) ? payload.messages : [];
       chatState.input.value = "";
-      renderChatMessages(messages, { forceScroll: true });
-      setChatStatus("Sent.");
+      setChatStatus(
+        payload?.skipped
+          ? "Message not sent."
+          : "Sent to subscribed players."
+      );
       return true;
     } catch (error) {
       setChatStatus(error instanceof Error ? error.message : "Could not send message.", true);
@@ -3695,18 +3587,11 @@ async function main() {
   }
 
   ensureChatPanel();
-  renderChatMessages(chatState.messages, { forceScroll: true });
-  void loadChatMessages({ quiet: true });
-
-  const chatRefreshTimer = setInterval(() => {
-    void loadChatMessages({ quiet: true });
-  }, CHAT_REFRESH_MS);
 
   window.addEventListener("online", () => {
     void (async () => {
       await renderSyncStatus();
       await syncPendingScores({ quiet: true });
-      await loadChatMessages({ quiet: true });
     })();
   });
   window.addEventListener("offline", () => {
@@ -3714,7 +3599,6 @@ async function main() {
   });
   window.addEventListener("pagehide", () => {
     stopEnterLocationTracking({ clearLocation: false });
-    clearInterval(chatRefreshTimer);
   });
   void syncPendingScores({ quiet: true });
 }

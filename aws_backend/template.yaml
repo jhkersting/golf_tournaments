@@ -209,12 +209,6 @@ Resources:
             RestApiId: !Ref GolfApi
             Path: /tournaments/{tid}/push/unsubscribe
             Method: post
-        ChatMessages:
-          Type: Api
-          Properties:
-            RestApiId: !Ref GolfApi
-            Path: /tournaments/{tid}/chat
-            Method: get
         PostChatMessage:
           Type: Api
           Properties:

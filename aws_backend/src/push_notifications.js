@@ -5,10 +5,7 @@ import {
   getJson,
   materializePublicFromState,
   updateStateWithRetry,
-  appendEvent,
-  writePublicObjectsFromState,
   normalizeChatMessageText,
-  trimChatMessages
 } from "./utils.js";
 
 function normalizePublicKey() {
@@ -346,7 +343,6 @@ function scoreNotifierCoursePars(tournamentJson, roundIndex) {
 }
 
 const CHAT_MESSAGE_LIMIT = 240;
-const CHAT_HISTORY_LIMIT = 100;
 const DEFAULT_CHAT_PROFANITY_WORDS = [
   "asshole",
   "bastard",
@@ -617,17 +613,6 @@ function makeChatMessageId(now = Date.now()) {
   return `chat_${now}_${rand}`;
 }
 
-function normalizeChatMessages(messages) {
-  return trimChatMessages(Array.isArray(messages) ? messages : [], CHAT_HISTORY_LIMIT);
-}
-
-function chatResponsePayload(state) {
-  return {
-    ok: true,
-    messages: normalizeChatMessages(state?.chatMessages || [])
-  };
-}
-
 async function upsertSubscription(tid, code, subscription) {
   const safeSubscription = normalizeSubscription(subscription);
   const bucket = process.env.STATE_BUCKET;
@@ -703,18 +688,6 @@ async function removeSubscription(tid, code, endpoint) {
   });
 }
 
-async function getChatMessages(tid, code) {
-  const bucket = process.env.STATE_BUCKET;
-  const { json: current } = await getJson(bucket, `state/${tid}.json`);
-  if (!current) {
-    const err = new Error("tournament not found");
-    err.statusCode = 404;
-    throw err;
-  }
-  resolvePlayerMeta(current, code);
-  return json(200, chatResponsePayload(current));
-}
-
 async function postChatMessage(tid, code, message) {
   const text = validateChatMessageText(message);
   const bucket = process.env.STATE_BUCKET;
@@ -735,31 +708,13 @@ async function postChatMessage(tid, code, message) {
     message: text,
     createdAt: now
   };
-
-  const nextState = await updateStateWithRetry(tid, (state) => {
-    state.chatMessages = normalizeChatMessages([...(Array.isArray(state.chatMessages) ? state.chatMessages : []), entry]);
-    state.updatedAt = now;
-    state.version = Number(state.version || 0) + 1;
-    return state;
-  });
-
-  await writePublicObjectsFromState(nextState);
-  try {
-    await appendEvent(tid, {
-      type: "chat_message",
-      tid,
-      ts: now,
-      ...entry
-    });
-  } catch (error) {
-    console.warn("Chat event logging failed:", error?.statusCode || error?.message || error);
-  }
-  await notifyChatSubscribers(tid, nextState, { entry });
+  const notificationResult = await notifyChatSubscribers(tid, current, { entry });
 
   return json(200, {
     ok: true,
-    message: entry,
-    messages: normalizeChatMessages(nextState?.chatMessages || [])
+    delivered: notificationResult.delivered || 0,
+    stale: notificationResult.stale || 0,
+    skipped: notificationResult.skipped || false
   });
 }
 
@@ -868,13 +823,10 @@ export async function handler(event) {
     }
 
     if (path.endsWith("/chat")) {
-      if (method === "GET") {
-        const code = String(event?.queryStringParameters?.code || body?.code || "").trim();
-        return await getChatMessages(tid, code);
+      if (method !== "POST") {
+        return json(405, { error: "Method not allowed" }, { Allow: "POST,OPTIONS" });
       }
-      if (method === "POST") {
-        return await postChatMessage(tid, body.code, body.message ?? body.text);
-      }
+      return await postChatMessage(tid, body.code, body.message ?? body.text);
     }
 
     return json(404, { error: "unknown push route" });
