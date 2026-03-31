@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { chatNotificationSummaries, scoreUpdateSummaries } from "./push_notifications.js";
+import { chatNotificationSummaries, scoreUpdateSummaries, validateChatMessageText } from "./push_notifications.js";
 
 let nodeTest = null;
 try {
@@ -330,6 +330,13 @@ registerTest("chat notifications route players back into the enter page", () => 
   assert.equal(summaries[0].body, "John • Alpha: Dinner is at 7");
   assert.equal(summaries[0].url, "./enter.html?t=fixture-singles");
   assert.equal(summaries[0].tag, "golf-chat-fixture-singles-chat_123");
+});
+
+registerTest("chat profanity is rejected before persistence", () => {
+  assert.throws(
+    () => validateChatMessageText("This is bullshit"),
+    (error) => error?.statusCode === 400 && error?.code === "PROFANITY"
+  );
 });
 
 if (!nodeTest) {

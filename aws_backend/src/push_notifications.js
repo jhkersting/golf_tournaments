@@ -347,9 +347,69 @@ function scoreNotifierCoursePars(tournamentJson, roundIndex) {
 
 const CHAT_MESSAGE_LIMIT = 240;
 const CHAT_HISTORY_LIMIT = 100;
+const DEFAULT_CHAT_PROFANITY_WORDS = [
+  "asshole",
+  "bastard",
+  "bitch",
+  "bullshit",
+  "cock",
+  "cunt",
+  "douchebag",
+  "fuck",
+  "motherfucker",
+  "shit",
+];
 
 function normalizeChatText(raw) {
   return normalizeChatMessageText(raw, { maxLength: CHAT_MESSAGE_LIMIT });
+}
+
+function normalizeChatFilterText(raw) {
+  return String(raw || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[0-9@!$*]+/g, (match) => {
+      const map = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "!": "i", "$": "s", "*": "" };
+      return match.split("").map((char) => map[char] ?? char).join("");
+    })
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function chatProfanityWords() {
+  const configured = String(process.env.CHAT_PROFANITY_WORDS || "").trim();
+  const rawWords = configured
+    ? configured.split(/[,;\n]+/)
+    : DEFAULT_CHAT_PROFANITY_WORDS;
+  return rawWords
+    .map((word) => normalizeChatFilterText(word))
+    .filter(Boolean);
+}
+
+function containsChatProfanity(text) {
+  const normalized = normalizeChatFilterText(text);
+  if (!normalized) return "";
+  const collapsed = normalized.replace(/\s+/g, "");
+  const tokens = new Set(normalized.split(/\s+/).filter(Boolean));
+  for (const word of chatProfanityWords()) {
+    if (tokens.has(word) || collapsed.includes(word)) {
+      return word;
+    }
+  }
+  return "";
+}
+
+export function validateChatMessageText(raw) {
+  const text = normalizeChatText(raw);
+  const profanity = containsChatProfanity(text);
+  if (profanity) {
+    const err = new Error("Message contains language not allowed.");
+    err.statusCode = 400;
+    err.code = "PROFANITY";
+    throw err;
+  }
+  return text;
 }
 
 function chatMessageLabel(playerName, teamName) {
@@ -656,7 +716,7 @@ async function getChatMessages(tid, code) {
 }
 
 async function postChatMessage(tid, code, message) {
-  const text = normalizeChatText(message);
+  const text = validateChatMessageText(message);
   const bucket = process.env.STATE_BUCKET;
   const { json: current } = await getJson(bucket, `state/${tid}.json`);
   if (!current) {
