@@ -7,7 +7,7 @@ const state = {
   statusEl: null,
   installButton: null,
   alertsButton: null,
-  panelHint: null
+  panelHint: null,
 };
 
 function isStandalone() {
@@ -75,6 +75,18 @@ function setPanelVisible(visible) {
   state.panel.hidden = !visible;
 }
 
+function handleServiceWorkerMessage(event) {
+  const data = event?.data || {};
+  if (data.type !== "chat-notification") return;
+  if (document.hidden) return;
+
+  window.dispatchEvent(
+    new CustomEvent("golf-chat-toast", {
+      detail: data.notification || data
+    })
+  );
+}
+
 async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   if (!state.registrationPromise) {
@@ -86,6 +98,10 @@ async function registerServiceWorker() {
       });
   }
   return state.registrationPromise;
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
 }
 
 async function getSubscription() {

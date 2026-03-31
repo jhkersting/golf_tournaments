@@ -1752,7 +1752,25 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
 function renderScoreNotifierEvent(event) {
   if (!scoreNotifier || !event) return;
   scoreNotifier.innerHTML = "";
-  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat");
+
+  if (event.kind === "chat") {
+    scoreNotifier.classList.add("score-chat");
+    const title = String(event.title || "Tournament chat").trim() || "Tournament chat";
+    const body = String(event.body || "New message").trim() || "New message";
+
+    const kicker = document.createElement("div");
+    kicker.className = "score-notifier-kicker";
+    kicker.textContent = title;
+
+    const line = document.createElement("div");
+    line.className = "score-notifier-line score-notifier-message";
+    line.textContent = body;
+
+    scoreNotifier.appendChild(kicker);
+    scoreNotifier.appendChild(line);
+    return;
+  }
 
   const diffToPar = Number(event.diffToPar);
   let toneClass = "score-even";
@@ -1805,7 +1823,7 @@ function pumpScoreNotifierQueue() {
         return;
       }
       scoreNotifier.innerHTML = "";
-      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat");
     }, SCORE_NOTIFIER_GAP_MS);
   }, SCORE_NOTIFIER_SHOW_MS);
 }
@@ -1815,6 +1833,20 @@ function showScoreNotifier(events) {
   scoreNotifierQueue.push(...events);
   pumpScoreNotifierQueue();
 }
+
+function showChatToast(notification) {
+  if (!notification) return;
+  showScoreNotifier([{
+    kind: "chat",
+    title: notification.title,
+    body: notification.body
+  }]);
+}
+
+window.addEventListener("golf-chat-toast", (event) => {
+  if (document.hidden) return;
+  showChatToast(event?.detail || {});
+});
 
 function sortTickerEntries(entries) {
   entries.sort((a, b) => {

@@ -25,20 +25,50 @@ self.addEventListener("push", (event) => {
   const targetUrl = resolveUrl(data.url || "./scoreboard.html");
 
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: new URL("./icons/icon-192.png", self.registration.scope).href,
-      badge: new URL("./icons/icon-192.png", self.registration.scope).href,
-      data: {
-        url: targetUrl,
-        tid: data.tid || null,
-        roundIndex: data.roundIndex ?? null,
-        mode: data.mode || null,
-        holeIndex: data.holeIndex ?? null
-      },
-      tag: String(data.tag || "").trim() || undefined,
-      renotify: true
-    })
+    (async () => {
+      await self.registration.showNotification(title, {
+        body,
+        icon: new URL("./icons/icon-192.png", self.registration.scope).href,
+        badge: new URL("./icons/icon-192.png", self.registration.scope).href,
+        data: {
+          url: targetUrl,
+          tid: data.tid || null,
+          roundIndex: data.roundIndex ?? null,
+          mode: data.mode || null,
+          holeIndex: data.holeIndex ?? null
+        },
+        tag: String(data.tag || "").trim() || undefined,
+        renotify: true
+      });
+
+      if (data.mode !== "chat") return;
+
+      const windows = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true
+      });
+
+      await Promise.all(
+        windows.map(async (client) => {
+          try {
+            client.postMessage({
+              type: "chat-notification",
+              notification: {
+                title,
+                body,
+                url: targetUrl,
+                tid: data.tid || null,
+                messageId: data.messageId || null,
+                createdAt: data.createdAt ?? null,
+                tag: String(data.tag || "").trim() || null
+              }
+            });
+          } catch (_) {
+            // Ignore clients that cannot receive messages.
+          }
+        })
+      );
+    })()
   );
 });
 

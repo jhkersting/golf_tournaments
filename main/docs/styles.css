@@ -1090,6 +1090,11 @@ hr {
   transform: translateY(0);
 }
 
+.score-notifier.score-chat {
+  background: rgba(15, 93, 216, 0.14);
+  border-color: rgba(15, 93, 216, 0.28);
+}
+
 .score-notifier.score-under.score-light {
   background: rgba(39, 146, 63, 0.3);
   border-color: rgba(20, 98, 40, 0.55);
@@ -1124,6 +1129,31 @@ hr {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.score-notifier-kicker {
+  margin-bottom: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.score-notifier.score-chat .score-notifier-line {
+  font-family: var(--font-sans);
+  font-variant-numeric: normal;
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.score-notifier.score-chat .score-notifier-kicker,
+.score-notifier.score-chat .score-notifier-line {
+  color: var(--text);
 }
 
 .score-emph-gross {
