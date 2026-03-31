@@ -5,7 +5,7 @@ codeuri = "/Users/jhkersting/Desktop/golf_tournaments/aws_backend/src"
 runtime = "nodejs20.x"
 architecture = "x86_64"
 handler = "tournaments_create.handler"
-manifest_hash = ""
+manifest_hash = "360658ee25da65b4e44287dcd8975a3e"
 packagetype = "Zip"
 functions = ["CreateTournamentFunction", "ImportPlayersFunction", "TournamentAdminFunction", "PostScoresFunction", "PushNotificationsFunction", "OddsMaterializeFunction", "EnterGetFunction", "CoursesFunction"]
 

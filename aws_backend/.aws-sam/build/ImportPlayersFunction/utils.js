@@ -163,6 +163,23 @@ export function normalizeTournamentScoring(scoring){
   return "stroke";
 }
 
+export const CHAT_MESSAGE_MAX_LENGTH = 240;
+
+export function normalizeChatMessageText(raw, { maxLength = CHAT_MESSAGE_MAX_LENGTH } = {}) {
+  const limit = Math.max(1, Math.floor(Number(maxLength) || CHAT_MESSAGE_MAX_LENGTH));
+  const text = String(raw ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\f\v]+/g, " ")
+    .replace(/\n+/g, " ")
+    .trim();
+  if (!text) {
+    const err = new Error("message is required");
+    err.statusCode = 400;
+    throw err;
+  }
+  return text.length > limit ? text.slice(0, limit).trimEnd() : text;
+}
+
 function grossHoleScoreOrNull(value){
   if (value == null) return null;
   const n = Number(value);

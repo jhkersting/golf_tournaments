@@ -343,18 +343,7 @@ function scoreNotifierCoursePars(tournamentJson, roundIndex) {
 }
 
 const CHAT_MESSAGE_LIMIT = 240;
-const DEFAULT_CHAT_PROFANITY_WORDS = [
-  "asshole",
-  "bastard",
-  "bitch",
-  "bullshit",
-  "cock",
-  "cunt",
-  "douchebag",
-  "fuck",
-  "motherfucker",
-  "shit",
-];
+const DEFAULT_CHAT_PROFANITY_WORDS = []
 
 function normalizeChatText(raw) {
   return normalizeChatMessageText(raw, { maxLength: CHAT_MESSAGE_LIMIT });
