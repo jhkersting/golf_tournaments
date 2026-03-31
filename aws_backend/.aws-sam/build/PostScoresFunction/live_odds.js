@@ -649,6 +649,18 @@ function strokesFromHandicapShots(handicapShots) {
   return normalizeNumberArray(handicapShots, 0).reduce((total, value) => total + Number(value || 0), 0);
 }
 
+function effectiveHandicapValue(value, multiplier = 1) {
+  return Math.max(0, Math.round((Number(value) || 0) * Number(multiplier || 0)));
+}
+
+function handicapShotsForHandicap(handicap, strokeIndex18) {
+  const normalizedStrokeIndex = normalizeNumberArray(strokeIndex18, 0);
+  const totalHandicap = Math.max(0, Math.floor(Number(handicap) || 0));
+  const base = Math.floor(totalHandicap / HOLE_COUNT);
+  const remainder = totalHandicap % HOLE_COUNT;
+  return normalizedStrokeIndex.map((strokeIndex) => base + (Number(strokeIndex || 0) <= remainder ? 1 : 0));
+}
+
 function difficultyZ(strokeIndex) {
   const difficultyRank = 19 - Number(strokeIndex || 0);
   return (difficultyRank - STROKE_Z_MEAN) / STROKE_Z_STD;
@@ -1564,6 +1576,7 @@ function buildRoundContext(tournamentJson, roundIndex) {
   const nameById = playerNameMap(tournamentJson);
   const units = [];
   const format = String(round?.format || "").trim().toLowerCase();
+  const twoManFormat = normalizeTwoManFormat(format);
 
   if (format === "scramble") {
     for (const team of teams) {
@@ -1615,7 +1628,13 @@ function buildRoundContext(tournamentJson, roundIndex) {
     for (const player of players) {
       const entry = roundData?.player?.[player.playerId] || {};
       const gross = normalizeGrossArray(entry?.gross);
-      const handicapShots = normalizeNumberArray(entry?.handicapShots, 0);
+      const storedHandicapShots = normalizeNumberArray(entry?.handicapShots, 0);
+      const handicapShots = strokesFromHandicapShots(storedHandicapShots) > 0
+        ? storedHandicapShots
+        : handicapShotsForHandicap(
+            effectiveHandicapValue(player?.handicap, twoManFormat === "two_man_shamble" ? 0.8 : 1),
+            course?.strokeIndex
+          );
       units.push({
         id: player.playerId,
         entityType: "player",

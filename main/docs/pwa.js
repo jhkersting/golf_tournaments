@@ -103,20 +103,6 @@ async function getVapidPublicKey() {
   return publicKey;
 }
 
-function panelCopy() {
-  if (isHomePage()) {
-    return {
-      title: "Install and alerts",
-      body: "Add the app to your home screen for full-screen access. If you have a player code, turn on score alerts to get push notifications when new scores are posted."
-    };
-  }
-
-  return {
-    title: "Score alerts",
-    body: "Install this app on your home screen, then enable notifications so this device gets pushed when scores are posted."
-  };
-}
-
 function shouldRenderPanel() {
   return isHomePage() || isPlayerFlowPage();
 }
@@ -129,15 +115,8 @@ function ensurePanel() {
   const panel = document.createElement("div");
   panel.className = "card pwa-card";
   panel.dataset.pwaPanel = "true";
-  const copy = panelCopy();
   panel.innerHTML = `
-    <div class="pwa-head">
-      <div>
-        <h2 style="margin:0;">${copy.title}</h2>
-        <div class="small">${copy.body}</div>
-      </div>
-      <div class="pill" data-pwa-state>Loading…</div>
-    </div>
+    <div class="pill" data-pwa-state>Loading…</div>
     <div class="pwa-actions">
       <button type="button" data-pwa-install>Install app</button>
       <button type="button" class="secondary" data-pwa-alerts>Enable score alerts</button>
@@ -341,14 +320,7 @@ window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
   state.installPromptEvent = event;
   setInstallButtonVisible(!isStandalone());
-  if (state.panel) {
-    const copy = panelCopy();
-    const titleEl = state.panel.querySelector("h2");
-    const bodyEl = state.panel.querySelector(".small");
-    if (titleEl) titleEl.textContent = copy.title;
-    if (bodyEl) bodyEl.textContent = copy.body;
-    void refreshSubscriptionState();
-  }
+  if (state.panel) void refreshSubscriptionState();
 });
 
 window.addEventListener("appinstalled", () => {

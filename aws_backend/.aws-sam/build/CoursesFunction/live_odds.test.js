@@ -477,6 +477,44 @@ registerTest("baseline modeling respects stroke index difficulty and handicap lo
   assert.ok(highHandicapHole1 > lowHandicapHole1, `expected higher handicap hardest-hole projection to be worse: ${highHandicapHole1} vs ${lowHandicapHole1}`);
 });
 
+registerTest("gross-only rounds still use handicaps for hole projections", () => {
+  const tournamentJson = materializedFixture("singles", { useHandicap: false });
+  const handicapByPlayer = { A1: 6, A2: 8, B1: 12, B2: 14 };
+
+  for (const player of tournamentJson.players || []) {
+    player.handicap = handicapByPlayer[player.playerId] || 0;
+  }
+
+  for (const playerId of Object.keys(tournamentJson.score_data.rounds[0].player || {})) {
+    tournamentJson.score_data.rounds[0].player[playerId] = {
+      gross: grossArray(null),
+      net: grossArray(null),
+      handicapShots: Array(18).fill(0),
+      grossTotal: 0,
+      netTotal: 0,
+      grossToParTotal: 0,
+      netToParTotal: 0,
+      thru: 0
+    };
+  }
+
+  const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
+  const playerOdds = new Map((odds.rounds?.[0]?.players || []).map((row) => [row.playerId, row]));
+  const lowHandicap = playerOdds.get("A1");
+  const highHandicap = playerOdds.get("B2");
+
+  assert.ok(lowHandicap);
+  assert.ok(highHandicap);
+
+  const lowHandicapHole1 = Number(lowHandicap.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+  const highHandicapHole1 = Number(highHandicap.remainingHoleExpectations?.find((item) => item.holeIndex === 0)?.projectedGross || 0);
+
+  assert.ok(
+    highHandicapHole1 > lowHandicapHole1,
+    `expected gross-only projections to still reflect handicap skill: ${highHandicapHole1} vs ${lowHandicapHole1}`
+  );
+});
+
 registerTest("live hole scoring feeds future hole projections for players who have not played that hole", () => {
   const baselineTournament = materializedFixture("singles", { useHandicap: true });
   const liveTournament = deepClone(baselineTournament);

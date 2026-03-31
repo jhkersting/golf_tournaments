@@ -173,9 +173,9 @@ header {
 }
 
 .theme-toggle {
-  min-height: 40px;
   font-family: var(--font-sans);
   cursor: pointer;
+  margin: 0px;
 }
 
 .mobile-header-link {
@@ -428,9 +428,9 @@ header {
 }
 
 .pwa-card {
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--surface) 92%, #184635 8%), var(--surface) 55%),
-    var(--surface);
+  background: var(--bg);
+  border: 0;
+  box-shadow: none;
 }
 
 .pwa-card .pwa-head {
@@ -638,10 +638,12 @@ header {
 body.hole-map-score-open {
   overflow: hidden;
 }
-
 .scoreboard-controls {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 50;
 }
 
 .scoreboard-controls-inner {
@@ -652,6 +654,7 @@ body.hole-map-score-open {
   align-items: flex-end;
   gap: 16px;
   flex-wrap: wrap;
+ 
 }
 
 .scoreboard-control-group {
@@ -2384,6 +2387,9 @@ th.dots {
     align-items: start;
     gap: 10px;
     padding: 10px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
   }
 
   .scoreboard-control-group {

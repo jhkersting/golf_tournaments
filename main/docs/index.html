@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -18,58 +19,66 @@
   <link rel="stylesheet" href="styles.css" />
   <title>Home</title>
 </head>
+
 <body style="display: block;">
-<header>
-  <div class="nav">
-    <div class="brand"><span class="dot"></span> Golf Tournament</div>
-    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
-    <div class="actions">
-      <a href="./index.html">Home</a>
-      <a href="./edit.html" data-edit-link>Edit Tournament</a>
-      <a href="./enter.html">Enter Scores</a>
-      <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
-      <a href="./hole-map.html">Hole Map</a>
-      <button type="button" class="theme-toggle" data-theme-toggle></button>
+  <header>
+    <div class="nav">
+      <div class="brand"><span class="dot"></span> Golf Tournaments</div>
+      <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu"
+        aria-expanded="false">☰</button>
+      <div class="actions">
+        <a href="./index.html">Home</a>
+        <a href="./edit.html" data-edit-link>Edit Tournament</a>
+        <a href="./enter.html">Enter Scores</a>
+        <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
+        <a href="./hole-map.html">Hole Map</a>
+        <p type="button" class="theme-toggle" data-theme-toggle></p>
+      </div>
     </div>
-  </div>
-</header>
-<div class="container">
-  
-<div class="card">
-  <h1 style="margin:0 0 6px 0;">Golf Tournament (GitHub Pages + AWS)</h1>
-  <div class="small">
-    Static frontend. Set API URL in <b>docs/app.js</b> (API_BASE). Admin actions may require <code>x-admin-key</code>.
-  </div>
-</div>
+  </header>
+  <div class="container">
 
-<div class="row">
-  <div class="col card">
-    <h2 style="margin-top:0;">1) Create tournament</h2>
-    <div class="small">Add rounds, weights, course Par + Stroke Index, and set team aggregation (average, top X). After create, the editor opens automatically.</div>
-    <div class="actions" style="margin-top:10px;"><a href="./admin.html"><button>Create Tournament</button></a></div>
-  </div>
-  <div class="col card">
-    <h2 style="margin-top:0;">2) Edit tournament</h2>
-    <div class="small">Adjust handicaps, round weights, tee times, player codes, and two-man pairings after setup.</div>
-    <div class="actions" style="margin-top:10px;"><a href="./edit.html" data-edit-link><button class="secondary">Open Editor</button></a></div>
-  </div>
-  <div class="col card">
-    <h2 style="margin-top:0;">3) Enter scores</h2>
-    <div class="small">Players use their unique URL: <code>enter.html?code=XXXX</code>. Hole-by-hole inputs default to 4.</div>
-    <div class="actions" style="margin-top:10px;"><a href="./enter.html"><button class="secondary">Open Enter Page</button></a></div>
-  </div>
-  <div class="col card">
-    <h2 style="margin-top:0;">4) Scoreboard</h2>
-    <div class="small">Public URL: <code>scoreboard.html?t=TOURNAMENT_ID</code>. Filter by round and toggle Team/Individual (if applicable).</div>
-    <div class="actions" style="margin-top:10px;"><a href="./scoreboard.html" data-scoreboard-link><button class="secondary">Open Scoreboard</button></a></div>
-  </div>
-  <div class="col card">
-    <h2 style="margin-top:0;">5) Hole map + yardage</h2>
-    <div class="small">View hole-by-hole outlines and use your current location for yardage to the green with back-tee fallback.</div>
-    <div class="actions" style="margin-top:10px;"><a href="./hole-map.html"><button class="secondary">Open Hole Map</button></a></div>
-  </div>
-</div>
 
-</div>
+
+    <div class="row">
+      <div class="col card">
+        <h2 style="margin-top:0;">1) Create tournament</h2>
+        <div class="small">Add rounds, weights, course Par + Stroke Index, and set team aggregation (average, top X).
+          After create, the editor opens automatically.</div>
+        <div class="actions" style="margin-top:10px;"><a href="./admin.html"><button>Create Tournament</button></a>
+        </div>
+      </div>
+      <div class="col card">
+        <h2 style="margin-top:0;">2) Edit tournament</h2>
+        <div class="small">Adjust handicaps, round weights, tee times, player codes, and two-man pairings after setup.
+        </div>
+        <div class="actions" style="margin-top:10px;"><a href="./edit.html" data-edit-link><button
+              class="secondary">Open Editor</button></a></div>
+      </div>
+      <div class="col card">
+        <h2 style="margin-top:0;">3) Enter scores</h2>
+        <div class="small">Players use their unique URL: <code>enter.html?code=XXXX</code>. Hole-by-hole inputs default
+          to 4.</div>
+        <div class="actions" style="margin-top:10px;"><a href="./enter.html"><button class="secondary">Open Enter
+              Page</button></a></div>
+      </div>
+      <div class="col card">
+        <h2 style="margin-top:0;">4) Scoreboard</h2>
+        <div class="small">Public URL: <code>scoreboard.html?t=TOURNAMENT_ID</code>. Filter by round and toggle
+          Team/Individual (if applicable).</div>
+        <div class="actions" style="margin-top:10px;"><a href="./scoreboard.html" data-scoreboard-link><button
+              class="secondary">Open Scoreboard</button></a></div>
+      </div>
+      <div class="col card">
+        <h2 style="margin-top:0;">5) Hole map + yardage</h2>
+        <div class="small">View hole-by-hole outlines and use your current location for yardage to the green with
+          back-tee fallback.</div>
+        <div class="actions" style="margin-top:10px;"><a href="./hole-map.html"><button class="secondary">Open Hole
+              Map</button></a></div>
+      </div>
+    </div>
+
+  </div>
 </body>
+
 </html>
