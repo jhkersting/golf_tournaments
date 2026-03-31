@@ -10,6 +10,7 @@ const STROKE_Z_STD = 5.188127472091127;
 const BASELINE_REFERENCE_HANDICAP = 10;
 const BASELINE_HANDICAP_ANCHORS = [0, 5, 10, 15, 20];
 const LIVE_HOLE_SHRINKAGE = 8;
+const LIVE_HOLE_EFFECT_MULTIPLIER = 0.5;
 const FORM_SHRINKAGE = 6;
 const FORM_EFFECT_MULTIPLIER = 0.5;
 const FORM_EFFECT_CAP = 0.2;
@@ -959,7 +960,7 @@ function buildUnitPriors(units, course) {
     const count = liveHoleCounts[holeIndex];
     if (!count) return { pShift: 0, qShift: 0 };
     const residual = (liveHoleActualTotals[holeIndex] - liveHoleExpectedTotals[holeIndex]) / count;
-    const shrinkResidual = residual * (count / (count + LIVE_HOLE_SHRINKAGE));
+    const shrinkResidual = residual * (count / (count + LIVE_HOLE_SHRINKAGE)) * LIVE_HOLE_EFFECT_MULTIPLIER;
     return hardyShiftFromStrokeDelta(shrinkResidual, LIVE_SHIFT_SCALES);
   });
 
@@ -1186,6 +1187,24 @@ function bestBallGroupHoles(players, metricKey) {
   return out;
 }
 
+function holeHasRecordedScore(entry, holeIndex) {
+  return (
+    playedHoleScore(entry?.gross?.[holeIndex]) != null ||
+    playedHoleScore(entry?.net?.[holeIndex]) != null
+  );
+}
+
+function everyEntryReadyByHole(entries, readySelector = null) {
+  return Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
+    if (!Array.isArray(entries) || !entries.length) return false;
+    return entries.every((entry) => (
+      typeof readySelector === "function"
+        ? readySelector(entry, holeIndex)
+        : holeHasRecordedScore(entry, holeIndex)
+    ));
+  });
+}
+
 function evaluateRoundContext(context, unitStates) {
   const coursePar = Array.isArray(context.course?.pars) ? context.course.pars : Array(HOLE_COUNT).fill(4);
   const useHandicap = !!context.useHandicap;
@@ -1296,6 +1315,9 @@ function evaluateRoundContext(context, unitStates) {
         gross: grossStableford,
         net: netStableford
       });
+      const actualReady = everyEntryReadyByHole(teamGroups, (entry, holeIndex) =>
+        holeHasRecordedScore(entry, holeIndex)
+      );
       teams.set(team.teamId, {
         entityId: team.teamId,
         teamId: team.teamId,
@@ -1303,6 +1325,7 @@ function evaluateRoundContext(context, unitStates) {
         gross,
         net,
         handicapShots: Array(HOLE_COUNT).fill(0),
+        actualReady,
         ...totals
       });
     }
@@ -1386,6 +1409,7 @@ function evaluateRoundContext(context, unitStates) {
 
       const par = coursePar.map((value) => Number(value || 0) * parMultiplier);
       const totals = entityTotalsFromHoles(gross, net, par, stablefordOverrides);
+      const actualReady = everyEntryReadyByHole(groupPlayers);
       groups.set(groupDef.groupId, {
         entityId: groupDef.groupId,
         groupId: groupDef.groupId,
@@ -1397,6 +1421,7 @@ function evaluateRoundContext(context, unitStates) {
         gross,
         net,
         handicapShots: Array(HOLE_COUNT).fill(0),
+        actualReady,
         par,
         ...totals
       });
@@ -1423,6 +1448,9 @@ function evaluateRoundContext(context, unitStates) {
         gross: grossStableford,
         net: netStableford
       });
+      const actualReady = everyEntryReadyByHole(teamGroups, (entry, holeIndex) =>
+        Array.isArray(entry?.actualReady) ? !!entry.actualReady[holeIndex] : holeHasRecordedScore(entry, holeIndex)
+      );
       teams.set(team.teamId, {
         entityId: team.teamId,
         teamId: team.teamId,
@@ -1430,6 +1458,7 @@ function evaluateRoundContext(context, unitStates) {
         gross,
         net,
         handicapShots: Array(HOLE_COUNT).fill(0),
+        actualReady,
         ...totals
       });
     }
@@ -1480,6 +1509,7 @@ function evaluateRoundContext(context, unitStates) {
         gross: grossStableford,
         net: netStableford
       });
+      const actualReady = everyEntryReadyByHole(teamPlayers);
       teams.set(team.teamId, {
         entityId: team.teamId,
         teamId: team.teamId,
@@ -1487,6 +1517,7 @@ function evaluateRoundContext(context, unitStates) {
         gross,
         net,
         handicapShots: Array(HOLE_COUNT).fill(0),
+        actualReady,
         ...totals
       });
     }
@@ -1525,6 +1556,7 @@ function evaluateRoundContext(context, unitStates) {
       gross: grossStableford,
       net: netStableford
     });
+    const actualReady = everyEntryReadyByHole(teamPlayers);
     teams.set(team.teamId, {
       entityId: team.teamId,
       teamId: team.teamId,
@@ -1532,6 +1564,7 @@ function evaluateRoundContext(context, unitStates) {
       gross,
       net,
       handicapShots: Array(HOLE_COUNT).fill(0),
+      actualReady,
       ...totals
     });
   }
@@ -1901,7 +1934,10 @@ function remainingKeysForEntityMap(entityMap, roundIndex) {
     if (!entityId) continue;
     const keys = [];
     for (let holeIndex = 0; holeIndex < HOLE_COUNT; holeIndex++) {
-      if (entry?.gross?.[holeIndex] != null) continue;
+      const holeReady = Array.isArray(entry?.actualReady)
+        ? !!entry.actualReady[holeIndex]
+        : holeHasRecordedScore(entry, holeIndex);
+      if (holeReady) continue;
       keys.push(`${roundIndex}:${holeIndex}`);
     }
     out.set(entityId, keys);

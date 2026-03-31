@@ -25,6 +25,7 @@ const status = document.getElementById("status");
 const raw = document.getElementById("raw");
 const oddsPanel = document.getElementById("odds_panel");
 const oddsPanelHead = oddsPanel?.querySelector(".scoreboard-main-head") || null;
+const oddsTitle = document.getElementById("odds_title");
 const oddsMeta = document.getElementById("odds_meta");
 const oddsSections = document.getElementById("odds_sections");
 const oddsScorecardsPanel = document.getElementById("odds_scorecards_panel");
@@ -185,14 +186,36 @@ function syncModeButtons() {
 
 function syncTrendMetricButtons() {
   if (!btnTrendGross || !btnTrendNet) return;
+  const allowNetMetric = canUseNetMetric(currentRound);
+  if (!allowNetMetric && graphMetric === "net") graphMetric = "gross";
   btnTrendGross.classList.toggle("active", graphMetric === "gross");
   btnTrendNet.classList.toggle("active", graphMetric === "net");
+  btnTrendNet.disabled = !allowNetMetric;
+  btnTrendNet.setAttribute("aria-disabled", allowNetMetric ? "false" : "true");
+  btnTrendNet.title = allowNetMetric ? "" : "Net is only available when handicaps are enabled for this view.";
 }
 
 function syncOddsMetricButtons() {
   if (!btnOddsGross || !btnOddsNet) return;
+  const lockToNet = oddsMetricLockedToNet(currentRound);
+  const allowNetMetric = canUseNetMetric(currentRound);
+  if (lockToNet) {
+    oddsMetric = "net";
+  } else if (!allowNetMetric && oddsMetric === "net") {
+    oddsMetric = "gross";
+  }
   btnOddsGross.classList.toggle("active", oddsMetric === "gross");
   btnOddsNet.classList.toggle("active", oddsMetric === "net");
+  btnOddsGross.disabled = lockToNet;
+  btnOddsGross.setAttribute("aria-disabled", lockToNet ? "true" : "false");
+  btnOddsGross.title = lockToNet ? "Tournament odds are always shown in net mode." : "";
+  btnOddsNet.disabled = lockToNet ? false : !allowNetMetric;
+  btnOddsNet.setAttribute("aria-disabled", lockToNet || allowNetMetric ? "false" : "true");
+  btnOddsNet.title = lockToNet
+    ? "Tournament odds are always shown in net mode."
+    : allowNetMetric
+      ? ""
+      : "Net is only available when handicaps are enabled for this view.";
 }
 
 function syncOddsValueButtons() {
@@ -658,6 +681,7 @@ function oddsProjectedDetailMap(row) {
 
 function oddsActualScoreForHole(scoreBundle, holeIndex) {
   if (!scoreBundle) return null;
+  if (Array.isArray(scoreBundle?.actualReady) && !scoreBundle.actualReady[holeIndex]) return null;
   const source = oddsMetric === "net" ? scoreBundle?.net : scoreBundle?.gross;
   return asPlayedNumber(source?.[holeIndex]);
 }
@@ -919,6 +943,14 @@ function isHandicapRound(viewRound) {
   return !!round.useHandicap || String(round.format || "").toLowerCase() === "scramble";
 }
 
+function canUseNetMetric(viewRound = currentRound) {
+  if (viewRound === "all") {
+    return (TOURN?.tournament?.rounds || []).some((round) => !!round?.useHandicap);
+  }
+  const round = roundAt(viewRound);
+  return !!round?.useHandicap;
+}
+
 function isScrambleRound(viewRound) {
   const round = roundAt(viewRound);
   if (!round) return false;
@@ -940,7 +972,11 @@ function isTwoManRound(viewRound) {
 
 function tournamentHasAnyScrambleRound() {
   const rounds = TOURN?.tournament?.rounds || [];
-  return rounds.some((r) => String(r?.format || "").toLowerCase() === "scramble");
+  return rounds.some((r) => String(r?.format || "").toLowerCase().includes("scramble"));
+}
+
+function oddsMetricLockedToNet(viewRound = currentRound) {
+  return viewRound === "all";
 }
 
 function isIndividualDefaultRound(viewRound) {
@@ -2528,11 +2564,15 @@ async function getScorecardScores(data, row) {
   function normalizeScorecard(scores, par = getCoursePars(rIdx)) {
     const gross = Array.isArray(scores?.gross) ? scores.gross : Array(18).fill(null);
     const net = Array.isArray(scores?.net) ? scores.net : gross.slice();
+    const parByHole =
+      Array.isArray(scores?.par) && scores.par.length === 18
+        ? scores.par
+        : par;
     return {
       gross,
       net,
       handicapShots: Array.isArray(scores?.handicapShots) ? scores.handicapShots : Array(18).fill(0),
-      par,
+      par: parByHole,
       grossTotal: scores?.grossTotal,
       netTotal: scores?.netTotal,
       grossToParTotal: scores?.grossToParTotal,
@@ -3050,7 +3090,7 @@ function renderTrendGraph(data) {
 
   syncTrendMetricButtons();
   if (btnTrendGross) btnTrendGross.disabled = isAllRounds;
-  if (btnTrendNet) btnTrendNet.disabled = isAllRounds;
+  if (btnTrendNet) btnTrendNet.disabled = isAllRounds || !canUseNetMetric(data.view?.round);
 
   trendSvg.replaceChildren();
   trendLegend.replaceChildren();
@@ -3102,7 +3142,7 @@ function renderTrendGraph(data) {
 
   const plot = isPhoneWidth
     ? { width: 760, height: 760, left: 82, right: 28, top: 26, bottom: 82 }
-    : { width: 760, height: 320, left: 44, right: 14, top: 14, bottom: 28 };
+    : { width: 760, height: 320, left: 60, right: 14, top: 14, bottom: 28 };
   trendSvg.setAttribute("viewBox", `0 0 ${plot.width} ${plot.height}`);
 
   const allValues = seriesRows.flatMap((entry) => entry.values.filter((value) => value != null));
@@ -3213,7 +3253,7 @@ function renderTrendGraph(data) {
 
   const yTitle = svgNode("text", {
     x: 14,
-    y: plot.top + (plotHeight / 2),
+    y: plot.top + (plotHeight / 2) + 10,
     transform: `rotate(-90 14 ${plot.top + (plotHeight / 2)})`,
     "text-anchor": "middle",
     class: "trend-axis-label"
@@ -3466,6 +3506,13 @@ function normalizeScoreBundle(row = {}, scores = {}, fallbackPar = []) {
         ? row.scores.handicapShots
         : Array(18).fill(0)
   ).slice();
+  const actualReady = (
+    Array.isArray(scores?.actualReady) && scores.actualReady.length === 18
+      ? scores.actualReady
+      : Array.isArray(row?.scores?.actualReady) && row.scores.actualReady.length === 18
+        ? row.scores.actualReady
+        : null
+  )?.slice() || null;
 
   const grossTotal = firstDefined(scores, ["grossTotal"]) ?? firstDefined(row, ["gross", "grossTotal"]) ?? sumHoles(gross);
   const netTotal = firstDefined(scores, ["netTotal"]) ?? firstDefined(row, ["net", "netTotal", "strokes"]) ?? sumHoles(net);
@@ -3513,6 +3560,7 @@ function normalizeScoreBundle(row = {}, scores = {}, fallbackPar = []) {
     grossStableford,
     netStableford,
     handicapShots,
+    actualReady,
     grossTotal,
     netTotal,
     grossToParTotal,
@@ -3568,6 +3616,20 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
       },
       coursePars
     );
+    const actualReady = Array.from({ length: 18 }, (_, holeIndex) => {
+      const hasTeamScore =
+        asPlayedNumber(gross?.[holeIndex]) != null ||
+        asPlayedNumber(net?.[holeIndex]) != null;
+      if (!hasTeamScore) return false;
+
+      const groups = Object.values(entry?.groups || {});
+      if (!groups.length) return true;
+
+      return groups.every((groupEntry) =>
+        asPlayedNumber(groupEntry?.gross?.[holeIndex]) != null ||
+        asPlayedNumber(groupEntry?.net?.[holeIndex]) != null
+      );
+    });
     rows.push({
       teamId,
       teamName: teamNames.get(teamId) || teamId || "Team",
@@ -3581,7 +3643,10 @@ function buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNa
       toPar: useHandicap ? scoreBundle.netToParTotal : scoreBundle.grossToParTotal,
       toParGross: scoreBundle.grossToParTotal,
       toParNet: scoreBundle.netToParTotal,
-      scores: scoreBundle
+      scores: {
+        ...scoreBundle,
+        actualReady
+      }
     });
   }
   return rows;
@@ -3632,17 +3697,21 @@ function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundDat
     const grossStableford = Array(18).fill(null);
     const netStableford = Array(18).fill(null);
     const selectedCountByHole = Array(18).fill(0);
+    const actualReady = Array(18).fill(false);
 
     for (let i = 0; i < 18; i++) {
       const candidates = [];
+      let completeCount = 0;
       for (const p of teamPlayers) {
         const grossScore = asPlayedNumber(p.gross?.[i]);
         const netRaw = asPlayedNumber(p.net?.[i]);
         const netScore = netRaw != null ? netRaw : grossScore;
+        if (grossScore != null || netScore != null) completeCount += 1;
         const metricScore = useHandicap ? netScore : grossScore;
         if (metricScore == null) continue;
         candidates.push({ gross: grossScore, net: netScore, metric: metricScore });
       }
+      actualReady[i] = teamPlayers.length > 0 && completeCount === teamPlayers.length;
       if (!candidates.length) continue;
       candidates.sort((a, b) => a.metric - b.metric);
       const picked = candidates.slice(0, topX);
@@ -3698,6 +3767,7 @@ function buildAggregatedTeamRowsFromPlayers(tournamentJson, roundIndex, roundDat
         gross: grossHoles,
         net: netHoles,
         par: parByHole,
+        actualReady,
         grossToPar,
         netToPar,
         grossStableford,
@@ -3732,8 +3802,6 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
     return withThruDisplay(fromTeamEntries);
   }
 
-  if (fallbackRows.some((row) => rowHasAnyData(row))) return withThruDisplay(fallbackRows);
-
   const aggregated = buildAggregatedTeamRowsFromPlayers(
     tournamentJson,
     roundIndex,
@@ -3742,6 +3810,7 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
     leaderboardRows
   );
   if (aggregated.some((row) => rowHasAnyData(row))) return withThruDisplay(aggregated);
+  if (fallbackRows.some((row) => rowHasAnyData(row))) return withThruDisplay(fallbackRows);
   if (fallbackRows.length) return withThruDisplay(fallbackRows);
   return withThruDisplay(aggregated);
 }
@@ -3810,6 +3879,16 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
       const netToPar = toParArrayFromHoles(net, parByHole);
       const grossStableford = stablefordArrayFromHoles(gross, parByHole);
       const netStableford = stablefordArrayFromHoles(net, parByHole);
+      const actualReady = Array.from({ length: 18 }, (_, holeIndex) =>
+        playerIds.length > 0 &&
+        playerIds.every((playerId) => {
+          const playerEntry = roundData?.player?.[playerId] || {};
+          return (
+            asPlayedNumber(playerEntry?.gross?.[holeIndex]) != null ||
+            asPlayedNumber(playerEntry?.net?.[holeIndex]) != null
+          );
+        })
+      );
 
       let thru = 0;
       let grossToParTotal = 0;
@@ -3846,6 +3925,7 @@ function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars)
           gross,
           net,
           par: parByHole,
+          actualReady,
           grossToPar,
           netToPar,
           grossStableford,
@@ -4318,7 +4398,7 @@ function renderProjectedOddsScorecards(data, tables) {
 }
 
 function renderLiveOdds(data) {
-  if (!oddsPanel || !oddsMeta || !oddsSections) return;
+  if (!oddsPanel || !oddsTitle || !oddsMeta || !oddsSections) return;
   syncOddsMetricButtons();
   syncOddsValueButtons();
 
@@ -4332,17 +4412,9 @@ function renderLiveOdds(data) {
   }
 
   const viewOdds = liveOddsForView(currentRound);
-  const simCount = Number(TOURN?.score_data?.live_odds?.simCount || 0);
+  oddsTitle.textContent = `Odds & Projections - ${viewRoundLabel(currentRound)}`;
   const generatedAt = liveOddsTimestampLabel();
-  const latencyMode = TOURN?.score_data?.live_odds?.latencyMode || "";
-  const staleLiveOdds = !!TOURN?.score_data?.live_oddsVersionMismatch;
-  oddsMeta.textContent = [
-    viewRoundLabel(currentRound),
-    simCount ? `${simCount.toLocaleString()} sims` : "",
-    latencyMode ? latencyMode.replace(/_/g, " ") : "",
-    generatedAt ? `updated ${generatedAt}` : "",
-    staleLiveOdds ? "stale" : ""
-  ].filter(Boolean).join(" • ");
+  oddsMeta.textContent = generatedAt ? `Last updated ${generatedAt}` : "—";
 
   oddsSections.innerHTML = "";
   oddsSections.className = "odds-sections";
@@ -4603,6 +4675,7 @@ if (btnTrendGross) {
 
 if (btnTrendNet) {
   btnTrendNet.onclick = () => {
+    if (!canUseNetMetric(currentRound)) return;
     graphMetric = "net";
     writeScoreboardPrefs();
     syncTrendMetricButtons();
@@ -4619,6 +4692,7 @@ if (oddsHoleSelect) {
 
 if (btnOddsGross) {
   btnOddsGross.onclick = () => {
+    if (oddsMetricLockedToNet(currentRound)) return;
     oddsMetric = "gross";
     writeScoreboardPrefs();
     syncOddsMetricButtons();
@@ -4628,6 +4702,7 @@ if (btnOddsGross) {
 
 if (btnOddsNet) {
   btnOddsNet.onclick = () => {
+    if (!canUseNetMetric(currentRound)) return;
     oddsMetric = "net";
     writeScoreboardPrefs();
     syncOddsMetricButtons();

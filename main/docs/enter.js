@@ -25,6 +25,13 @@ function normalizePlayerCode(value) {
     .toUpperCase();
 }
 
+function normalizeChatMessageInput(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const codeFromQuery = qs("code");
 const normalizedCodeFromQuery = normalizePlayerCode(codeFromQuery || qs("c"));
 if (normalizedCodeFromQuery) rememberPlayerCode(normalizedCodeFromQuery);
@@ -37,6 +44,8 @@ const tickerTitle = document.getElementById("enter_ticker_title");
 const tickerTrack = document.getElementById("enter_ticker_track");
 const brandDot = document.querySelector(".brand .dot");
 const scoreNotifier = document.getElementById("score_notifier");
+const chatMount = document.getElementById("enter_chat_mount");
+const CHAT_MESSAGE_MAX_LENGTH = 240;
 
 const teamColors = createTeamColorRegistry();
 let tickerSectionIndex = 0;
@@ -1399,6 +1408,12 @@ function parDiffFromHoles(holes, pars) {
   return played ? toParText(diff) : null;
 }
 
+function rowParArray(row, fallbackPars) {
+  return Array.isArray(row?.scores?.par) && row.scores.par.length === 18
+    ? row.scores.par
+    : fallbackPars;
+}
+
 function grossToParText(row, pars) {
   const explicit = toParFromKeys(row, [
     "toParGross",
@@ -1407,10 +1422,11 @@ function grossToParText(row, pars) {
     "grossToParTotal"
   ]);
   if (explicit != null) return explicit;
-  const fromScores = parDiffFromHoles(row?.scores?.gross, pars);
+  const parArray = rowParArray(row, pars);
+  const fromScores = parDiffFromHoles(row?.scores?.gross, parArray);
   if (fromScores != null) return fromScores;
   const gross = grossForRow(row);
-  const parTotal = sumHoles(pars);
+  const parTotal = sumHoles(parArray);
   if (gross != null && parTotal > 0 && Number(row?.thru || 0) >= 18) {
     return toParText(Number(gross) - parTotal);
   }
@@ -1425,10 +1441,11 @@ function netToParText(row, pars) {
     "netToParTotal"
   ]);
   if (explicit != null) return explicit;
-  const fromScores = parDiffFromHoles(row?.scores?.net, pars);
+  const parArray = rowParArray(row, pars);
+  const fromScores = parDiffFromHoles(row?.scores?.net, parArray);
   if (fromScores != null) return fromScores;
   const net = netForRow(row);
-  const parTotal = sumHoles(pars);
+  const parTotal = sumHoles(parArray);
   if (net != null && parTotal > 0 && Number(row?.thru || 0) >= 18) {
     return toParText(Number(net) - parTotal);
   }
@@ -1735,7 +1752,25 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
 function renderScoreNotifierEvent(event) {
   if (!scoreNotifier || !event) return;
   scoreNotifier.innerHTML = "";
-  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat");
+
+  if (event.kind === "chat") {
+    scoreNotifier.classList.add("score-chat");
+    const title = String(event.title || "Tournament chat").trim() || "Tournament chat";
+    const body = String(event.body || "New message").trim() || "New message";
+
+    const kicker = document.createElement("div");
+    kicker.className = "score-notifier-kicker";
+    kicker.textContent = title;
+
+    const line = document.createElement("div");
+    line.className = "score-notifier-line score-notifier-message";
+    line.textContent = body;
+
+    scoreNotifier.appendChild(kicker);
+    scoreNotifier.appendChild(line);
+    return;
+  }
 
   const diffToPar = Number(event.diffToPar);
   let toneClass = "score-even";
@@ -1788,7 +1823,7 @@ function pumpScoreNotifierQueue() {
         return;
       }
       scoreNotifier.innerHTML = "";
-      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat");
     }, SCORE_NOTIFIER_GAP_MS);
   }, SCORE_NOTIFIER_SHOW_MS);
 }
@@ -1798,6 +1833,20 @@ function showScoreNotifier(events) {
   scoreNotifierQueue.push(...events);
   pumpScoreNotifierQueue();
 }
+
+function showChatToast(notification) {
+  if (!notification) return;
+  showScoreNotifier([{
+    kind: "chat",
+    title: notification.title,
+    body: notification.body
+  }]);
+}
+
+window.addEventListener("golf-chat-toast", (event) => {
+  if (document.hidden) return;
+  showChatToast(event?.detail || {});
+});
 
 function sortTickerEntries(entries) {
   entries.sort((a, b) => {
@@ -3455,6 +3504,121 @@ async function main() {
   setActiveRoundPane(activeRoundPaneIndex);
   await renderSyncStatus();
   void maybePromptForEnterLocation();
+
+  const chatState = {
+    panel: null,
+    input: null,
+    form: null,
+    sendButton: null,
+    status: null,
+  };
+
+  function setChatStatus(message = "", isError = false) {
+    if (!chatState.status) return;
+    chatState.status.textContent = String(message || "").trim();
+    chatState.status.style.color = isError ? "var(--bad)" : "";
+    chatState.status.hidden = !chatState.status.textContent;
+  }
+
+  function ensureChatPanel() {
+    if (!chatMount || chatState.panel) return chatState.panel;
+
+    const panel = el("div", { class: "card enter-chat-card" });
+    const head = el("div", { class: "enter-chat-head" });
+    const heading = el("div", { class: "enter-chat-heading" });
+    heading.appendChild(el("div", { class: "small enter-chat-kicker" }, "Tournament chat"));
+    heading.appendChild(el("h3", { style: "margin:0;" }, "Send updates to every player"));
+    head.appendChild(heading);
+    panel.appendChild(head);
+    panel.appendChild(
+      el(
+        "div",
+        { class: "small enter-chat-summary" },
+        "Messages are pushed directly to subscribed players and are not stored."
+      )
+    );
+
+    const form = el("form", { class: "enter-chat-form" });
+    const input = el("input", {
+      id: "enter_chat_input",
+      class: "enter-chat-input",
+      type: "text",
+      maxlength: String(CHAT_MESSAGE_MAX_LENGTH),
+      autocomplete: "off",
+      autocapitalize: "sentences",
+      inputmode: "text",
+      enterkeyhint: "send",
+      placeholder: "Write a message for the field",
+    });
+    const sendButton = el("button", { type: "submit" }, "Send");
+    form.appendChild(input);
+    form.appendChild(sendButton);
+
+    const status = el("div", { class: "small enter-chat-status" }, "");
+    status.hidden = true;
+
+    panel.appendChild(form);
+    panel.appendChild(status);
+    chatMount.innerHTML = "";
+    chatMount.appendChild(panel);
+
+    chatState.panel = panel;
+    chatState.input = input;
+    chatState.form = form;
+    chatState.sendButton = sendButton;
+    chatState.status = status;
+
+    input.addEventListener("input", () => {
+      input.value = normalizeChatMessageInput(input.value);
+    });
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void submitChatMessage();
+    });
+
+    return panel;
+  }
+
+  async function submitChatMessage() {
+    ensureChatPanel();
+    if (!chatState.input || !chatState.sendButton) return false;
+
+    const message = normalizeChatMessageInput(chatState.input.value);
+    if (!message) {
+      setChatStatus("Write a message before sending.", true);
+      chatState.input.focus({ preventScroll: true });
+      return false;
+    }
+
+    chatState.sendButton.disabled = true;
+    setChatStatus("Sending…");
+
+    try {
+      const payload = await api(`/tournaments/${encodeURIComponent(tid)}/chat`, {
+        method: "POST",
+        body: {
+          code,
+          message,
+        },
+      });
+      chatState.input.value = "";
+      setChatStatus(
+        payload?.skipped
+          ? "Message not sent."
+          : "Sent to subscribed players."
+      );
+      return true;
+    } catch (error) {
+      setChatStatus(error instanceof Error ? error.message : "Could not send message.", true);
+      return false;
+    } finally {
+      chatState.sendButton.disabled = false;
+      chatState.input.focus({ preventScroll: true });
+    }
+  }
+
+  ensureChatPanel();
 
   window.addEventListener("online", () => {
     void (async () => {

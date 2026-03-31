@@ -1,5 +1,12 @@
 import webpush from "web-push";
-import { json, parseBody, getJson, materializePublicFromState, updateStateWithRetry } from "./utils.js";
+import {
+  json,
+  parseBody,
+  getJson,
+  materializePublicFromState,
+  updateStateWithRetry,
+  normalizeChatMessageText,
+} from "./utils.js";
 
 function normalizePublicKey() {
   return String(process.env.VAPID_PUBLIC_KEY || "").trim();
@@ -335,6 +342,156 @@ function scoreNotifierCoursePars(tournamentJson, roundIndex) {
   return Array.from({ length: 18 }, (_, holeIndex) => Number(pars?.[holeIndex]) || 4);
 }
 
+const CHAT_MESSAGE_LIMIT = 240;
+const DEFAULT_CHAT_PROFANITY_WORDS = []
+
+function normalizeChatText(raw) {
+  return normalizeChatMessageText(raw, { maxLength: CHAT_MESSAGE_LIMIT });
+}
+
+function normalizeChatFilterText(raw) {
+  return String(raw || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[0-9@!$*]+/g, (match) => {
+      const map = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "!": "i", "$": "s", "*": "" };
+      return match.split("").map((char) => map[char] ?? char).join("");
+    })
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function chatProfanityWords() {
+  const configured = String(process.env.CHAT_PROFANITY_WORDS || "").trim();
+  const rawWords = configured
+    ? configured.split(/[,;\n]+/)
+    : DEFAULT_CHAT_PROFANITY_WORDS;
+  return rawWords
+    .map((word) => normalizeChatFilterText(word))
+    .filter(Boolean);
+}
+
+function containsChatProfanity(text) {
+  const normalized = normalizeChatFilterText(text);
+  if (!normalized) return "";
+  const collapsed = normalized.replace(/\s+/g, "");
+  const tokens = new Set(normalized.split(/\s+/).filter(Boolean));
+  for (const word of chatProfanityWords()) {
+    if (tokens.has(word) || collapsed.includes(word)) {
+      return word;
+    }
+  }
+  return "";
+}
+
+export function validateChatMessageText(raw) {
+  const text = normalizeChatText(raw);
+  const profanity = containsChatProfanity(text);
+  if (profanity) {
+    const err = new Error("Message contains language not allowed.");
+    err.statusCode = 400;
+    err.code = "PROFANITY";
+    throw err;
+  }
+  return text;
+}
+
+function chatMessageLabel(playerName, teamName) {
+  const safeName = String(playerName || "").trim() || "Player";
+  const safeTeam = String(teamName || "").trim();
+  return safeTeam ? `${safeName} • ${safeTeam}` : safeName;
+}
+
+function chatNotificationBody(entry) {
+  const sender = chatMessageLabel(entry?.playerName, entry?.teamName);
+  const message = String(entry?.message || "").trim() || "New message";
+  const body = `${sender}: ${message}`;
+  return body.length > 180 ? `${body.slice(0, 177).trimEnd()}…` : body;
+}
+
+export function chatNotificationSummaries(state, details) {
+  const tid = String(state?.tournament?.tournamentId || "").trim();
+  if (!tid) return [];
+  const messageId = String(details?.messageId || "").trim();
+  const entry = details?.entry || details;
+  const body = chatNotificationBody(entry);
+  const title = String(state?.tournament?.name || "Golf Tournament").trim() || "Golf Tournament";
+  return [{
+    title,
+    body,
+    url: `./enter.html?t=${encodeURIComponent(tid)}`,
+    tag: `golf-chat-${tid}-${messageId || String(entry?.createdAt || Date.now())}`
+  }];
+}
+
+async function notifyChatSubscribers(tid, state, details = {}) {
+  if (!ensureWebPushConfigured()) {
+    return { skipped: true, reason: "push notifications are not configured" };
+  }
+
+  const subscriptions = dedupeSubscriptions(Object.values(state?.pushSubscriptions || {}));
+  if (!subscriptions.length) {
+    return { skipped: true, reason: "no subscriptions" };
+  }
+
+  const summaries = dedupeNotificationSummaries(chatNotificationSummaries(state, details));
+  if (!summaries.length) {
+    return { skipped: true, reason: "no notifications" };
+  }
+
+  const payload = JSON.stringify({
+    ...summaries[0],
+    tid: String(tid || "").trim(),
+    mode: "chat",
+    messageId: String(details?.messageId || "").trim(),
+    createdAt: Number(details?.createdAt || Date.now())
+  });
+
+  const staleEndpoints = new Set();
+  let delivered = 0;
+
+  await Promise.allSettled(
+    subscriptions.map(async (subscription) => {
+      if (!subscription?.endpoint) return;
+
+      const cleanSubscription = {
+        endpoint: subscription.endpoint,
+        expirationTime: subscription.expirationTime ?? null,
+        keys: subscription.keys
+      };
+
+      try {
+        await webpush.sendNotification(cleanSubscription, payload, { TTL: 3600 });
+        delivered += 1;
+      } catch (error) {
+        if (isGoneError(error)) {
+          staleEndpoints.add(subscription.endpoint);
+        } else {
+          console.warn("Chat push notification failed:", error?.statusCode || error?.message || error);
+        }
+      }
+    })
+  );
+
+  if (staleEndpoints.size) {
+    await updateStateWithRetry(tid, (current) => {
+      for (const endpoint of staleEndpoints) {
+        if (current?.pushSubscriptions?.[endpoint]) {
+          delete current.pushSubscriptions[endpoint];
+        }
+      }
+      return current;
+    });
+  }
+
+  return {
+    skipped: false,
+    delivered,
+    stale: staleEndpoints.size
+  };
+}
+
 export function scoreNotificationEntries(state, tournamentJson, details) {
   const roundIndex = Number(details?.roundIndex);
   if (!Number.isInteger(roundIndex) || roundIndex < 0) return [];
@@ -440,6 +597,11 @@ function dedupeNotificationSummaries(summaries) {
   return out;
 }
 
+function makeChatMessageId(now = Date.now()) {
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `chat_${now}_${rand}`;
+}
+
 async function upsertSubscription(tid, code, subscription) {
   const safeSubscription = normalizeSubscription(subscription);
   const bucket = process.env.STATE_BUCKET;
@@ -512,6 +674,36 @@ async function removeSubscription(tid, code, endpoint) {
   return json(200, {
     ok: true,
     unsubscribed: true
+  });
+}
+
+async function postChatMessage(tid, code, message) {
+  const text = validateChatMessageText(message);
+  const bucket = process.env.STATE_BUCKET;
+  const { json: current } = await getJson(bucket, `state/${tid}.json`);
+  if (!current) {
+    const err = new Error("tournament not found");
+    err.statusCode = 404;
+    throw err;
+  }
+  const actor = resolvePlayerMeta(current, code);
+  const now = Date.now();
+  const entry = {
+    messageId: makeChatMessageId(now),
+    playerId: actor.playerId,
+    playerName: actor.playerName,
+    teamId: actor.teamId,
+    teamName: teamNameForId(current, null, actor.teamId),
+    message: text,
+    createdAt: now
+  };
+  const notificationResult = await notifyChatSubscribers(tid, current, { entry });
+
+  return json(200, {
+    ok: true,
+    delivered: notificationResult.delivered || 0,
+    stale: notificationResult.stale || 0,
+    skipped: notificationResult.skipped || false
   });
 }
 
@@ -617,6 +809,13 @@ export async function handler(event) {
 
     if (path.endsWith("/push/unsubscribe")) {
       return await removeSubscription(tid, body.code, body.endpoint || body.subscription?.endpoint);
+    }
+
+    if (path.endsWith("/chat")) {
+      if (method !== "POST") {
+        return json(405, { error: "Method not allowed" }, { Allow: "POST,OPTIONS" });
+      }
+      return await postChatMessage(tid, body.code, body.message ?? body.text);
     }
 
     return json(404, { error: "unknown push route" });

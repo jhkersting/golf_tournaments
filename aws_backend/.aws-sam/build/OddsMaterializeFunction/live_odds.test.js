@@ -65,6 +65,14 @@ function teamEntry(grossScore, handicap = 0) {
   return playerEntry(grossScore, handicap);
 }
 
+function setPlayedHole(entry, holeIndex, grossScore) {
+  entry.gross[holeIndex] = grossScore;
+  entry.net[holeIndex] = grossScore == null
+    ? null
+    : Number(grossScore) - Number(entry?.handicapShots?.[holeIndex] || 0);
+  return entry;
+}
+
 function materializedFixture(format, { useHandicap = false, includeFutureRound = false, courseOverrides = null, roundOverrides = null } = {}) {
   const rounds = [
     {
@@ -443,6 +451,45 @@ registerTest("all-round team_best_ball projections keep summed team to-par total
   assert.equal(roundTeamOdds.get("B")?.projectedGrossToPar, 36);
   assert.equal(allRoundTeamOdds.get("B")?.projectedGrossToPar, 36);
   assert.equal(allRoundTeamOdds.get("B")?.projectedGrossToPar, roundTeamOdds.get("B")?.projectedGrossToPar);
+});
+
+registerTest("partial team_best_ball holes keep team projections alive", () => {
+  const tournamentJson = materializedFixture("team_best_ball", { useHandicap: true });
+  const round = tournamentJson.score_data.rounds[0];
+  for (const player of tournamentJson.players) {
+    round.player[player.playerId] = playerEntry(null, player.handicap);
+  }
+  setPlayedHole(round.player.A1, 0, 4);
+
+  const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
+  const teamA = (odds.rounds?.[0]?.teams || []).find((row) => row.teamId === "A");
+  const hole1 = teamA?.remainingHoleExpectations?.find((item) => item.holeIndex === 0);
+
+  assert.ok(teamA);
+  assert.ok(hole1, "expected a projection for a partially completed team_best_ball hole");
+  assert.ok(Number(hole1?.projectedGross || 0) > 0);
+});
+
+registerTest("partial two_man_best_ball holes keep group and team projections alive", () => {
+  const tournamentJson = materializedFixture("two_man_best_ball", { useHandicap: true });
+  const round = tournamentJson.score_data.rounds[0];
+  for (const player of tournamentJson.players) {
+    round.player[player.playerId] = playerEntry(null, player.handicap);
+  }
+  setPlayedHole(round.player.A1, 0, 4);
+
+  const odds = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
+  const groupA = (odds.rounds?.[0]?.groups || []).find((row) => row.groupId === "A::A");
+  const teamA = (odds.rounds?.[0]?.teams || []).find((row) => row.teamId === "A");
+  const groupHole1 = groupA?.remainingHoleExpectations?.find((item) => item.holeIndex === 0);
+  const teamHole1 = teamA?.remainingHoleExpectations?.find((item) => item.holeIndex === 0);
+
+  assert.ok(groupA);
+  assert.ok(teamA);
+  assert.ok(groupHole1, "expected a projection for a partially completed two-man group hole");
+  assert.ok(teamHole1, "expected a projection for a partially completed two-man team hole");
+  assert.ok(Number(groupHole1?.projectedGross || 0) > 0);
+  assert.ok(Number(teamHole1?.projectedGross || 0) > 0);
 });
 
 registerTest("baseline modeling respects stroke index difficulty and handicap lookup", () => {

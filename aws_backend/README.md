@@ -24,6 +24,7 @@ Parameters:
 - GET  `/push/vapid-public-key`
 - POST `/tournaments/{tid}/push/subscribe`
 - POST `/tournaments/{tid}/push/unsubscribe`
+- POST `/tournaments/{tid}/chat`
 - GET  `/enter/{code}` (compat, reads from PUBLIC_BUCKET)
 - GET  `/courses` (list saved courses)
 - GET  `/courses/{courseId}` (get one saved course)
@@ -35,7 +36,8 @@ Set these environment variables when deploying:
 - `VAPID_PUBLIC_KEY`
 - `VAPID_PRIVATE_KEY`
 
-The frontend fetches the public key from the API and uses it to subscribe devices for score alerts.
+The frontend fetches the public key from the API and uses it to subscribe devices for score alerts and chat notifications.
+Chat messages are not stored; they are pushed directly to subscribed devices.
 
 ### Round formats
 - `singles`
