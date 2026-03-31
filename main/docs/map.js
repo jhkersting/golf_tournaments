@@ -2773,6 +2773,98 @@ function scoreSourceForRound(roundData, roundCfg) {
   return { type: "team", entries: teamEntries };
 }
 
+function findTwoManNotificationGroupEntry(roundData, teamId, groupKey) {
+  const teamEntry = roundData?.team?.[teamId] || {};
+  const wanted = normalizeGroup(groupKey);
+  for (const [rawKey, entry] of Object.entries(teamEntry?.groups || {})) {
+    if (normalizeGroup(rawKey) === wanted) return entry || {};
+  }
+  return {};
+}
+
+function notificationRowFromGroupEntry(groupEntry) {
+  const gross = (Array.isArray(groupEntry?.gross) ? groupEntry.gross : Array(18).fill(null))
+    .map((value) => (isEmptyScore(value) ? null : Number(value)));
+  const net = (Array.isArray(groupEntry?.net) ? groupEntry.net : gross)
+    .map((value) => (isEmptyScore(value) ? null : Number(value)));
+  const grossTotal = groupEntry?.grossTotal ?? sumHoles(gross);
+  const netTotal = groupEntry?.netTotal ?? sumHoles(net);
+  const thru = gross.reduce((count, value) => count + (isEmptyScore(value) ? 0 : 1), 0);
+  return {
+    gross: grossTotal,
+    net: netTotal,
+    toPar: groupEntry?.toPar ?? groupEntry?.netToParTotal ?? groupEntry?.grossToParTotal ?? 0,
+    thru,
+    scores: {
+      gross,
+      net,
+      grossTotal,
+      netTotal,
+      grossToParTotal: groupEntry?.grossToParTotal,
+      netToParTotal: groupEntry?.netToParTotal,
+      thru
+    }
+  };
+}
+
+function scoreNotificationTargetMeta(tournament, roundData, roundIndex, roundCfg, rawId, playerRows, teamRows, playerNames, teamNames, playersById) {
+  const id = String(rawId || "").trim();
+  const format = String(roundCfg?.format || "").toLowerCase();
+  const twoManFormat = normalizeTwoManFormat(format);
+  if (!id) return null;
+
+  if (format === "scramble" || format === "team_best_ball") {
+    const teamId = normalizeTeamId(id);
+    const entry = roundData?.team?.[teamId] || {};
+    const row = teamRows.get(teamId) || entry || null;
+    return {
+      targetId: teamId,
+      entry,
+      row,
+      name: row?.teamName || teamNames.get(teamId) || teamId || "Team"
+    };
+  }
+
+  if (twoManFormat) {
+    let teamId = "";
+    let groupKey = "";
+    if (id.includes("::")) {
+      const parts = id.split("::");
+      teamId = normalizeTeamId(parts[0]);
+      groupKey = normalizeGroup(parts[1]);
+    } else {
+      const player = playersById[id] || null;
+      teamId = normalizeTeamId(player?.teamId);
+      groupKey = groupForPlayerRound(player, roundIndex);
+    }
+    if (teamId && groupKey) {
+      const targetId = twoManGroupId(teamId, groupKey);
+      const entry = findTwoManNotificationGroupEntry(roundData, teamId, groupKey);
+      const playerIds = (tournament?.players || [])
+        .filter((player) => normalizeTeamId(player?.teamId) === teamId && groupForPlayerRound(player, roundIndex) === groupKey)
+        .map((player) => String(player?.playerId || "").trim())
+        .filter(Boolean);
+      const row =
+        playerIds.map((playerId) => playerRows.get(playerId)).find(Boolean) ||
+        (Object.keys(entry || {}).length ? notificationRowFromGroupEntry(entry) : null);
+      return {
+        targetId,
+        entry,
+        row,
+        name: twoManPairLabel(playerIds, playersById, groupKey)
+      };
+    }
+  }
+
+  const row = playerRows.get(id) || roundData?.player?.[id] || null;
+  return {
+    targetId: id,
+    entry: roundData?.player?.[id] || {},
+    row,
+    name: row?.name || playerNames.get(id) || id
+  };
+}
+
 function collectNewScoreEvents(prevTournament, nextTournament) {
   if (!prevTournament || !nextTournament) return [];
 
@@ -2792,6 +2884,12 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
   (nextTournament?.teams || []).forEach((team) => {
     const id = String(team?.teamId ?? team?.id ?? "").trim();
     if (id) teamNames.set(id, team?.teamName ?? team?.name ?? id);
+  });
+
+  const playersById = Object.create(null);
+  (nextTournament?.players || []).forEach((player) => {
+    const id = String(player?.playerId || "").trim();
+    if (id) playersById[id] = player;
   });
 
   for (let roundIndex = 0; roundIndex < nextRounds.length; roundIndex += 1) {
@@ -2820,16 +2918,52 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
       if (id) teamRows.set(id, row);
     });
 
-    for (const [idRaw, nextEntry] of nextSource.entries) {
-      const id = String(idRaw || "").trim();
-      if (!id) continue;
+    const prevPlayerRows = new Map();
+    (prevRound?.leaderboard?.players || []).forEach((row) => {
+      const id = String(row?.playerId || "").trim();
+      if (id) prevPlayerRows.set(id, row);
+    });
 
-      const prevEntry = prevSource.type === nextSource.type ? prevById.get(id) : null;
-      const row = nextSource.type === "player" ? playerRows.get(id) : teamRows.get(id);
-      const name =
-        nextSource.type === "player"
-          ? row?.name || playerNames.get(id) || id
-          : row?.teamName || teamNames.get(id) || id;
+    const prevTeamRows = new Map();
+    (prevRound?.leaderboard?.teams || []).forEach((row) => {
+      const id = String(row?.teamId || "").trim();
+      if (id) prevTeamRows.set(id, row);
+    });
+
+    const seenTargets = new Set();
+
+    for (const [idRaw, nextEntry] of nextSource.entries) {
+      const meta = scoreNotificationTargetMeta(
+        nextTournament,
+        nextRound,
+        roundIndex,
+        nextRoundCfg,
+        idRaw,
+        playerRows,
+        teamRows,
+        playerNames,
+        teamNames,
+        playersById
+      );
+      if (!meta?.targetId || seenTargets.has(meta.targetId)) continue;
+      seenTargets.add(meta.targetId);
+
+      const prevMeta = scoreNotificationTargetMeta(
+        nextTournament,
+        prevRound,
+        roundIndex,
+        prevRoundCfg,
+        idRaw,
+        prevPlayerRows,
+        prevTeamRows,
+        playerNames,
+        teamNames,
+        playersById
+      );
+      const prevEntry = prevMeta?.entry || prevById.get(String(idRaw || "").trim()) || null;
+      const row = meta.row;
+      const name = meta.name;
+      const nextTargetEntry = meta.entry || nextEntry;
 
       const showGrossAndNet = !!nextRoundCfg.useHandicap;
       const grossToPar = showGrossAndNet ? grossToParText(row, coursePars) : null;
@@ -2839,7 +2973,7 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
         : leaderboardToParValue(row, coursePars, false);
 
       for (let holeIndex = 0; holeIndex < 18; holeIndex += 1) {
-        const nextGross = normalizePostedScore(nextEntry?.gross?.[holeIndex]);
+        const nextGross = normalizePostedScore(nextTargetEntry?.gross?.[holeIndex]);
         if (nextGross == null) continue;
 
         const prevGross = normalizePostedScore(prevEntry?.gross?.[holeIndex]);
@@ -2876,22 +3010,26 @@ function renderScoreNotifierEvent(event) {
   scoreNotifier.classList.add(toneClass);
   if (toneClass !== "score-even") scoreNotifier.classList.add(shadeClass);
 
+  const grossToPar = event.grossToPar != null ? toParText(event.grossToPar) : null;
+  const netToPar = event.netToPar != null ? toParText(event.netToPar) : null;
+  const toPar = toParText(event.toPar);
+
   const line = document.createElement("div");
   line.className = "score-notifier-line";
   line.appendChild(document.createTextNode(`${event.name} ${event.result} (`));
-  if (event.grossToPar != null && event.netToPar != null) {
+  if (grossToPar != null && netToPar != null) {
     const grossEl = document.createElement("span");
     grossEl.className = "score-emph-gross";
-    grossEl.textContent = String(event.grossToPar);
+    grossEl.textContent = grossToPar;
     line.appendChild(grossEl);
     line.appendChild(document.createTextNode(" ["));
     const netEl = document.createElement("span");
     netEl.className = "score-emph-net";
-    netEl.textContent = String(event.netToPar);
+    netEl.textContent = netToPar;
     line.appendChild(netEl);
     line.appendChild(document.createTextNode("]"));
   } else {
-    line.appendChild(document.createTextNode(String(event.toPar ?? "E")));
+    line.appendChild(document.createTextNode(toPar));
   }
   line.appendChild(document.createTextNode(`) ${event.hole}`));
   scoreNotifier.appendChild(line);

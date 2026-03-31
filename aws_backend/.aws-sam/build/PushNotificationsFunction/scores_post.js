@@ -93,10 +93,13 @@ export async function handler(event){
     const now = Date.now();
 
     // Update state with optimistic concurrency + merge
-    const { nextState, conflicts, actorPlayerId } = await (async () => {
+    const { nextState, conflicts, actorPlayerId, changedScores } = await (async () => {
       let actorPidOut = null;
       let conflictsOut = [];
+      let changedScoresOut = [];
       const next = await updateStateWithRetry(tid, (current) => {
+        conflictsOut = [];
+        const changedScoreMap = new Map();
         current = current || {};
         const rounds = current.rounds || [];
         if (roundIndex >= rounds.length){
@@ -209,6 +212,22 @@ export async function handler(event){
           });
         }
 
+        function changedScoreKey(tType, id, holeIdx){
+          return `${String(tType || "").trim()}::${String(id || "").trim()}::${Number(holeIdx)}`;
+        }
+
+        function recordChangedScore(tType, id, holeIdx){
+          changedScoreMap.set(changedScoreKey(tType, id, holeIdx), {
+            targetType: tType,
+            targetId: id,
+            holeIndex: holeIdx
+          });
+        }
+
+        function clearChangedScore(tType, id, holeIdx){
+          changedScoreMap.delete(changedScoreKey(tType, id, holeIdx));
+        }
+
         // Helper to apply a single hole score with overwrite rules
         function applyHole(tType, id, i, strokes){
           const entry = getEntryObj(tType, id);
@@ -227,6 +246,7 @@ export async function handler(event){
             entry.holes[i] = null;
             entry.meta[i] = { by: actorPlayerId, ts: now };
             setEntryObj(tType, id, entry);
+            clearChangedScore(tType, id, i);
             return;
           }
 
@@ -250,6 +270,7 @@ export async function handler(event){
           entry.holes[i] = attempted;
           entry.meta[i] = { by: actorPlayerId, ts: now };
           setEntryObj(tType, id, entry);
+          recordChangedScore(tType, id, i);
         }
 
         if (mode === "hole"){
@@ -306,10 +327,16 @@ export async function handler(event){
 
         current.updatedAt = now;
         current.version = Number(current.version || 0) + 1;
+        changedScoresOut = Array.from(changedScoreMap.values());
         return current;
       });
 
-      return { nextState: next, conflicts: conflictsOut, actorPlayerId: actorPidOut };
+      return {
+        nextState: next,
+        conflicts: conflictsOut,
+        actorPlayerId: actorPidOut,
+        changedScores: changedScoresOut
+      };
     })();
 
     // Append event log
@@ -335,7 +362,7 @@ export async function handler(event){
         roundIndex,
         mode,
         holeIndex,
-        entries: body.entries || []
+        changedScores
       });
     } catch (pushError) {
       console.warn("Push notification dispatch failed:", pushError?.message || pushError);

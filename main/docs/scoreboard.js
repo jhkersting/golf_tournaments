@@ -1078,6 +1078,95 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
     if (id) teamNames.set(id, t?.teamName ?? t?.name ?? id);
   });
 
+  const playersById = new Map();
+  (nextTournament?.players || []).forEach((player) => {
+    const id = String(player?.playerId || "").trim();
+    if (id) playersById.set(id, player);
+  });
+
+  function notificationRowFromGroupEntry(groupEntry) {
+    const gross = (Array.isArray(groupEntry?.gross) ? groupEntry.gross : Array(18).fill(null))
+      .map((value) => (!isPlayedScore(value) ? null : Number(value)));
+    const net = (Array.isArray(groupEntry?.net) ? groupEntry.net : gross)
+      .map((value) => (!isPlayedScore(value) ? null : Number(value)));
+    const grossTotal = groupEntry?.grossTotal ?? sumHoles(gross);
+    const netTotal = groupEntry?.netTotal ?? sumHoles(net);
+    const thru = gross.reduce((count, value) => count + (!isPlayedScore(value) ? 0 : 1), 0);
+    return {
+      gross: grossTotal,
+      net: netTotal,
+      toPar: groupEntry?.toPar ?? groupEntry?.netToParTotal ?? groupEntry?.grossToParTotal ?? 0,
+      thru,
+      scores: {
+        gross,
+        net,
+        grossTotal,
+        netTotal,
+        grossToParTotal: groupEntry?.grossToParTotal,
+        netToParTotal: groupEntry?.netToParTotal,
+        thru
+      }
+    };
+  }
+
+  function scoreNotificationTargetMeta(tournament, roundData, roundIndex, roundCfg, rawId, playerRows, teamRows) {
+    const id = String(rawId || "").trim();
+    const format = String(roundCfg?.format || "").toLowerCase();
+    const twoManFormat = normalizeTwoManFormat(format);
+    if (!id) return null;
+
+    if (format === "scramble" || format === "team_best_ball") {
+      const teamId = normalizeTeamId(id);
+      const entry = roundData?.team?.[teamId] || {};
+      const row = teamRows.get(teamId) || entry || null;
+      return {
+        targetId: teamId,
+        entry,
+        row,
+        name: row?.teamName || teamNames.get(teamId) || teamId || "Team",
+        entityType: "team"
+      };
+    }
+
+    if (twoManFormat) {
+      let teamId = "";
+      let groupKey = "";
+      if (id.includes("::")) {
+        teamId = normalizeTeamId(id.split("::")[0] || "");
+        groupKey = normalizeTwoManGroupKey(id.split("::")[1] || "");
+      } else {
+        const player = playersById.get(id) || null;
+        teamId = normalizeTeamId(player?.teamId);
+        groupKey = playerGroupForRound(player, roundIndex);
+      }
+      if (teamId && groupKey) {
+        const targetId = `${teamId}::${groupKey}`;
+        const teamEntry = roundData?.team?.[teamId] || {};
+        const entry = twoManGroupEntry(teamEntry, groupKey);
+        const playerIds = compactOddsGroupPlayerIds(tournament, roundIndex, teamId, groupKey);
+        const row =
+          playerIds.map((playerId) => playerRows.get(playerId)).find(Boolean) ||
+          (Object.keys(entry || {}).length ? notificationRowFromGroupEntry(entry) : null);
+        return {
+          targetId,
+          entry,
+          row,
+          name: compactOddsGroupName(tournament, roundIndex, teamId, targetId, playerNames),
+          entityType: "group"
+        };
+      }
+    }
+
+    const row = playerRows.get(id) || roundData?.player?.[id] || null;
+    return {
+      targetId: id,
+      entry: roundData?.player?.[id] || {},
+      row,
+      name: row?.name || playerNames.get(id) || id,
+      entityType: "player"
+    };
+  }
+
   for (let roundIndex = 0; roundIndex < nextRounds.length; roundIndex++) {
     const nextRound = nextRounds[roundIndex] || {};
     const prevRound = prevRounds[roundIndex] || {};
@@ -1104,16 +1193,30 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
       if (id) teamRows.set(id, row);
     });
 
-    for (const [idRaw, nextEntry] of nextSource.entries) {
-      const id = String(idRaw || "").trim();
-      if (!id) continue;
+    const prevPlayerRows = new Map();
+    (prevRound?.leaderboard?.players || []).forEach((row) => {
+      const id = String(row?.playerId || "").trim();
+      if (id) prevPlayerRows.set(id, row);
+    });
 
-      const prevEntry = prevSource.type === nextSource.type ? prevById.get(id) : null;
-      const row = nextSource.type === "player" ? playerRows.get(id) : teamRows.get(id);
-      const name =
-        nextSource.type === "player"
-          ? row?.name || playerNames.get(id) || id
-          : row?.teamName || teamNames.get(id) || id;
+    const prevTeamRows = new Map();
+    (prevRound?.leaderboard?.teams || []).forEach((row) => {
+      const id = String(row?.teamId || "").trim();
+      if (id) prevTeamRows.set(id, row);
+    });
+
+    const seenTargets = new Set();
+
+    for (const [idRaw, nextEntry] of nextSource.entries) {
+      const meta = scoreNotificationTargetMeta(nextTournament, nextRound, roundIndex, nextRoundCfg, idRaw, playerRows, teamRows);
+      if (!meta?.targetId || seenTargets.has(meta.targetId)) continue;
+      seenTargets.add(meta.targetId);
+
+      const prevMeta = scoreNotificationTargetMeta(nextTournament, prevRound, roundIndex, prevRoundCfg, idRaw, prevPlayerRows, prevTeamRows);
+      const prevEntry = prevMeta?.entry || prevById.get(String(idRaw || "").trim()) || null;
+      const row = meta.row;
+      const name = meta.name;
+      const nextTargetEntry = meta.entry || nextEntry;
 
       const showGrossAndNet = !!nextRoundCfg.useHandicap;
       const roundToParData = { course: { pars: coursePars, parTotal: sumHoles(coursePars) } };
@@ -1128,7 +1231,7 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
       const grossToPar = hasGrossAndNetToPar ? grossToParRaw : null;
       const netToPar = hasGrossAndNetToPar ? netToParRaw : null;
       for (let holeIndex = 0; holeIndex < 18; holeIndex++) {
-        const nextGross = normalizePostedScore(nextEntry?.gross?.[holeIndex]);
+        const nextGross = normalizePostedScore(nextTargetEntry?.gross?.[holeIndex]);
         if (nextGross == null) continue;
 
         const prevGross = normalizePostedScore(prevEntry?.gross?.[holeIndex]);
@@ -1137,8 +1240,8 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
         const par = Number(coursePars?.[holeIndex] || 0);
         const diffToPar = par > 0 ? nextGross - par : 0;
         events.push({
-          entityType: nextSource.type,
-          entityId: id,
+          entityType: meta.entityType,
+          entityId: meta.targetId,
           roundIndex,
           name,
           result: scoreResultLabel(diffToPar),
@@ -1187,22 +1290,26 @@ function renderScoreNotifierEvent(event) {
   scoreNotifier.classList.add(toneClass);
   if (toneClass !== "score-even") scoreNotifier.classList.add(shadeClass);
 
+  const grossToPar = event.grossToPar != null ? toParDisplay(event.grossToPar) : null;
+  const netToPar = event.netToPar != null ? toParDisplay(event.netToPar) : null;
+  const toPar = event.toPar != null ? toParDisplay(event.toPar) : "E";
+
   const line = document.createElement("div");
   line.className = "score-notifier-line";
   line.appendChild(document.createTextNode(`${event.name} ${event.result} (`));
-  if (event.grossToPar != null && event.netToPar != null) {
+  if (grossToPar != null && netToPar != null) {
     const grossEl = document.createElement("span");
     grossEl.className = "score-emph-gross";
-    grossEl.textContent = String(event.grossToPar);
+    grossEl.textContent = grossToPar;
     line.appendChild(grossEl);
     line.appendChild(document.createTextNode(" ["));
     const netEl = document.createElement("span");
     netEl.className = "score-emph-net";
-    netEl.textContent = String(event.netToPar);
+    netEl.textContent = netToPar;
     line.appendChild(netEl);
     line.appendChild(document.createTextNode("]"));
   } else {
-    line.appendChild(document.createTextNode(String(event.toPar ?? "E")));
+    line.appendChild(document.createTextNode(toPar === "—" ? "E" : toPar));
   }
   line.appendChild(document.createTextNode(`) ${event.hole}`));
   scoreNotifier.appendChild(line);
@@ -2608,7 +2715,7 @@ function renderLeaderboard(data) {
       </td>
     `;
     const shouldShowTeeTime = !hasData && r?.teeTime && (!isTeam || isScrambleRound(data.view?.round));
-    const thruCell = shouldShowTeeTime ? r.teeTime : displayThru(r.thru);
+    const thruCell = shouldShowTeeTime ? r.teeTime : displayThru(r.thruDisplay ?? r.thru);
 
     if (showStableford && showGrossNet) {
       tr.innerHTML = `
@@ -3237,6 +3344,59 @@ function playedHoleCountFromArrays(gross, net) {
   return count;
 }
 
+function thruRangeLabel(minThru, maxThru) {
+  if (!Number.isFinite(minThru) || minThru <= 0) return null;
+  if (!Number.isFinite(maxThru) || maxThru <= 0) return displayThru(minThru);
+  if (minThru >= maxThru) return displayThru(minThru);
+  return `${displayThru(minThru)}-${displayThru(maxThru)}`;
+}
+
+function teamThruDisplayForRound(tournamentJson, roundIndex, roundData, teamId) {
+  const normalizedTeamId = normalizeTeamId(teamId);
+  if (!normalizedTeamId) return null;
+
+  const values = [];
+  const knownPlayerIds = new Set();
+  (tournamentJson?.players || []).forEach((player) => {
+    if (normalizeTeamId(player?.teamId) !== normalizedTeamId) return;
+    const playerId = String(player?.playerId || "").trim();
+    if (playerId) knownPlayerIds.add(playerId);
+  });
+
+  Object.entries(roundData?.player || {}).forEach(([playerId, entry]) => {
+    const entryTeamId = normalizeTeamId(entry?.teamId);
+    if (!knownPlayerIds.has(String(playerId || "").trim()) && entryTeamId !== normalizedTeamId) return;
+    const thru = playedHoleCountFromArrays(entry?.gross, entry?.net);
+    if (thru > 0) values.push(thru);
+  });
+
+  if (!values.length) {
+    const roundCfg = (tournamentJson?.tournament?.rounds || [])[roundIndex] || {};
+    const twoManFormat = normalizeTwoManFormat(String(roundCfg?.format || roundData?.format || "").toLowerCase());
+    if (twoManFormat) {
+      const teamEntry = roundData?.team?.[normalizedTeamId] || {};
+      const groupKeys = twoManGroupKeysForTeam(normalizedTeamId, roundIndex, teamEntry);
+      groupKeys.forEach((key) => {
+        const entry = twoManGroupEntry(teamEntry, key);
+        const thru = playedHoleCountFromArrays(entry?.gross, entry?.net);
+        if (thru > 0) values.push(thru);
+      });
+    }
+  }
+
+  if (!values.length) return null;
+  return thruRangeLabel(Math.min(...values), Math.max(...values));
+}
+
+function attachTeamThruDisplay(rows, tournamentJson, roundIndex, roundData) {
+  return (rows || []).map((row) => {
+    const teamId = normalizeTeamId(row?.teamId);
+    if (!teamId) return row;
+    const thruDisplay = teamThruDisplayForRound(tournamentJson, roundIndex, roundData, teamId);
+    return thruDisplay ? { ...row, thruDisplay } : row;
+  });
+}
+
 function toParArrayFromHoles(holes, parByHole) {
   return Array.from({ length: 18 }, (_, i) => {
     const score = asPlayedNumber(holes?.[i]);
@@ -3563,15 +3723,16 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
   const teamNames = roundTeamNameLookup(tournamentJson, leaderboardRows);
   const seedTeamIds = (leaderboardRows || []).map((row) => row?.teamId);
   const fallbackRows = leaderboardRows || [];
+  const withThruDisplay = (rows) => attachTeamThruDisplay(rows, tournamentJson, roundIndex, roundData);
 
   if (format === "scramble" || normalizeTwoManFormat(format)) {
     const fromTeamEntries = buildTeamRowsFromTeamEntries(roundData, coursePars, useHandicap, teamNames, seedTeamIds);
-    if (fromTeamEntries.some((row) => rowHasAnyData(row))) return fromTeamEntries;
-    if (fallbackRows.some((row) => rowHasAnyData(row))) return fallbackRows;
-    return fromTeamEntries;
+    if (fromTeamEntries.some((row) => rowHasAnyData(row))) return withThruDisplay(fromTeamEntries);
+    if (fallbackRows.some((row) => rowHasAnyData(row))) return withThruDisplay(fallbackRows);
+    return withThruDisplay(fromTeamEntries);
   }
 
-  if (fallbackRows.some((row) => rowHasAnyData(row))) return fallbackRows;
+  if (fallbackRows.some((row) => rowHasAnyData(row))) return withThruDisplay(fallbackRows);
 
   const aggregated = buildAggregatedTeamRowsFromPlayers(
     tournamentJson,
@@ -3580,9 +3741,9 @@ function buildRoundTeamRows(tournamentJson, roundIndex, roundData, coursePars, l
     coursePars,
     leaderboardRows
   );
-  if (aggregated.some((row) => rowHasAnyData(row))) return aggregated;
-  if (fallbackRows.length) return fallbackRows;
-  return aggregated;
+  if (aggregated.some((row) => rowHasAnyData(row))) return withThruDisplay(aggregated);
+  if (fallbackRows.length) return withThruDisplay(fallbackRows);
+  return withThruDisplay(aggregated);
 }
 
 function buildRoundPlayerRows(tournamentJson, roundIndex, roundData, coursePars) {

@@ -78,8 +78,8 @@ function scoreResultLabel(diffToPar) {
   if (diffToPar === -1) return "Birdie";
   if (diffToPar === 0) return "Par";
   if (diffToPar === 1) return "Bogey";
-  if (diffToPar === 2) return "Double Bogey";
-  if (diffToPar === 3) return "Triple Bogey";
+  if (diffToPar === 2) return "Dbl. Bogey";
+  if (diffToPar === 3) return "Tpl. Bogey";
   return `${diffToPar} Over`;
 }
 
@@ -94,48 +94,233 @@ function scoreNotifierThruText(thru) {
   return String(Math.floor(n));
 }
 
+function scoreNotifierSignedToPar(value) {
+  if (value == null || value === "") return "";
+  const n = Number(value);
+  if (Number.isFinite(n)) {
+    if (n === 0) return "E";
+    return n > 0 ? `+${n}` : String(n);
+  }
+  const text = String(value).trim();
+  if (!text) return "";
+  if (text === "0") return "E";
+  return text;
+}
+
 function scoreNotifierToParText(row, useHandicap) {
   if (!row) return "";
   const scores = row?.scores || {};
   if (useHandicap) {
     const gross = scores?.grossToParTotal ?? row?.grossToParTotal ?? row?.grossToPar ?? null;
     const net = scores?.netToParTotal ?? row?.netToParTotal ?? row?.netToPar ?? null;
-    if (gross != null && net != null) return `${gross} [${net}]`;
+    if (gross != null && net != null) {
+      return `${scoreNotifierSignedToPar(gross)} [${scoreNotifierSignedToPar(net)}]`;
+    }
   }
-  const single = row?.toPar ?? scores?.toPar ?? scores?.netToParTotal ?? scores?.grossToParTotal;
-  return single != null ? String(single) : "";
+  const single =
+    row?.toPar
+    ?? scores?.toPar
+    ?? row?.netToParTotal
+    ?? row?.grossToParTotal
+    ?? scores?.netToParTotal
+    ?? scores?.grossToParTotal;
+  return scoreNotifierSignedToPar(single);
 }
 
-function scoreNotificationItems(state, tournamentJson, details) {
-  const roundIndex = Number(details?.roundIndex);
-  const holeIndex = Number.isInteger(Number(details?.holeIndex)) ? Number(details.holeIndex) : null;
-  if (!Number.isInteger(roundIndex) || roundIndex < 0 || holeIndex == null) return [];
+function normalizedScoreNotificationBody(roundIndex, name, result, toPar, thru) {
+  const roundLabel = scoreNotifierRoundLabel(roundIndex);
+  const safeName = String(name || "").trim() || "Player";
+  const safeResult = String(result || "Par").trim() || "Par";
+  const safeToPar = String(toPar || "E").trim() || "E";
+  const safeThru = String(thru || "0").trim() || "0";
+  return `${roundLabel} • ${safeName} • ${safeResult} (${safeToPar}) Thru ${safeThru}`;
+}
 
+function notificationTargetKey(state, roundIndex, targetId) {
   const roundCfg = state?.rounds?.[roundIndex] || {};
-  const useHandicap = !!roundCfg?.useHandicap;
-  const pars = scoreNotifierCoursePars(tournamentJson, roundIndex);
-  const entries = Array.isArray(details?.entries) ? details.entries : [];
-  const seen = new Set();
-  const items = [];
+  const format = String(roundCfg?.format || "").toLowerCase();
+  const normalizedTwoMan = normalizeTwoManFormat(format);
+  const rawTargetId = String(targetId || "").trim();
+  const player = state?.players?.[rawTargetId] || null;
 
-  for (const entry of entries) {
-    const targetId = String(entry?.targetId || "").trim();
-    if (!targetId || seen.has(targetId)) continue;
-    seen.add(targetId);
+  if (format === "scramble") return rawTargetId;
 
-    const row = rowForNotification(state, tournamentJson, roundIndex, details, targetId);
-    const name = targetLabelForNotification(state, tournamentJson, roundIndex, details, targetId) || targetId;
-    const strokes = Number(entry?.strokes);
-    const par = Number(pars?.[holeIndex] || 0);
-    const diffToPar = Number.isFinite(strokes) && par > 0 ? strokes - par : 0;
-    const result = scoreResultLabel(diffToPar);
-    const toPar = scoreNotifierToParText(row, useHandicap) || "E";
-    const thru = scoreNotifierThruText(row?.thru ?? row?.scores?.thru);
-
-    items.push(`${name} | ${result} (${toPar})${thru ? ` Thru ${thru}` : ""}`);
+  if (normalizedTwoMan) {
+    if (rawTargetId.includes("::")) return rawTargetId;
+    const teamId = String(player?.teamId || "").trim();
+    const groupValue = Array.isArray(player?.groups)
+      ? player.groups?.[roundIndex]
+      : roundIndex === 0
+        ? player?.group
+        : null;
+    const groupKey = String(groupValue || "").trim();
+    if (teamId && groupKey) return `${teamId}::${groupKey}`;
   }
 
-  return items;
+  return rawTargetId;
+}
+
+function normalizeGroupKey(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function playerGroupForRound(player, roundIndex) {
+  if (!player) return "";
+  if (Array.isArray(player?.groups)) {
+    const value = normalizeGroupKey(player.groups?.[roundIndex]);
+    if (value) return value;
+  }
+  if (roundIndex === 0) {
+    const fallback = normalizeGroupKey(player?.group);
+    if (fallback) return fallback;
+  }
+  return "";
+}
+
+function uniqueDisplayNames(values) {
+  const seen = new Set();
+  const out = [];
+  for (const value of values || []) {
+    const name = String(value || "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+function teamNameForId(state, tournamentJson, teamId) {
+  const targetId = String(teamId || "").trim();
+  if (!targetId) return "";
+  const fromState = String(state?.teams?.[targetId]?.teamName || "").trim();
+  if (fromState) return fromState;
+  const fromTournament = (tournamentJson?.teams || []).find((team) => String(team?.teamId ?? team?.id ?? "").trim() === targetId);
+  return String(fromTournament?.teamName ?? fromTournament?.name ?? "").trim() || targetId;
+}
+
+function playerNameForId(state, tournamentJson, playerId) {
+  const targetId = String(playerId || "").trim();
+  if (!targetId) return "";
+  const fromState = String(state?.players?.[targetId]?.name || "").trim();
+  if (fromState) return fromState;
+  const fromTournament = (tournamentJson?.players || []).find((player) => String(player?.playerId || "").trim() === targetId);
+  return String(fromTournament?.name || "").trim() || targetId;
+}
+
+function playerIdsForTwoManGroup(state, tournamentJson, teamId, roundIndex, groupKey) {
+  const safeTeamId = String(teamId || "").trim();
+  const safeGroupKey = normalizeGroupKey(groupKey);
+  if (!safeTeamId || !safeGroupKey) return [];
+
+  const teamDef = (tournamentJson?.teams || []).find((team) => String(team?.teamId ?? team?.id ?? "").trim() === safeTeamId);
+  const fromTeamDef = teamDef?.groupsByRound?.[String(roundIndex)]?.[safeGroupKey] || teamDef?.groups?.[safeGroupKey];
+  if (Array.isArray(fromTeamDef) && fromTeamDef.length) {
+    return Array.from(new Set(fromTeamDef.map((id) => String(id || "").trim()).filter(Boolean)));
+  }
+
+  const fromTournamentPlayers = (tournamentJson?.players || [])
+    .filter((player) => String(player?.teamId || "").trim() === safeTeamId)
+    .filter((player) => playerGroupForRound(player, roundIndex) === safeGroupKey)
+    .map((player) => String(player?.playerId || "").trim())
+    .filter(Boolean);
+  if (fromTournamentPlayers.length) return Array.from(new Set(fromTournamentPlayers));
+
+  return Array.from(new Set(
+    Object.entries(state?.players || {})
+      .filter(([, player]) => String(player?.teamId || "").trim() === safeTeamId)
+      .filter(([, player]) => playerGroupForRound(player, roundIndex) === safeGroupKey)
+      .map(([playerId]) => String(playerId || "").trim())
+      .filter(Boolean)
+  ));
+}
+
+function twoManPairLabel(state, tournamentJson, teamId, roundIndex, groupKey) {
+  const playerIds = playerIdsForTwoManGroup(state, tournamentJson, teamId, roundIndex, groupKey);
+  const names = uniqueDisplayNames(playerIds.map((playerId) => playerNameForId(state, tournamentJson, playerId)));
+  if (names.length) return names.join("/");
+  const safeGroupKey = normalizeGroupKey(groupKey);
+  return safeGroupKey ? `Group ${safeGroupKey}` : "Pair";
+}
+
+function findTwoManGroupEntry(roundData, teamId, groupKey) {
+  const groups = roundData?.team?.[String(teamId || "").trim()]?.groups || {};
+  const wanted = normalizeGroupKey(groupKey);
+  for (const [rawKey, entry] of Object.entries(groups)) {
+    if (normalizeGroupKey(rawKey) === wanted) return entry || null;
+  }
+  return null;
+}
+
+function grossScoreForHole(row, holeIndex) {
+  const idx = Number(holeIndex);
+  if (!Number.isInteger(idx) || idx < 0) return null;
+  const value = row?.scores?.gross?.[idx] ?? row?.gross?.[idx] ?? null;
+  const gross = Number(value);
+  return Number.isFinite(gross) && gross > 0 ? gross : null;
+}
+
+function parForHole(row, pars, holeIndex) {
+  const idx = Number(holeIndex);
+  if (!Number.isInteger(idx) || idx < 0) return Number(pars?.[idx] || 0);
+  const value = row?.scores?.par?.[idx] ?? row?.par?.[idx] ?? pars?.[idx] ?? 0;
+  const par = Number(value);
+  return Number.isFinite(par) && par > 0 ? par : 0;
+}
+
+function thruForRow(row) {
+  return scoreNotifierThruText(row?.thru ?? row?.scores?.thru);
+}
+
+function notificationTargetMeta(state, tournamentJson, roundIndex, targetId) {
+  const roundCfg = state?.rounds?.[roundIndex] || {};
+  const roundData = tournamentJson?.score_data?.rounds?.[roundIndex] || {};
+  const format = String(roundCfg?.format || "").toLowerCase();
+  const normalizedTwoMan = normalizeTwoManFormat(format);
+  const rawTargetId = String(targetId || "").trim();
+  if (!rawTargetId) return null;
+
+  if (format === "scramble") {
+    const teamId = rawTargetId;
+    return {
+      targetId: teamId,
+      row: roundData?.leaderboard?.teams?.find((row) => String(row?.teamId || "").trim() === teamId)
+        || roundData?.team?.[teamId]
+        || null,
+      name: teamNameForId(state, tournamentJson, teamId) || teamId || "Team"
+    };
+  }
+
+  if (normalizedTwoMan) {
+    let teamId = "";
+    let groupKey = "";
+    if (rawTargetId.includes("::")) {
+      const [teamIdRaw, groupKeyRaw] = rawTargetId.split("::");
+      teamId = String(teamIdRaw || "").trim();
+      groupKey = normalizeGroupKey(groupKeyRaw);
+    } else {
+      const player = state?.players?.[rawTargetId] || null;
+      teamId = String(player?.teamId || "").trim();
+      groupKey = playerGroupForRound(player, roundIndex);
+    }
+    if (teamId && groupKey) {
+      return {
+        targetId: `${teamId}::${groupKey}`,
+        row: findTwoManGroupEntry(roundData, teamId, groupKey),
+        name: twoManPairLabel(state, tournamentJson, teamId, roundIndex, groupKey)
+      };
+    }
+  }
+
+  return {
+    targetId: rawTargetId,
+    row: roundData?.leaderboard?.players?.find((row) => String(row?.playerId || "").trim() === rawTargetId)
+      || roundData?.player?.[rawTargetId]
+      || null,
+    name: playerNameForId(state, tournamentJson, rawTargetId) || rawTargetId || "Player"
+  };
 }
 
 function scoreNotifierCoursePars(tournamentJson, roundIndex) {
@@ -150,146 +335,109 @@ function scoreNotifierCoursePars(tournamentJson, roundIndex) {
   return Array.from({ length: 18 }, (_, holeIndex) => Number(pars?.[holeIndex]) || 4);
 }
 
-function playerGroupLabel(state, roundIndex, playerId) {
-  const player = state?.players?.[playerId];
-  if (!player) return "";
-  const teamId = String(player?.teamId || "").trim();
-  if (!teamId) return String(player?.name || playerId || "").trim();
-
-  const groupValue = Array.isArray(player?.groups)
-    ? player.groups?.[roundIndex]
-    : roundIndex === 0
-      ? player?.group
-      : null;
-  const groupKey = String(groupValue || "").trim();
-  if (!groupKey) return String(player?.name || playerId || "").trim();
-
-  const names = Object.values(state?.players || {})
-    .filter((candidate) => String(candidate?.teamId || "").trim() === teamId)
-    .filter((candidate) => {
-      const candidateGroup = Array.isArray(candidate?.groups)
-        ? candidate.groups?.[roundIndex]
-        : roundIndex === 0
-          ? candidate?.group
-          : null;
-      return String(candidateGroup || "").trim() === groupKey;
-    })
-    .map((candidate) => String(candidate?.name || "").trim())
-    .filter(Boolean);
-
-  const unique = Array.from(new Set(names));
-  return unique.length ? unique.join("/") : String(player?.name || playerId || "").trim();
-}
-
-function targetLabelForNotification(state, tournamentJson, roundIndex, details, targetId) {
-  const roundCfg = state?.rounds?.[roundIndex] || {};
-  const format = String(roundCfg?.format || "").toLowerCase();
-  const normalizedTwoMan = normalizeTwoManFormat(format);
-  const rawTargetId = String(targetId || "").trim();
-  const player = state?.players?.[rawTargetId] || null;
-
-  if (format === "scramble" || format === "team_best_ball") {
-    const teamId = format === "team_best_ball" ? String(player?.teamId || "").trim() || rawTargetId : rawTargetId;
-    return String(state?.teams?.[teamId]?.teamName || "").trim() || teamId || "Team";
-  }
-
-  if (normalizedTwoMan) {
-    if (rawTargetId.includes("::")) {
-      const [teamIdRaw, groupKeyRaw] = rawTargetId.split("::");
-      const teamId = String(teamIdRaw || "").trim();
-      const groupKey = String(groupKeyRaw || "").trim();
-      const teamName = String(state?.teams?.[teamId]?.teamName || "").trim() || teamId || "Team";
-      const groupName = playerGroupLabel(state, roundIndex, Object.values(state?.players || {}).find((p) => {
-        const pid = String(p?.playerId || "").trim();
-        if (!pid) return false;
-        if (String(p?.teamId || "").trim() !== teamId) return false;
-        const groupValue = Array.isArray(p?.groups) ? p.groups?.[roundIndex] : roundIndex === 0 ? p?.group : null;
-        return String(groupValue || "").trim() === groupKey;
-      })?.playerId);
-      return groupName ? `${groupName}` : `${teamName} • Group ${groupKey || "?"}`;
-    }
-    return playerGroupLabel(state, roundIndex, rawTargetId) || String(state?.players?.[rawTargetId]?.name || "").trim() || rawTargetId || "Group";
-  }
-
-  return String(state?.players?.[rawTargetId]?.name || "").trim() || rawTargetId || "Player";
-}
-
-function rowForNotification(state, tournamentJson, roundIndex, details, targetId) {
-  const roundCfg = state?.rounds?.[roundIndex] || {};
-  const format = String(roundCfg?.format || "").toLowerCase();
-  const normalizedTwoMan = normalizeTwoManFormat(format);
-  const rawTargetId = String(targetId || "").trim();
-  const player = state?.players?.[rawTargetId] || null;
-  const roundData = tournamentJson?.score_data?.rounds?.[roundIndex] || {};
-
-  if (format === "scramble" || format === "team_best_ball") {
-    const teamId = format === "team_best_ball" ? String(player?.teamId || "").trim() || rawTargetId : rawTargetId;
-    return roundData?.leaderboard?.teams?.find((row) => String(row?.teamId || "").trim() === teamId)
-      || roundData?.team?.[teamId]
-      || null;
-  }
-
-  if (normalizedTwoMan) {
-    if (rawTargetId.includes("::")) {
-      const [teamIdRaw, groupKeyRaw] = rawTargetId.split("::");
-      const teamId = String(teamIdRaw || "").trim();
-      const groupKey = String(groupKeyRaw || "").trim();
-      return roundData?.team?.[teamId]?.groups?.[groupKey]
-        || roundData?.team?.[teamId]
-        || null;
-    }
-    const player = state?.players?.[rawTargetId];
-    const teamId = String(player?.teamId || "").trim();
-    const groupValue = Array.isArray(player?.groups)
-      ? player.groups?.[roundIndex]
-      : roundIndex === 0
-        ? player?.group
-        : null;
-    const groupKey = String(groupValue || "").trim();
-    if (teamId && groupKey) {
-      return roundData?.team?.[teamId]?.groups?.[groupKey]
-        || roundData?.team?.[teamId]
-        || roundData?.leaderboard?.players?.find((row) => String(row?.playerId || "").trim() === rawTargetId)
-        || null;
-    }
-    return roundData?.leaderboard?.players?.find((row) => String(row?.playerId || "").trim() === rawTargetId)
-      || null;
-  }
-
-  return roundData?.leaderboard?.players?.find((row) => String(row?.playerId || "").trim() === rawTargetId)
-    || roundData?.player?.[rawTargetId]
-    || null;
-}
-
-function scoreUpdateSummary(state, details) {
+export function scoreNotificationEntries(state, tournamentJson, details) {
   const roundIndex = Number(details?.roundIndex);
-  const actorName = String(state?.players?.[details?.actorPlayerId]?.name || "A player").trim() || "A player";
-  if (!Number.isInteger(roundIndex) || roundIndex < 0) {
-    return {
-      title: String(state?.tournament?.name || "Golf Tournament").trim() || "Golf Tournament",
-      body: `Scores updated by ${actorName}`,
-      url: `./scoreboard.html?t=${encodeURIComponent(String(state?.tournament?.tournamentId || "").trim())}`,
-      tag: `golf-score-${String(state?.tournament?.tournamentId || "").trim()}-x-bulk`
-    };
+  if (!Number.isInteger(roundIndex) || roundIndex < 0) return [];
+
+  const roundCfg = state?.rounds?.[roundIndex] || {};
+  const useHandicap = !!roundCfg?.useHandicap;
+  const pars = scoreNotifierCoursePars(tournamentJson, roundIndex);
+  const changedScores = Array.isArray(details?.changedScores) ? details.changedScores : [];
+  const seen = new Set();
+  const notifications = [];
+
+  for (const change of changedScores) {
+    const holeIndex = Number(change?.holeIndex);
+    if (!Number.isInteger(holeIndex) || holeIndex < 0 || holeIndex > 17) continue;
+
+    const rawTargetId = String(change?.targetId || "").trim();
+    const normalizedTargetId = notificationTargetKey(state, roundIndex, rawTargetId);
+    const dedupeKey = `${normalizedTargetId}::${holeIndex}`;
+    if (!normalizedTargetId || seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const meta = notificationTargetMeta(state, tournamentJson, roundIndex, normalizedTargetId);
+    if (!meta?.targetId || !meta?.row) continue;
+
+    const grossScore = grossScoreForHole(meta.row, holeIndex);
+    if (grossScore == null) continue;
+
+    const par = parForHole(meta.row, pars, holeIndex);
+    const diffToPar = par > 0 ? grossScore - par : 0;
+    const result = scoreResultLabel(diffToPar);
+    const toPar = scoreNotifierToParText(meta.row, useHandicap) || "E";
+    const thru = thruForRow(meta.row) || "0";
+
+    notifications.push({
+      targetId: meta.targetId,
+      holeIndex,
+      body: normalizedScoreNotificationBody(roundIndex, meta.name, result, toPar, thru)
+    });
   }
+
+  return notifications;
+}
+
+export function scoreUpdateSummaries(state, details) {
+  const roundIndex = Number(details?.roundIndex);
+  const tournamentId = String(state?.tournament?.tournamentId || "").trim();
+  const title = String(state?.tournament?.name || "Golf Tournament").trim() || "Golf Tournament";
+  const url = `./scoreboard.html?t=${encodeURIComponent(tournamentId)}`;
+  const mode = String(details?.mode || "bulk").trim().toLowerCase();
+
+  if (!Number.isInteger(roundIndex) || roundIndex < 0) return [];
 
   const tournamentJson = materializePublicFromState(state);
-  const items = scoreNotificationItems(state, tournamentJson, details);
-  const holeIndex = Number.isInteger(Number(details?.holeIndex)) ? Number(details.holeIndex) : null;
-  const body = items.length
-    ? `Round ${roundIndex + 1} | ${items.join(" • ")}`
-    : `${scoreNotifierRoundLabel(roundIndex)} scores updated by ${actorName}`;
-  return {
-    title: String(state?.tournament?.name || "Golf Tournament").trim() || "Golf Tournament",
+  const notifications = scoreNotificationEntries(state, tournamentJson, details);
+  if (!notifications.length) return [];
+
+  return notifications.map(({ targetId, holeIndex, body }, index) => ({
+    title,
     body,
-    url: `./scoreboard.html?t=${encodeURIComponent(String(state?.tournament?.tournamentId || "").trim())}`,
-    tag: `golf-score-${String(state?.tournament?.tournamentId || "").trim()}-${roundIndex}-${String(details?.mode || "bulk").trim().toLowerCase()}-${holeIndex != null ? holeIndex : "bulk"}`
-  };
+    url,
+    tag: `golf-score-${tournamentId}-${roundIndex}-${mode}-${holeIndex}-${String(targetId || index).replace(/[^a-z0-9_-]+/gi, "-")}`
+  }));
 }
 
 function isGoneError(error) {
   const status = Number(error?.statusCode || error?.status || error?.$metadata?.httpStatusCode || 0);
   return status === 404 || status === 410;
+}
+
+function dedupeSubscriptions(subscriptions) {
+  const byPlayerId = new Map();
+  const anonymous = [];
+
+  for (const subscription of subscriptions || []) {
+    if (!subscription?.endpoint) continue;
+    const playerId = String(subscription?.playerId || "").trim();
+    if (!playerId) {
+      anonymous.push(subscription);
+      continue;
+    }
+    const existing = byPlayerId.get(playerId);
+    const existingUpdatedAt = Number(existing?.updatedAt || existing?.subscribedAt || 0);
+    const nextUpdatedAt = Number(subscription?.updatedAt || subscription?.subscribedAt || 0);
+    if (!existing || nextUpdatedAt >= existingUpdatedAt) {
+      byPlayerId.set(playerId, subscription);
+    }
+  }
+
+  return [...byPlayerId.values(), ...anonymous];
+}
+
+function dedupeNotificationSummaries(summaries) {
+  const seen = new Set();
+  const out = [];
+
+  for (const summary of summaries || []) {
+    const key = String(summary?.tag || "").trim();
+    if (!key.trim() || seen.has(key)) continue;
+    seen.add(key);
+    out.push(summary);
+  }
+
+  return out;
 }
 
 async function upsertSubscription(tid, code, subscription) {
@@ -306,6 +454,13 @@ async function upsertSubscription(tid, code, subscription) {
 
   await updateStateWithRetry(tid, (state) => {
     state.pushSubscriptions = state.pushSubscriptions || {};
+    for (const [endpoint, existing] of Object.entries(state.pushSubscriptions)) {
+      if (endpoint === safeSubscription.endpoint) continue;
+      const existingPlayerId = String(existing?.playerId || "").trim();
+      if (existingPlayerId && existingPlayerId === actor.playerId) {
+        delete state.pushSubscriptions[endpoint];
+      }
+    }
     const existing = state.pushSubscriptions[safeSubscription.endpoint] || {};
     state.pushSubscriptions[safeSubscription.endpoint] = {
       endpoint: safeSubscription.endpoint,
@@ -365,18 +520,22 @@ export async function notifyScoreSubscribers(tid, state, details = {}) {
     return { skipped: true, reason: "push notifications are not configured" };
   }
 
-  const subscriptions = Object.values(state?.pushSubscriptions || {});
+  const subscriptions = dedupeSubscriptions(Object.values(state?.pushSubscriptions || {}));
   if (!subscriptions.length) {
     return { skipped: true, reason: "no subscriptions" };
   }
 
-  const payload = JSON.stringify({
-    ...scoreUpdateSummary(state, details),
+  const summaries = dedupeNotificationSummaries(scoreUpdateSummaries(state, details));
+  if (!summaries.length) {
+    return { skipped: true, reason: "no notifications" };
+  }
+  const payloads = summaries.map((summary) => JSON.stringify({
+    ...summary,
     tid: String(tid || "").trim(),
     roundIndex: Number(details?.roundIndex),
     mode: String(details?.mode || "bulk").trim().toLowerCase(),
     holeIndex: Number.isInteger(Number(details?.holeIndex)) ? Number(details.holeIndex) : null
-  });
+  }));
 
   const staleEndpoints = new Set();
   let delivered = 0;
@@ -392,8 +551,10 @@ export async function notifyScoreSubscribers(tid, state, details = {}) {
       };
 
       try {
-        await webpush.sendNotification(cleanSubscription, payload, { TTL: 3600 });
-        delivered += 1;
+        for (const payload of payloads) {
+          await webpush.sendNotification(cleanSubscription, payload, { TTL: 3600 });
+          delivered += 1;
+        }
       } catch (error) {
         if (isGoneError(error)) {
           staleEndpoints.add(subscription.endpoint);
