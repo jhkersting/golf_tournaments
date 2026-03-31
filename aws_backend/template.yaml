@@ -186,6 +186,10 @@ Resources:
             BucketName: !Ref StateBucketName
         - S3WritePolicy:
             BucketName: !Ref StateBucketName
+        - S3WritePolicy:
+            BucketName: !Ref EventsBucketName
+        - S3WritePolicy:
+            BucketName: !Ref PublicBucketName
       Events:
         GetPushPublicKey:
           Type: Api
@@ -204,6 +208,18 @@ Resources:
           Properties:
             RestApiId: !Ref GolfApi
             Path: /tournaments/{tid}/push/unsubscribe
+            Method: post
+        ChatMessages:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GolfApi
+            Path: /tournaments/{tid}/chat
+            Method: get
+        PostChatMessage:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GolfApi
+            Path: /tournaments/{tid}/chat
             Method: post
 
   OddsMaterializeFunction:

@@ -115,6 +115,7 @@ export async function handler(event){
       teams: {},
       players: {},
       codeIndex: {},
+      chatMessages: [],
       scores: { rounds: normRounds.map(()=>({ teams:{}, players:{}, groups:{} })) },
       updatedAt: Date.now(),
       version: 1

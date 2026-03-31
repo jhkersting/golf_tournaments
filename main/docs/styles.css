@@ -332,6 +332,127 @@ header {
   display: none;
 }
 
+.enter-chat-card {
+  margin-top: 16px;
+}
+
+.enter-chat-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.enter-chat-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.enter-chat-kicker {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.enter-chat-summary {
+  margin-top: 10px;
+  max-width: 58ch;
+}
+
+.enter-chat-count {
+  white-space: nowrap;
+}
+
+.enter-chat-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  max-height: 380px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.enter-chat-empty {
+  padding: 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+}
+
+.enter-chat-item {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--team-accent, var(--brand));
+  border-radius: 12px;
+  background: var(--surface-strong);
+  display: grid;
+  gap: 8px;
+}
+
+.enter-chat-item.is-me {
+  border-color: color-mix(in srgb, var(--team-accent, var(--brand)) 38%, var(--border));
+  background: color-mix(in srgb, var(--surface-strong) 82%, var(--team-accent, var(--brand)));
+}
+
+.enter-chat-item-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.enter-chat-sender {
+  font-weight: 700;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.enter-chat-time {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.enter-chat-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.enter-chat-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  align-items: center;
+}
+
+.enter-chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--field-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.enter-chat-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--brand) 30%, transparent);
+  outline-offset: 2px;
+}
+
+.enter-chat-form button {
+  min-height: 44px;
+}
+
+.enter-chat-status {
+  margin-top: 10px;
+  min-height: 1em;
+}
+
 .enter-change-code-actions {
   display: flex;
   justify-content: center;
@@ -413,7 +534,7 @@ header {
 
 .enter-page .container {
   padding-top: 8px;
-  padding-bottom: calc(168px + env(safe-area-inset-bottom));
+  padding-bottom: calc(220px + env(safe-area-inset-bottom));
 }
 
 .card {
@@ -1335,11 +1456,11 @@ hr {
 }
 
 .odds-scorecard-cell.projected {
-  color: rgba(20, 33, 47, 0.78);
+  color: var(--muted);
 }
 
 .odds-scorecard-cell.empty {
-  color: rgba(20, 33, 47, 0.35);
+  color: var(--muted, 0.5);
 }
 
 .odds-histogram {
@@ -1356,7 +1477,6 @@ hr {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  flex: 1;
   height: 100%;
 }
 
@@ -2569,8 +2689,10 @@ th.dots {
 
   .trend-graph .trend-axis-label,
   .trend-graph .trend-hole-label {
-    font-size: 16px;
+    font-size: 30px;
   }
+
+
 
   .trend-legend {
     display: flex;
@@ -2866,12 +2988,9 @@ th.dots {
     height: 44px;
   }
 
-  .odds-histogram-col {
-    min-width: 24px;
-  }
 
   .odds-histogram-label {
-    font-size: 9px;
+    font-size: 8px;
   }
 
   .odds-histogram-pct {

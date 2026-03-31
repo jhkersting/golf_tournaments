@@ -163,6 +163,30 @@ export function normalizeTournamentScoring(scoring){
   return "stroke";
 }
 
+export const CHAT_HISTORY_LIMIT = 100;
+export const CHAT_MESSAGE_MAX_LENGTH = 240;
+
+export function normalizeChatMessageText(raw, { maxLength = CHAT_MESSAGE_MAX_LENGTH } = {}) {
+  const limit = Math.max(1, Math.floor(Number(maxLength) || CHAT_MESSAGE_MAX_LENGTH));
+  const text = String(raw ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\f\v]+/g, " ")
+    .replace(/\n+/g, " ")
+    .trim();
+  if (!text) {
+    const err = new Error("message is required");
+    err.statusCode = 400;
+    throw err;
+  }
+  return text.length > limit ? text.slice(0, limit).trimEnd() : text;
+}
+
+export function trimChatMessages(messages, limit = CHAT_HISTORY_LIMIT) {
+  const count = Math.max(1, Math.floor(Number(limit) || CHAT_HISTORY_LIMIT));
+  if (!Array.isArray(messages)) return [];
+  return messages.slice(-count);
+}
+
 function grossHoleScoreOrNull(value){
   if (value == null) return null;
   const n = Number(value);
@@ -1378,6 +1402,7 @@ export async function writePublicObjectsFromState(state){
         teeTime: teeTimes.find((v) => !!v) || p.teeTime || null
       },
       team: { teamId: team.teamId, teamName: team.teamName, group: p.group || null },
+      chat: trimChatMessages(state.chatMessages || []),
       saved
     };
 

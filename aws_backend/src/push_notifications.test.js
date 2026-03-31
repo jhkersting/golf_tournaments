@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { scoreUpdateSummaries } from "./push_notifications.js";
+import { chatNotificationSummaries, scoreUpdateSummaries } from "./push_notifications.js";
 
 let nodeTest = null;
 try {
@@ -311,6 +311,25 @@ registerTest("clear operations do not send notifications", () => {
   });
 
   assert.deepEqual(summaries, []);
+});
+
+registerTest("chat notifications route players back into the enter page", () => {
+  const state = buildState("singles");
+
+  const summaries = chatNotificationSummaries(state, {
+    entry: {
+      playerName: "John",
+      teamName: "Alpha",
+      message: "Dinner is at 7"
+    },
+    messageId: "chat_123"
+  });
+
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].title, "Fixture singles");
+  assert.equal(summaries[0].body, "John • Alpha: Dinner is at 7");
+  assert.equal(summaries[0].url, "./enter.html?t=fixture-singles");
+  assert.equal(summaries[0].tag, "golf-chat-fixture-singles-chat_123");
 });
 
 if (!nodeTest) {
