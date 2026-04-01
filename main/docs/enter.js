@@ -153,13 +153,13 @@ function syncEnterLocationPromptUi() {
   const secureMsg = secureContextMessage();
   const hasLiveLocation = Array.isArray(enterLocationState.userLocation);
   const trackingActive = hasLiveLocation || enterLocationState.watchId != null;
-  const statusText = secureMsg || enterLocationState.error || (trackingActive ? "Location is being shared." : "");
+  const statusText = secureMsg || enterLocationState.error || (enterLocationState.pending ? "Locating..." : "");
+  const hidePrompt = trackingActive && !secureMsg && !enterLocationState.error;
   for (const ref of enterLocationPromptRefs) {
     if (!ref?.root || !ref?.button || !ref?.status) continue;
-    ref.root.hidden = false;
-    ref.button.hidden = trackingActive;
+    ref.root.hidden = hidePrompt;
     ref.button.disabled = enterLocationState.pending && !trackingActive;
-    ref.button.textContent = enterLocationState.pending && !trackingActive ? "Locating..." : "Use My Location";
+    ref.button.textContent = enterLocationState.pending ? "Locating..." : "Use My Location";
     ref.status.textContent = statusText;
     ref.status.hidden = !statusText;
   }
