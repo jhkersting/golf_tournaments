@@ -17,8 +17,7 @@ function isStandalone() {
 function isPlayerFlowPage() {
   return (
     document.body.classList.contains("enter-page") ||
-    document.body.classList.contains("scoreboard-page") ||
-    document.body.classList.contains("hole-map-page")
+    document.body.classList.contains("scoreboard-page")
   );
 }
 

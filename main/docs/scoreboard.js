@@ -11,7 +11,11 @@ import {
 
 const tidFromQuery = String(qs("t") || qs("code") || "").trim();
 if (tidFromQuery) rememberTournamentId(tidFromQuery);
-const tid = tidFromQuery || getRememberedTournamentId();
+const tid = tidFromQuery || String(window.__SCOREBOARD_TID || "").trim() || getRememberedTournamentId();
+const compactMode =
+  Boolean(window.__SCOREBOARD_COMPACT) ||
+  ["1", "true", "yes"].includes(String(qs("compact") || "").trim().toLowerCase());
+if (compactMode) document.body.classList.add("scoreboard-compact");
 const SCOREBOARD_PREFS_STORAGE_PREFIX = "golf:scoreboardPrefs:";
 const roundFilter = document.getElementById("round_filter");
 const btnTeam = document.getElementById("btn_team");
@@ -2644,7 +2648,9 @@ function renderLeaderboard(data) {
   const showHandicapNameStrokes = isHandicapRound(data.view?.round);
   const showStrokesColumn = isTeam && isAllRounds && !showStableford;
   const defaultSortDir = showStableford ? "desc" : "asc";
-  lbTitle.textContent = isTeam ? "Teams" : isTwoManGroupView ? "Groups" : "Individuals";
+  if (lbTitle) {
+    lbTitle.textContent = isTeam ? "Teams" : isTwoManGroupView ? "Groups" : "Individuals";
+  }
   rebuildTeamColors();
 
   const head = document.getElementById("lb_head");
@@ -4624,7 +4630,9 @@ function render() {
     data.view.round === "all" && tournamentHasAnyScrambleRound()
       ? " • all rounds view is team-only (scramble in tournament)"
       : "";
-  toggleNote.textContent = `${rLabel}${stablefordInfo}${handicapInfo}${scrambleInfo}${twoManInfo}${allRoundsInfo}`;
+  if (toggleNote) {
+    toggleNote.textContent = `${rLabel}${stablefordInfo}${handicapInfo}${scrambleInfo}${twoManInfo}${allRoundsInfo}`;
+  }
   if (lbTitleHelp) {
     const oddsInfo = liveOddsForView(currentRound)
       ? " Odds & projections are shown in the dedicated section below."
@@ -4638,9 +4646,9 @@ function render() {
   renderStats(data);
 
   const ts = TOURN.updatedAt ? new Date(TOURN.updatedAt).toLocaleString() : "—";
-  updated.textContent = `Updated: ${ts}`;
+  if (updated) updated.textContent = `Updated: ${ts}`;
 
-  raw.textContent = "";
+  if (raw) raw.textContent = "";
   scheduleOddsHeadFixedStateSync();
 }
 
@@ -4745,14 +4753,20 @@ window.addEventListener("resize", scheduleOddsHeadFixedStateSync);
 
 (async function init() {
   if (!tid) {
-    status.textContent =
-      "Missing tournament id. Open with ?t=... or create/open a tournament first.";
+    if (status) {
+      status.hidden = false;
+      status.textContent =
+        "Missing tournament id. Open with ?t=... or create/open a tournament first.";
+    }
     return;
   }
 
   if (scorecardCard) scorecardCard.style.display = "none";
 
-  status.textContent = "Loading…";
+  if (status) {
+    status.hidden = false;
+    status.textContent = "Loading…";
+  }
   try {
     TOURN = await loadTournament();
     rememberTournamentId(tid);
@@ -4786,11 +4800,17 @@ window.addEventListener("resize", scheduleOddsHeadFixedStateSync);
     syncOddsMetricButtons();
     syncOddsValueButtons();
 
-    status.textContent = "";
+    if (status) {
+      status.textContent = "";
+      status.hidden = true;
+    }
     render();
     startAutoRefresh();
   } catch (e) {
     console.error(e);
-    status.textContent = e.message || String(e);
+    if (status) {
+      status.hidden = false;
+      status.textContent = e.message || String(e);
+    }
   }
 })();

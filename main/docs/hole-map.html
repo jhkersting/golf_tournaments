@@ -27,6 +27,12 @@
 </head>
 
 <body class="hole-map-page" >
+  <div class="hole-map-stage-wrap">
+    <canvas id="hole_canvas" class="hole-map-stage" width="1200" height="760" role="img"
+      aria-label="Hole layout"></canvas>
+    <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
+  </div>
+
   <header>
     <div class="nav">
       <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
@@ -80,19 +86,9 @@
           <span id="metric_back">—</span>
         </div>
       </div>
-    </div>
-
-    <div class="card">
-      <div class="hole-map-stage-wrap">
-        <canvas id="hole_canvas" class="hole-map-stage" width="1200" height="760" role="img"
-          aria-label="Hole layout"></canvas>
-        <div class="small hole-map-empty" id="hole_empty" style="display:none;">No geometry found for this hole.</div>
-        <div class="hole-map-location">
-          <div class="hole-map-location-actions">
-            <button id="loc_btn" type="button">Use My Location</button>
-            <button id="loc_clear" class="secondary" type="button">Clear Location</button>
-            <button id="zoom_auto_toggle" class="secondary hole-map-zoom-toggle" type="button">Auto Zoom: On</button>
-          </div>
+      <div class="hole-map-location">
+        <div class="hole-map-location-actions">
+          <button id="loc_btn" type="button">Use My Location</button>
         </div>
       </div>
     </div>
@@ -110,13 +106,7 @@
       </div>
     </div>
 
-    <div class="page-bottom-actions" id="map_page_bottom_actions" hidden>
-      <button id="map_change_code_page_btn" class="secondary" type="button">Change code</button>
-    </div>
   </div>
-
-  <div id="score_notifier" class="score-notifier" role="status" aria-live="polite" aria-atomic="true"></div>
-
   <script type="module" src="map.js"></script>
 </body>
 

@@ -83,12 +83,14 @@ function applyMobileMenu() {
 
   toggle.addEventListener("click", () => {
     setOpen(!nav.classList.contains("menu-open"));
+    window.dispatchEvent(new Event("resize"));
   });
 
   actions.querySelectorAll("a, button").forEach((node) => {
     node.addEventListener("click", () => {
       if (window.matchMedia("(max-width: 560px)").matches) {
         setOpen(false);
+        window.dispatchEvent(new Event("resize"));
       }
     });
   });

@@ -51,13 +51,14 @@ const LOCATION_MAX_REASONABLE_SPEED_MPS = 14;
 const GEO_GRANTED_KEY = "hole-map:geo-granted";
 const MAP_MODE_PREFS_KEY = "hole-map:map-mode-preferences";
 const AUTO_ZOOM_PREFS_KEY = "hole-map:auto-zoom-enabled";
-const MAP_FOCUS_MAX_USER_DISTANCE_YARDS = 700;
 const MAP_PROXIMITY_ZOOM_MAX_BOOST = 0.45;
 const MAP_PLAYER_REAR_PADDING_YARDS = 20; // Keep 20 yards behind the current player position in auto-zoom framing.
 const MAP_GREEN_BACK_PADDING_YARDS = 20; // Keep 20 yards past the back of the green in auto-zoom framing.
 const USER_ZOOM_MIN = 1;
 const USER_ZOOM_MAX = 3;
 const TAP_PREVIEW_DURATION_MS = 5000;
+const TRIPLE_TAP_MAX_INTERVAL_MS = 900;
+const TRIPLE_TAP_MAX_SPREAD_PX = 48;
 const TAP_DOT_MOBILE_RADIUS_MULTIPLIER = 1.75;
 const PLAYER_DOT_MOBILE_RADIUS_MULTIPLIER = 1.65;
 const SCORE_AUTO_REFRESH_MS = 30_000;
@@ -83,6 +84,7 @@ const state = {
   lastAcceptedLocationFix: null,
   locationPending: false,
   locationPermissionGranted: false,
+  locationIsMock: false,
   tapPoint: null,
   tapPreviewTimerId: null,
   lastProjection: null,
@@ -93,8 +95,10 @@ const state = {
   mapLabel: "",
   renderNonce: 0,
   tileImageCache: new Map(),
+  renderBufferCanvas: null,
+  lastPresentedHole: null,
   userZoomMultiplier: 1,
-  autoZoomEnabled: true,
+  autoZoomEnabled: false,
   userPanX: 0,
   userPanY: 0,
   lastProjectionInput: null,
@@ -159,8 +163,16 @@ let pinchZoomStartCenter = null;
 let pinchZoomAnchorMapPoint = null;
 let panTouchActive = false;
 let panTouchLastPoint = null;
+let recentMapTapPoints = [];
+let holeRenderRafId = 0;
+let mousePanActive = false;
+let mousePanPointerId = null;
+let mousePanStartPoint = null;
+let mousePanStartPanX = 0;
+let mousePanStartPanY = 0;
 let mapGestureLastMovedAtMs = 0;
 let pendingSyncPromise = null;
+let scoreboardModulePromise = null;
 const SCORE_NOTIFIER_SHOW_MS = 2300;
 const SCORE_NOTIFIER_GAP_MS = 200;
 const TICKER_SPEED_PX_PER_SEC = 52;
@@ -191,9 +203,9 @@ const els = {
   holeSelect: document.getElementById("hole_select"),
   holePrev: document.getElementById("hole_prev"),
   holeNext: document.getElementById("hole_next"),
+  locationPanel: document.querySelector(".hole-map-location"),
   locBtn: document.getElementById("loc_btn"),
   locClear: document.getElementById("loc_clear"),
-  zoomAutoToggle: document.getElementById("zoom_auto_toggle"),
   metricSummary: document.getElementById("metric_summary"),
   metricToPointHead: document.getElementById("metric_to_point_head"),
   metricToPointRow: document.getElementById("metric_to_point_row"),
@@ -205,8 +217,6 @@ const els = {
   holeCanvas: document.getElementById("hole_canvas"),
   holeEmpty: document.getElementById("hole_empty"),
   holeFooter: document.querySelector(".hole-map-footer"),
-  pageBottomActions: document.getElementById("map_page_bottom_actions"),
-  pageChangeCodeButton: document.getElementById("map_change_code_page_btn"),
   scoreCard: null,
   scoreBody: null,
   scoreTitle: null,
@@ -223,6 +233,11 @@ const els = {
   scoreSubmitButton: null,
   scoreSubmitButtonLabel: null,
   scoreSubmitButtonDetail: null,
+  scoreboardDockButton: null,
+  scoreboardDockButtonLabel: null,
+  scoreboardDockButtonDetail: null,
+  scoreboardPreviewOverlay: null,
+  scoreboardPreviewCloseButton: null,
   scoreSubmitInline: null,
   scoreCloseButton: null,
   scoreChangeCodeButton: null,
@@ -492,24 +507,30 @@ function createAlignedProjector(
     if (y > maxY) maxY = y;
   }
 
+  const paddingValue = Number(padding);
+  const padTop = Number.isFinite(padding?.top) ? Math.max(0, padding.top) : Math.max(0, paddingValue);
+  const padRight = Number.isFinite(padding?.right) ? Math.max(0, padding.right) : Math.max(0, paddingValue);
+  const padBottom = Number.isFinite(padding?.bottom) ? Math.max(0, padding.bottom) : Math.max(0, paddingValue);
+  const padLeft = Number.isFinite(padding?.left) ? Math.max(0, padding.left) : Math.max(0, paddingValue);
   const w = Math.max(1e-9, maxX - minX);
   const h = Math.max(1e-9, maxY - minY);
-  const innerW = Math.max(1, width - padding * 2);
-  const innerH = Math.max(1, height - padding * 2);
+  const innerW = Math.max(1, width - padLeft - padRight);
+  const innerH = Math.max(1, height - padTop - padBottom);
   const baseScale = Math.min(innerW / w, innerH / h);
   const safeZoom = Number.isFinite(zoomMultiplier) ? Math.max(1, zoomMultiplier) : 1;
   const scale = baseScale * safeZoom;
   const drawW = w * scale;
   const drawH = h * scale;
-  const offsetX = (width - drawW) / 2;
-  const offsetY = (height - drawH) / 2;
+  const offsetX = padLeft + (innerW - drawW) / 2;
+  const offsetY = (innerH - drawH) / 2;
+  const bandBottomY = height - padBottom;
 
   const projectMercator = ([mx, my]) => {
     const lx = Number(mx) - centerX;
     const ly = Number(my) - centerY;
     const [rx, ry] = rotate([lx, ly]);
     const x = offsetX + (rx - minX) * scale + panOffsetX;
-    const y = height - (offsetY + (ry - minY) * scale) + panOffsetY;
+    const y = bandBottomY - (offsetY + (ry - minY) * scale) + panOffsetY;
     return [x, y];
   };
 
@@ -524,7 +545,7 @@ function createAlignedProjector(
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
     const rx = (x - panOffsetX - offsetX) / scale + minX;
-    const ry = (height - (y - panOffsetY) - offsetY) / scale + minY;
+    const ry = (bandBottomY - (y - panOffsetY) - offsetY) / scale + minY;
     const lx = rx * cosA + ry * sinA;
     const ly = -rx * sinA + ry * cosA;
     const mx = lx + centerX;
@@ -537,6 +558,57 @@ function createAlignedProjector(
 
   const rotationDeg = (rotationRad * 180) / Math.PI;
   return { project, projectMercator, unproject, rotationRad, rotationDeg };
+}
+
+function pathRoundedRect(ctx, x, y, width, height, radius) {
+  const r = Math.max(0, Math.min(radius, width / 2, height / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawTapPointBadge(ctx, x, y, text, { width, height, darkTheme }) {
+  const label = String(text || "").trim();
+  if (!label) return;
+
+  const fontSize = width <= 560 ? 12 : 13;
+  const padX = 9;
+  const padY = 6;
+  const gap = 12;
+  const radius = 10;
+
+  ctx.save();
+  ctx.font = `700 ${fontSize}px "JetBrains Mono", monospace`;
+  const metrics = ctx.measureText(label);
+  const boxWidth = Math.ceil(metrics.width + padX * 2);
+  const boxHeight = Math.ceil(fontSize + padY * 2);
+  const desiredX = x - boxWidth / 2;
+  const minX = 8;
+  const maxX = Math.max(minX, width - boxWidth - 8);
+  const boxX = Math.max(minX, Math.min(maxX, desiredX));
+  let boxY = y - gap - boxHeight;
+  if (boxY < 8) boxY = Math.min(height - boxHeight - 8, y + gap);
+
+  pathRoundedRect(ctx, boxX, boxY, boxWidth, boxHeight, radius);
+  ctx.fillStyle = darkTheme ? "rgba(18, 24, 31, 0.9)" : "rgba(255, 255, 255, 0.92)";
+  ctx.fill();
+  ctx.strokeStyle = darkTheme ? "rgba(255,255,255,0.2)" : "rgba(20, 34, 54, 0.14)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.fillStyle = darkTheme ? "#f4f7fb" : "#16283f";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, boxX + boxWidth / 2, boxY + boxHeight / 2 + 0.5);
+  ctx.restore();
 }
 
 function mercatorToWorldPixels([mx, my], zoom) {
@@ -569,15 +641,28 @@ function tileUrl(template, z, x, y) {
 
 function loadTileImage(url) {
   if (state.tileImageCache.has(url)) return state.tileImageCache.get(url);
-  const promise = new Promise((resolve, reject) => {
+  const record = {
+    status: "loading",
+    image: null,
+    promise: null,
+    rerenderQueued: false,
+  };
+  record.promise = new Promise((resolve, reject) => {
     const image = new Image();
     image.crossOrigin = "anonymous";
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`Tile failed: ${url}`));
+    image.onload = () => {
+      record.status = "loaded";
+      record.image = image;
+      resolve(image);
+    };
+    image.onerror = () => {
+      record.status = "error";
+      reject(new Error(`Tile failed: ${url}`));
+    };
     image.src = url;
   });
-  state.tileImageCache.set(url, promise);
-  return promise;
+  state.tileImageCache.set(url, record);
+  return record;
 }
 
 function buildTileFrame(projection, width, height, overscan) {
@@ -624,14 +709,15 @@ function buildTileFrame(projection, width, height, overscan) {
   };
 }
 
-function chooseTileZoom(frame, width, height) {
+function chooseTileZoom(frame, width, height, { preferSharper = false } = {}) {
   const targetW = Math.max(1, width);
   const targetH = Math.max(1, height);
   const mppX = (frame.maxX - frame.minX) / targetW;
   const mppY = (frame.maxY - frame.minY) / targetH;
   const mpp = Math.max(mppX, mppY, 0.01);
   const raw = Math.log2(WEB_MERCATOR_WORLD_WIDTH / (TILE_SIZE * mpp));
-  return Math.max(2, Math.min(20, Math.round(raw)));
+  const chosen = preferSharper ? Math.ceil(raw) : Math.round(raw);
+  return Math.max(2, Math.min(20, chosen));
 }
 
 function isDarkThemeActive() {
@@ -675,9 +761,19 @@ function drawGeometryPath(ctx, geometry, project) {
 async function drawStreetTileBackground(ctx, projection, width, height, nonce, pixelRatio) {
   const overscan = 1.58;
   const frame = buildTileFrame(projection, width, height, overscan);
-  if (!frame) return;
+  if (!frame) return { hasVisibleTiles: false, pendingCount: 0 };
+  const effectivePixelRatio =
+    Number.isFinite(pixelRatio) && Number(pixelRatio) > 0
+      ? Number(pixelRatio)
+      : 1;
+  const preferSharperTiles = state.mapMode === MAP_MODE_SIMPLIFIED;
 
-  const zoom = chooseTileZoom(frame, width * overscan, height * overscan);
+  const zoom = chooseTileZoom(
+    frame,
+    width * overscan * effectivePixelRatio,
+    height * overscan * effectivePixelRatio,
+    { preferSharper: preferSharperTiles }
+  );
   const template = state.mapMode === MAP_MODE_SIMPLIFIED
     ? SATELLITE_TILE_URL_TEMPLATE
     : (isDarkThemeActive() ? STREET_TILE_DARK_URL_TEMPLATE : STREET_TILE_LIGHT_URL_TEMPLATE);
@@ -691,21 +787,32 @@ async function drawStreetTileBackground(ctx, projection, width, height, nonce, p
   const maxTileY = Math.floor((bottomPx - 1) / TILE_SIZE);
   const tileRows = 2 ** zoom;
 
-  const tileJobs = [];
+  const loaded = [];
+  let pendingCount = 0;
   for (let ty = minTileY; ty <= maxTileY; ty += 1) {
     if (ty < 0 || ty >= tileRows) continue;
     for (let tx = minTileX; tx <= maxTileX; tx += 1) {
       const wrappedX = normalizeTileX(tx, zoom);
       const url = tileUrl(template, zoom, wrappedX, ty);
-      tileJobs.push(
-        loadTileImage(url)
-          .then((image) => ({ image, tx, ty }))
-          .catch(() => null)
-      );
+      const tileRecord = loadTileImage(url);
+      if (tileRecord?.status === "loaded" && tileRecord.image) {
+        loaded.push({ image: tileRecord.image, tx, ty });
+        continue;
+      }
+      if (tileRecord?.promise) {
+        pendingCount += 1;
+        if (!tileRecord.rerenderQueued) {
+          tileRecord.rerenderQueued = true;
+          tileRecord.promise
+            .catch(() => null)
+            .finally(() => {
+              tileRecord.rerenderQueued = false;
+              requestHoleRender();
+            });
+        }
+      }
     }
   }
-
-  const loaded = await Promise.all(tileJobs);
   if (nonce !== state.renderNonce) return;
   if (!projection?.projectMercator) return;
 
@@ -725,10 +832,7 @@ async function drawStreetTileBackground(ctx, projection, width, height, nonce, p
   const d = pxY[1] - origin[1];
   const e = origin[0];
   const f = origin[1];
-  const deviceScale =
-    Number.isFinite(pixelRatio) && Number(pixelRatio) > 0
-      ? Number(pixelRatio)
-      : 1;
+  const deviceScale = effectivePixelRatio;
 
   ctx.save();
   ctx.beginPath();
@@ -749,6 +853,10 @@ async function drawStreetTileBackground(ctx, projection, width, height, nonce, p
     ctx.drawImage(tile.image, dx, dy, TILE_SIZE, TILE_SIZE);
   }
   ctx.restore();
+  return {
+    hasVisibleTiles: loaded.length > 0,
+    pendingCount,
+  };
 }
 
 function greenForHole(features) {
@@ -954,7 +1062,7 @@ function projectionForGesture(userZoom, panX, panY) {
     input.alignmentEnd,
     input.width,
     input.height,
-    input.margin,
+    input.padding,
     finalZoom,
     panX,
     panY
@@ -965,11 +1073,15 @@ function setUserZoom(value, { rerender = true } = {}) {
   const next = clampUserZoom(value);
   if (Math.abs(next - state.userZoomMultiplier) < 1e-6) return;
   state.userZoomMultiplier = next;
-  if (next <= USER_ZOOM_MIN + 1e-6) {
-    state.userPanX = 0;
-    state.userPanY = 0;
-  }
   if (rerender) renderCurrentHole();
+}
+
+function requestHoleRender() {
+  if (holeRenderRafId) return;
+  holeRenderRafId = window.requestAnimationFrame(() => {
+    holeRenderRafId = 0;
+    renderCurrentHole();
+  });
 }
 
 function formatYards(value) {
@@ -1065,25 +1177,45 @@ function syncScoreNotifierOffset() {
   if (!scoreNotifier) return;
   const footer = els.holeFooter;
   const dock = els.scoreSubmitDock;
+  const bottomStackHeight = (() => {
+    if (!document.body?.classList?.contains("hole-map-page")) return 0;
+    const tickerHeight = tickerHome && !tickerHome.hidden
+      ? Math.max(0, Math.round(tickerHome.getBoundingClientRect().height || tickerHome.offsetHeight || 0))
+      : 0;
+    return tickerHeight;
+  })();
   const dockHeight = dock && !dock.hidden
     ? Math.max(0, Math.round(dock.getBoundingClientRect().height || dock.offsetHeight || 0))
     : 0;
   if (!footer) {
-    scoreNotifier.style.bottom = `${Math.max(14, dockHeight + 14)}px`;
+    scoreNotifier.style.bottom = `${Math.max(14, dockHeight, bottomStackHeight) + 14}px`;
     return;
   }
   const footerHeight = Math.max(
     0,
     Math.round(footer.getBoundingClientRect().height || footer.offsetHeight || 0)
   );
-  scoreNotifier.style.bottom = `${Math.max(14, Math.max(footerHeight, dockHeight) + 14)}px`;
+  scoreNotifier.style.bottom = `${Math.max(14, footerHeight, dockHeight, bottomStackHeight) + 14}px`;
 }
 
 function syncHoleControlsStickyOffset() {
-  if (!els.controlsCard || !els.container) return;
+  if (!els.controlsCard) return;
   const header = document.querySelector("header");
   const headerBottom = Math.max(0, Math.round(header?.getBoundingClientRect().bottom || 0));
+  document.documentElement.style.setProperty("--hole-map-scoreboard-top", `${headerBottom}px`);
   els.controlsCard.style.setProperty("--hole-controls-stick-top", `${headerBottom}px`);
+  if (document.body?.classList?.contains("hole-map-page")) {
+    holeControlsStickyActive = false;
+    els.controlsCard.classList.remove("is-stuck");
+    els.controlsCard.style.removeProperty("--hole-controls-fixed-top");
+    els.controlsCard.style.removeProperty("--hole-controls-fixed-left");
+    els.controlsCard.style.removeProperty("--hole-controls-fixed-width");
+    if (holeControlsStickyPlaceholder?.isConnected) {
+      holeControlsStickyPlaceholder.remove();
+      holeControlsStickyPlaceholder = null;
+    }
+    return;
+  }
   const STICKY_HYSTERESIS_PX = 6;
 
   if (!holeControlsStickyPlaceholder || !holeControlsStickyPlaceholder.isConnected) {
@@ -1192,10 +1324,66 @@ function syncFooterViewportLock() {
 }
 
 function getCanvasConfig() {
-  if (window.matchMedia("(max-width: 560px)").matches) {
-    return { width: 1200, height: 2200, margin: 60 };
+  const viewport = window.visualViewport || window;
+  const width = Math.max(320, Math.round(viewport.width || window.innerWidth || 1200));
+  const height = Math.max(320, Math.round(viewport.height || window.innerHeight || 760));
+  return {
+    width,
+    height,
+    padding: getMapViewportPadding(width, height),
+  };
+}
+
+function getMapViewportPadding(width, height) {
+  const safe = (value) => Math.max(0, Math.round(Number(value) || 0));
+  const headerRect = document.querySelector("header")?.getBoundingClientRect() || null;
+  const controlsRect = els.controlsCard?.getBoundingClientRect() || null;
+  const dockRect =
+    els.scoreSubmitDock && !els.scoreSubmitDock.hidden
+      ? els.scoreSubmitDock.getBoundingClientRect()
+      : null;
+  const footerRect =
+    els.holeFooter && window.getComputedStyle(els.holeFooter).position === "fixed"
+      ? els.holeFooter.getBoundingClientRect()
+      : null;
+
+  const topAnchor = Math.max(
+    18,
+    safe(headerRect?.bottom) + 8,
+    safe(controlsRect?.bottom) + 12
+  );
+
+  let bottomAnchor = Math.max(topAnchor + 1, height - 18);
+  if (dockRect && Number.isFinite(dockRect.top)) {
+    bottomAnchor = Math.min(bottomAnchor, Math.max(topAnchor + 1, safe(dockRect.top) - 14));
   }
-  return { width: 1200, height: 760, margin: 52 };
+  if (footerRect && Number.isFinite(footerRect.top)) {
+    bottomAnchor = Math.min(bottomAnchor, Math.max(topAnchor + 1, safe(footerRect.top) - 14));
+  }
+
+  const minVisibleBandHeight = Math.max(180, Math.round(height * 0.34));
+  if (bottomAnchor - topAnchor < minVisibleBandHeight) {
+    const dockFallbackHeight = dockRect
+      ? safe(dockRect.height || els.scoreSubmitDock?.offsetHeight || 0)
+      : 0;
+    const footerFallbackHeight = footerRect
+      ? safe(footerRect.height || els.holeFooter?.offsetHeight || 0)
+      : 0;
+    const fallbackBottomPadding = Math.max(18, dockFallbackHeight + 28, footerFallbackHeight + 28);
+    bottomAnchor = Math.min(
+      height - 18,
+      Math.max(topAnchor + minVisibleBandHeight, height - fallbackBottomPadding)
+    );
+  }
+
+  const visibleBandHeight = Math.max(1, bottomAnchor - topAnchor);
+  const sidePadding = Math.max(16, Math.round(Math.min(width, visibleBandHeight) * 0.025));
+  return {
+    top: topAnchor,
+    right: sidePadding,
+    bottom: Math.max(18, height - bottomAnchor),
+    left: sidePadding,
+  };
 }
 
 function readGeolocationGrant() {
@@ -1271,14 +1459,13 @@ function persistAutoZoomPreference(enabled) {
 }
 
 function updateAutoZoomButton() {
-  if (!els.zoomAutoToggle) return;
-  els.zoomAutoToggle.textContent = state.autoZoomEnabled ? "Auto Zoom: On" : "Auto Zoom: Off";
-  els.zoomAutoToggle.setAttribute("aria-pressed", state.autoZoomEnabled ? "true" : "false");
+  return;
 }
 
 function hydrateAutoZoomPreference() {
   state.autoZoomEnabled = readAutoZoomPreference();
-  updateAutoZoomButton();
+  if (!state.autoZoomEnabled) state.autoZoomEnabled = true;
+  persistAutoZoomPreference(state.autoZoomEnabled);
 }
 
 function rememberMapModePreference(slug, mode) {
@@ -1293,17 +1480,23 @@ function rememberMapModePreference(slug, mode) {
 function updateTrackingButton() {
   const hasLiveLocation = Array.isArray(state.userLocation);
   const awaitingLocation = !hasLiveLocation && (state.locationPending || state.locationWatchId != null);
-  const locationInUse = hasLiveLocation || awaitingLocation;
+  const hasLocationAction = !hasLiveLocation && !state.locationPermissionGranted;
 
   if (els.locBtn) {
-    els.locBtn.style.display = hasLiveLocation ? "none" : "";
+    els.locBtn.hidden = !hasLocationAction;
     els.locBtn.disabled = awaitingLocation;
     els.locBtn.textContent = awaitingLocation ? "Locating..." : "Use My Location";
   }
 
   if (els.locClear) {
-    els.locClear.style.display = locationInUse ? "" : "none";
+    els.locClear.hidden = !hasLiveLocation;
     els.locClear.disabled = false;
+  }
+
+  if (els.locationPanel) {
+    const clearVisible = !!els.locClear && !els.locClear.hidden;
+    const panelVisible = hasLocationAction || clearVisible;
+    els.locationPanel.hidden = !panelVisible;
   }
 }
 
@@ -1398,9 +1591,50 @@ function touchDistance(touchA, touchB) {
   return Math.hypot(ax - bx, ay - by);
 }
 
+function resetRecentMapTapPoints() {
+  recentMapTapPoints = [];
+}
+
+function registerRecentMapTap(canvasPoint) {
+  if (!Array.isArray(canvasPoint) || canvasPoint.length < 2) {
+    resetRecentMapTapPoints();
+    return false;
+  }
+
+  const nowMs = Date.now();
+  recentMapTapPoints = recentMapTapPoints.filter((entry) => {
+    if (!entry || !Number.isFinite(entry.tsMs)) return false;
+    if (nowMs - entry.tsMs > TRIPLE_TAP_MAX_INTERVAL_MS) return false;
+    return Math.hypot(entry.x - canvasPoint[0], entry.y - canvasPoint[1]) <= TRIPLE_TAP_MAX_SPREAD_PX;
+  });
+
+  recentMapTapPoints.push({
+    tsMs: nowMs,
+    x: canvasPoint[0],
+    y: canvasPoint[1],
+  });
+  if (recentMapTapPoints.length < 3) return false;
+
+  const recentThree = recentMapTapPoints.slice(-3);
+  const first = recentThree[0];
+  const last = recentThree[recentThree.length - 1];
+  const isTripleTap =
+    last.tsMs - first.tsMs <= TRIPLE_TAP_MAX_INTERVAL_MS &&
+    recentThree.every((entry) => Math.hypot(entry.x - first.x, entry.y - first.y) <= TRIPLE_TAP_MAX_SPREAD_PX);
+
+  if (isTripleTap) {
+    resetRecentMapTapPoints();
+    return true;
+  }
+
+  recentMapTapPoints = recentThree;
+  return false;
+}
+
 function beginPinchZoom(touchA, touchB) {
   const distance = touchDistance(touchA, touchB);
   if (!Number.isFinite(distance) || distance < 8) return false;
+  resetRecentMapTapPoints();
   const center = canvasPointFromClient(
     (Number(touchA?.clientX) + Number(touchB?.clientX)) / 2,
     (Number(touchA?.clientY) + Number(touchB?.clientY)) / 2
@@ -1428,13 +1662,13 @@ function handleCanvasTouchStart(event) {
     }
     return;
   }
-  if (touches.length === 1 && clampUserZoom(state.userZoomMultiplier) > USER_ZOOM_MIN + 1e-6) {
+  if (touches.length === 1) {
     panTouchActive = true;
     panTouchLastPoint = canvasPointFromClient(touches[0]?.clientX, touches[0]?.clientY);
-  } else {
-    panTouchActive = false;
-    panTouchLastPoint = null;
+    return;
   }
+  panTouchActive = false;
+  panTouchLastPoint = null;
 }
 
 function handlePanTouchMove(event) {
@@ -1446,10 +1680,11 @@ function handlePanTouchMove(event) {
   const dy = current[1] - panTouchLastPoint[1];
   panTouchLastPoint = current;
   if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) return true;
+  resetRecentMapTapPoints();
   state.userPanX = (Number(state.userPanX) || 0) + dx;
   state.userPanY = (Number(state.userPanY) || 0) + dy;
   mapGestureLastMovedAtMs = Date.now();
-  renderCurrentHole();
+  requestHoleRender();
   return true;
 }
 
@@ -1488,7 +1723,7 @@ function handleCanvasTouchMove(event) {
     state.userPanY = panY;
     mapGestureLastMovedAtMs = Date.now();
     event.preventDefault();
-    renderCurrentHole();
+    requestHoleRender();
     return;
   }
 
@@ -1518,7 +1753,7 @@ function handleCanvasTouchEnd(event) {
     panTouchLastPoint = null;
     return;
   }
-  if (touches.length === 1 && clampUserZoom(state.userZoomMultiplier) > USER_ZOOM_MIN + 1e-6) {
+  if (touches.length === 1) {
     panTouchActive = true;
     panTouchLastPoint = canvasPointFromClient(touches[0]?.clientX, touches[0]?.clientY);
     return;
@@ -1529,9 +1764,105 @@ function handleCanvasTouchEnd(event) {
 }
 
 function handleCanvasTouchCancel() {
+  resetRecentMapTapPoints();
   panTouchActive = false;
   panTouchLastPoint = null;
   finishPinchZoom();
+}
+
+function handleCanvasPointerDown(event) {
+  if (event?.pointerType !== "mouse" || event.button !== 0) return;
+  if (!els.holeCanvas || mousePanActive) return;
+  const canvasPoint = canvasPointFromEvent(event);
+  if (!canvasPoint) return;
+  resetRecentMapTapPoints();
+  mousePanActive = true;
+  mousePanPointerId = event.pointerId;
+  mousePanStartPoint = canvasPoint;
+  mousePanStartPanX = Number(state.userPanX) || 0;
+  mousePanStartPanY = Number(state.userPanY) || 0;
+  if (typeof els.holeCanvas.setPointerCapture === "function") {
+    try {
+      els.holeCanvas.setPointerCapture(event.pointerId);
+    } catch (_) {
+      // ignore
+    }
+  }
+  els.holeCanvas.style.cursor = "grabbing";
+  event.preventDefault();
+}
+
+function handleCanvasPointerMove(event) {
+  if (!mousePanActive || event?.pointerType !== "mouse" || event.pointerId !== mousePanPointerId) return;
+  const current = canvasPointFromEvent(event);
+  if (!Array.isArray(current) || !Array.isArray(mousePanStartPoint)) return;
+  const dx = current[0] - mousePanStartPoint[0];
+  const dy = current[1] - mousePanStartPoint[1];
+  if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) return;
+  state.userPanX = mousePanStartPanX + dx;
+  state.userPanY = mousePanStartPanY + dy;
+  mapGestureLastMovedAtMs = Date.now();
+  requestHoleRender();
+  event.preventDefault();
+}
+
+function finishMousePan() {
+  if (!mousePanActive) return;
+  if (els.holeCanvas && mousePanPointerId != null && typeof els.holeCanvas.releasePointerCapture === "function") {
+    try {
+      els.holeCanvas.releasePointerCapture(mousePanPointerId);
+    } catch (_) {
+      // ignore
+    }
+  }
+  mousePanActive = false;
+  mousePanPointerId = null;
+  mousePanStartPoint = null;
+  resetRecentMapTapPoints();
+  if (els.holeCanvas) els.holeCanvas.style.cursor = "grab";
+}
+
+function handleCanvasPointerUp(event) {
+  if (event?.pointerType !== "mouse" || event.pointerId !== mousePanPointerId) return;
+  finishMousePan();
+}
+
+function handleCanvasPointerCancel(event) {
+  if (event?.pointerType !== "mouse" || event.pointerId !== mousePanPointerId) return;
+  finishMousePan();
+}
+
+function handleCanvasWheel(event) {
+  if (!state.lastProjection?.unproject || !els.holeCanvas) return;
+  const canvasPoint = canvasPointFromEvent(event);
+  if (!canvasPoint) return;
+  resetRecentMapTapPoints();
+  const anchorMapPoint = state.lastProjection.unproject(canvasPoint);
+  if (!Array.isArray(anchorMapPoint)) return;
+
+  const delta = Number(event.deltaY) || 0;
+  if (!delta) return;
+  const zoomFactor = Math.exp(Math.max(-1, Math.min(1, -delta / 500)));
+  const nextZoom = clampUserZoom((Number(state.userZoomMultiplier) || 1) * zoomFactor);
+  if (Math.abs(nextZoom - state.userZoomMultiplier) < 1e-4) return;
+
+  let panX = Number(state.userPanX) || 0;
+  let panY = Number(state.userPanY) || 0;
+  const candidate = projectionForGesture(nextZoom, panX, panY);
+  if (candidate?.project) {
+    const projected = candidate.project(anchorMapPoint);
+    if (Array.isArray(projected)) {
+      panX += canvasPoint[0] - projected[0];
+      panY += canvasPoint[1] - projected[1];
+    }
+  }
+
+  state.userZoomMultiplier = nextZoom;
+  state.userPanX = panX;
+  state.userPanY = panY;
+  mapGestureLastMovedAtMs = Date.now();
+  requestHoleRender();
+  event.preventDefault();
 }
 
 function handleHoleTap(event) {
@@ -1544,6 +1875,10 @@ function handleHoleTap(event) {
   if (!canvasPoint) return;
   const mapPoint = state.lastProjection.unproject(canvasPoint);
   if (!Array.isArray(mapPoint)) return;
+  if (registerRecentMapTap(canvasPoint)) {
+    setSimulatedLocation(mapPoint);
+    return;
+  }
   clearTapPreviewTimer();
   state.tapPoint = mapPoint;
   state.tapPreviewTimerId = window.setTimeout(() => {
@@ -1552,6 +1887,25 @@ function handleHoleTap(event) {
     state.tapPoint = null;
     renderCurrentHole();
   }, TAP_PREVIEW_DURATION_MS);
+  renderCurrentHole();
+}
+
+function setSimulatedLocation(mapPoint) {
+  const nextPoint = sanitizeLonLatPoint(mapPoint);
+  if (!nextPoint) return;
+
+  stopLocationTracking(false);
+  clearTapPreviewTimer();
+  state.tapPoint = null;
+  state.userLocation = nextPoint;
+  state.locationAccuracyM = null;
+  state.locationFixes = [];
+  state.lastAcceptedLocationFix = null;
+  state.locationPending = false;
+  state.locationError = "";
+  state.locationIsMock = true;
+  updateLocationStatus("Using tapped location for off-course testing.");
+  updateTrackingButton();
   renderCurrentHole();
 }
 
@@ -1568,6 +1922,7 @@ function stopLocationTracking(clearLocation, statusText) {
     state.locationFixes = [];
     state.lastAcceptedLocationFix = null;
     state.locationError = "";
+    state.locationIsMock = false;
     state.locationPermissionGranted = false;
     persistGeolocationGrant(false);
   }
@@ -1589,6 +1944,7 @@ function applyLocationFix(position) {
 
   state.locationAccuracyM = Number.isFinite(fix.accuracyM) ? fix.accuracyM : null;
   state.locationError = "";
+  state.locationIsMock = false;
   state.locationPermissionGranted = true;
   persistGeolocationGrant(true);
 
@@ -1823,10 +2179,32 @@ async function renderCurrentHole() {
     alignmentEnd = greenTargets.center || greenTargets.back || greenTargets.front || alignmentStart || null;
   }
 
+  const zoomTeeReference = Array.isArray(backTee) ? backTee : alignmentStart;
+  const teeToGreenCenterYards =
+    Array.isArray(zoomTeeReference) && Array.isArray(greenTargets.center)
+      ? distanceYards(zoomTeeReference, greenTargets.center)
+      : null;
+  const userToGreenCenterYards =
+    Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)
+      ? distanceYards(state.userLocation, greenTargets.center)
+      : null;
+  const hasUserLocation = Array.isArray(state.userLocation);
+  const shouldUsePlayerForMap =
+    state.autoZoomEnabled &&
+    Array.isArray(state.userLocation) &&
+    (
+      !Number.isFinite(teeToGreenCenterYards) ||
+      !Number.isFinite(userToGreenCenterYards) ||
+      userToGreenCenterYards < teeToGreenCenterYards
+    );
+  const effectiveMapTee = shouldUsePlayerForMap
+    ? state.userLocation
+    : (Array.isArray(zoomTeeReference) ? zoomTeeReference : null);
+
   let baseSourceLabel = "Not Set";
   let basePoint = null;
 
-  if (Array.isArray(state.userLocation)) {
+  if (hasUserLocation) {
     baseSourceLabel = "My Location";
     basePoint = state.userLocation;
   } else if (Array.isArray(backTee)) {
@@ -1863,31 +2241,8 @@ async function renderCurrentHole() {
       ? distanceYards(state.userLocation, greenTargets.back)
       : null;
 
-  const userToGreenCenterYards =
-    Array.isArray(state.userLocation) && Array.isArray(greenTargets.center)
-      ? distanceYards(state.userLocation, greenTargets.center)
-      : null;
-  const mapShouldFocusHole =
-    Number.isFinite(userToGreenCenterYards) && userToGreenCenterYards > MAP_FOCUS_MAX_USER_DISTANCE_YARDS;
-  const mapPlayerPoint = mapShouldFocusHole ? null : basePoint;
-  const playerRearPaddingPoint =
-    Array.isArray(mapPlayerPoint) && Array.isArray(greenTargets.center)
-      ? projectBeyondPoint(greenTargets.center, mapPlayerPoint, MAP_PLAYER_REAR_PADDING_YARDS)
-      : null;
-  const greenBackPaddingPoint =
-    Array.isArray(greenTargets.center) && Array.isArray(greenTargets.back)
-      ? projectBeyondPoint(greenTargets.center, greenTargets.back, MAP_GREEN_BACK_PADDING_YARDS)
-      : null;
-  const proximityZoomMultiplier = (() => {
-    if (!state.autoZoomEnabled) return 1;
-    if (!Number.isFinite(userToGreenCenterYards) || mapShouldFocusHole) return 1;
-    const nearFactor = Math.max(
-      0,
-      Math.min(1, (MAP_FOCUS_MAX_USER_DISTANCE_YARDS - userToGreenCenterYards) / MAP_FOCUS_MAX_USER_DISTANCE_YARDS)
-    );
-    return 1 + nearFactor * MAP_PROXIMITY_ZOOM_MAX_BOOST;
-  })();
-  const finalZoomMultiplier = proximityZoomMultiplier * clampUserZoom(state.userZoomMultiplier);
+  const mapPlayerPoint = shouldUsePlayerForMap ? state.userLocation : null;
+  const finalZoomMultiplier = clampUserZoom(state.userZoomMultiplier);
   const tapToGreenCenterYards =
     Array.isArray(state.tapPoint) && Array.isArray(greenTargets.center)
       ? distanceYards(state.tapPoint, greenTargets.center)
@@ -1897,6 +2252,13 @@ async function renderCurrentHole() {
       ? distanceYards(state.userLocation, state.tapPoint)
       : null;
   const showToPoint = usingTapPoint && Number.isFinite(userToTapYards);
+  const tapBadgeText = !usingTapPoint
+    ? ""
+    : showToPoint
+      ? formatYards(userToTapYards)
+      : Number.isFinite(tapToGreenCenterYards)
+        ? `${Math.round(tapToGreenCenterYards)}y`
+        : "";
   const holeYardage = hole == null ? null : totalYardageForHoleNumber(hole);
 
   if (els.metricSummary) {
@@ -1910,7 +2272,7 @@ async function renderCurrentHole() {
   if (els.metricToPoint) {
     els.metricToPoint.textContent = showToPoint ? formatYards(userToTapYards) : "—";
   }
-  updateScoreSubmitPointDetail(showToPoint ? `To Point ${formatYards(userToTapYards)}` : "");
+  updateScoreSubmitPointDetail("");
   setMetricValue(
     els.metricFront,
     targetAvailable.front ? yardsFront : null,
@@ -1938,7 +2300,9 @@ async function renderCurrentHole() {
   } else if (state.locationError) {
     detailText = state.locationError;
   } else if (sourceLabel === "My Location") {
-    detailText = "Live yardages from your location.";
+    detailText = state.locationIsMock
+      ? "Using tapped location for off-course testing."
+      : "Live yardages from your location.";
   } else if (sourceLabel === "Back Tee Default") {
     detailText = "Showing back-tee yardages by default.";
   } else if (sourceLabel === "Tap Point") {
@@ -1950,7 +2314,7 @@ async function renderCurrentHole() {
   if (Number.isFinite(tapToGreenCenterYards)) {
     detailText = `Tap: ${Math.round(tapToGreenCenterYards)}y to center green.`;
   } else if (!state.locationError) {
-    detailText = `${detailText} Tap map to set a yardage source.`.trim();
+    detailText = `${detailText} Tap map to set a yardage source. Triple-tap to simulate your location.`.trim();
   }
   if (els.yardageDetail) {
     els.yardageDetail.textContent = detailText;
@@ -1971,7 +2335,7 @@ async function renderCurrentHole() {
     const backDirectionStart =
       (targetAvailable.front && Array.isArray(greenTargets.front))
         ? greenTargets.front
-        : (Array.isArray(backTee) ? backTee : alignmentStart);
+        : (Array.isArray(effectiveMapTee) ? effectiveMapTee : alignmentStart);
     syntheticBackProjectionPoint = projectBeyondPoint(
       backDirectionStart,
       greenTargets.center,
@@ -1979,18 +2343,32 @@ async function renderCurrentHole() {
     );
   }
 
+  const mapStartPaddingPoint =
+    Array.isArray(effectiveMapTee) &&
+    Array.isArray(greenTargets.center)
+      ? projectBeyondPoint(greenTargets.center, effectiveMapTee, MAP_PLAYER_REAR_PADDING_YARDS)
+      : null;
+  const mapTopPaddingReference = Array.isArray(syntheticBackProjectionPoint)
+    ? syntheticBackProjectionPoint
+    : (Array.isArray(greenTargets.back) ? greenTargets.back : greenTargets.center);
+  const mapEndPaddingPoint =
+    Array.isArray(greenTargets.center) &&
+    Array.isArray(mapTopPaddingReference)
+      ? projectBeyondPoint(greenTargets.center, mapTopPaddingReference, MAP_GREEN_BACK_PADDING_YARDS)
+      : null;
+
+  const projectionAlignmentStart = Array.isArray(effectiveMapTee) ? effectiveMapTee : alignmentStart;
   const extraPoints = [
-    backTee,
+    effectiveMapTee,
+    mapStartPaddingPoint,
     greenTargets.front,
     greenTargets.center,
     greenTargets.back,
     syntheticBackProjectionPoint,
-    mapPlayerPoint,
-    playerRearPaddingPoint,
-    greenBackPaddingPoint,
+    mapEndPaddingPoint,
   ];
 
-  const teeRefForMarkers = Array.isArray(backTee) ? backTee : alignmentStart;
+  const teeRefForMarkers = Array.isArray(effectiveMapTee) ? effectiveMapTee : alignmentStart;
   const greenRefForMarkers = Array.isArray(greenTargets.center) ? greenTargets.center : alignmentEnd;
   const markerPathPoints = (() => {
     if (usingFullMode && holeLine) {
@@ -2023,13 +2401,15 @@ async function renderCurrentHole() {
   })();
   const pathDistanceMarkers = markerPointsAlongPath(markerPathPoints, []);
 
-  const { width, height, margin } = getCanvasConfig();
+  const { width, height, padding } = getCanvasConfig();
   if (!els.holeCanvas) return;
   const pixelRatio = Math.max(1, Math.min(3, Number(window.devicePixelRatio) || 1));
   state.lastCanvasLogicalSize = { width, height };
-  els.holeCanvas.width = Math.round(width * pixelRatio);
-  els.holeCanvas.height = Math.round(height * pixelRatio);
-  const ctx = els.holeCanvas.getContext("2d");
+  const renderCanvas = state.renderBufferCanvas || document.createElement("canvas");
+  state.renderBufferCanvas = renderCanvas;
+  renderCanvas.width = Math.round(width * pixelRatio);
+  renderCanvas.height = Math.round(height * pixelRatio);
+  const ctx = renderCanvas.getContext("2d");
   if (!ctx) return;
   ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   ctx.imageSmoothingEnabled = true;
@@ -2037,22 +2417,22 @@ async function renderCurrentHole() {
   state.lastProjectionInput = {
     features: usingFullMode ? features : [],
     extraPoints,
-    alignmentStart,
+    alignmentStart: projectionAlignmentStart,
     alignmentEnd,
     width,
     height,
-    margin,
-    autoZoomMultiplier: proximityZoomMultiplier,
+    padding,
+    autoZoomMultiplier: 1,
   };
 
   const projection = createAlignedProjector(
     state.lastProjectionInput.features,
     extraPoints,
-    alignmentStart,
+    projectionAlignmentStart,
     alignmentEnd,
     width,
     height,
-    margin,
+    padding,
     finalZoomMultiplier,
     state.userPanX,
     state.userPanY
@@ -2072,7 +2452,14 @@ async function renderCurrentHole() {
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = darkTheme ? "#202225" : "#e9ebef";
   ctx.fillRect(0, 0, width, height);
-  await drawStreetTileBackground(ctx, projection, width, height, renderNonce, pixelRatio);
+  const backgroundInfo = await drawStreetTileBackground(
+    ctx,
+    projection,
+    width,
+    height,
+    renderNonce,
+    pixelRatio
+  );
   if (renderNonce !== state.renderNonce) return;
 
   const strokeDefault = darkTheme ? "rgba(243,248,255,0.95)" : "rgba(18,34,54,0.95)";
@@ -2177,6 +2564,25 @@ async function renderCurrentHole() {
     ctx.strokeStyle = strokeDefault;
     ctx.lineWidth = 2.4;
     ctx.stroke();
+    drawTapPointBadge(ctx, tx, ty, tapBadgeText, { width, height, darkTheme });
+  }
+
+  const shouldPreserveVisibleFrame =
+    state.mapMode === MAP_MODE_SIMPLIFIED &&
+    Number(backgroundInfo?.pendingCount) > 0 &&
+    !backgroundInfo?.hasVisibleTiles &&
+    state.lastPresentedHole === hole &&
+    els.holeCanvas.width > 0 &&
+    els.holeCanvas.height > 0;
+  if (!shouldPreserveVisibleFrame) {
+    els.holeCanvas.width = renderCanvas.width;
+    els.holeCanvas.height = renderCanvas.height;
+    const displayCtx = els.holeCanvas.getContext("2d");
+    if (!displayCtx) return;
+    displayCtx.setTransform(1, 0, 0, 1, 0, 0);
+    displayCtx.clearRect(0, 0, els.holeCanvas.width, els.holeCanvas.height);
+    displayCtx.drawImage(renderCanvas, 0, 0);
+    state.lastPresentedHole = hole;
   }
 
   syncFooterViewportLock();
@@ -2199,8 +2605,10 @@ function holeNumberFromIndex(holeIndex) {
 function setHole(holeNumber, { syncEntry = true } = {}) {
   if (!state.holes.includes(holeNumber)) return;
   clearTapPreviewTimer();
+  resetRecentMapTapPoints();
   state.currentHole = holeNumber;
   state.tapPoint = null;
+  state.userZoomMultiplier = 1;
   state.userPanX = 0;
   state.userPanY = 0;
   if (syncEntry) {
@@ -2292,20 +2700,27 @@ function bindEvents() {
     });
   }
 
-  if (els.zoomAutoToggle) {
-    els.zoomAutoToggle.addEventListener("click", () => {
-      state.autoZoomEnabled = !state.autoZoomEnabled;
-      persistAutoZoomPreference(state.autoZoomEnabled);
-      updateAutoZoomButton();
-      renderCurrentHole();
-    });
-  }
-
   if (els.holeCanvas) {
     els.holeCanvas.addEventListener("click", handleHoleTap);
+    els.holeCanvas.addEventListener("touchstart", handleCanvasTouchStart, { passive: false });
+    els.holeCanvas.addEventListener("touchmove", handleCanvasTouchMove, { passive: false });
+    els.holeCanvas.addEventListener("touchend", handleCanvasTouchEnd, { passive: false });
+    els.holeCanvas.addEventListener("touchcancel", handleCanvasTouchCancel, { passive: false });
+    els.holeCanvas.addEventListener("pointerdown", handleCanvasPointerDown);
+    els.holeCanvas.addEventListener("pointermove", handleCanvasPointerMove);
+    els.holeCanvas.addEventListener("pointerup", handleCanvasPointerUp);
+    els.holeCanvas.addEventListener("pointercancel", handleCanvasPointerCancel);
+    els.holeCanvas.addEventListener("wheel", handleCanvasWheel, { passive: false });
   }
 
   window.addEventListener("keydown", (event) => {
+    if (!els.scoreboardPreviewOverlay?.hidden) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        els.scoreboardPreviewCloseButton?.click();
+        return;
+      }
+    }
     if (event.key === "Escape" && entryState.scorePanelExpanded && entryState.scorePanelMode !== "code") {
       event.preventDefault();
       if (!entryState.submitting) setScoreCardExpanded(false);
@@ -2313,6 +2728,7 @@ function bindEvents() {
     }
     if (event.target && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
     if (typeof event.target?.closest === "function" && event.target.closest("[data-score-wheel='true']")) return;
+    if (!els.scoreboardPreviewOverlay?.hidden) return;
     if (entryState.scorePanelExpanded) return;
     if (event.key === "ArrowLeft") {
       if (typeof onPrevHoleRequested === "function") {
@@ -3601,6 +4017,11 @@ function updateScoreSubmitButton({
     els.scoreSubmitInline.textContent = inlineLabel;
   }
   syncScoreNotifierOffset();
+  if (!entryState.scorePanelExpanded && document.body?.classList?.contains("hole-map-page")) {
+    window.requestAnimationFrame(() => {
+      renderCurrentHole();
+    });
+  }
 }
 
 function bindImmediateButtonAction(button, action) {
@@ -4016,6 +4437,7 @@ function ensureScoreCard() {
             <div class="hole-map-score-hole-meta" id="map_score_hole_meta" hidden></div>
           </div>
           <div class="hole-map-score-head-actions">
+            <button id="map_change_code_btn" class="secondary hole-map-score-change-code-btn" type="button">Change Code</button>
             <button id="map_close_scores_btn" class="secondary hole-map-score-close-btn" type="button" aria-label="Close scores">X</button>
           </div>
         </div>
@@ -4056,12 +4478,19 @@ function ensureScoreCard() {
         <span class="hole-map-enter-dock-detail" id="map_enter_hole_detail" hidden></span>
         <span class="hole-map-enter-dock-label" id="map_enter_hole_label">Enter</span>
       </button>
+      <button id="map_scoreboard_btn" class="secondary" type="button">
+        <span class="hole-map-enter-dock-label" id="map_scoreboard_label">Scoreboard</span>
+      </button>
     `;
     document.body.appendChild(dock);
     els.scoreSubmitDock = dock;
     els.scoreSubmitButton = dock.querySelector("#map_enter_hole_btn");
     els.scoreSubmitButtonDetail = dock.querySelector("#map_enter_hole_detail");
     els.scoreSubmitButtonLabel = dock.querySelector("#map_enter_hole_label");
+    els.scoreboardDockButton = dock.querySelector("#map_scoreboard_btn");
+    els.scoreboardDockButtonDetail = dock.querySelector("#map_scoreboard_detail");
+    els.scoreboardDockButtonLabel = dock.querySelector("#map_scoreboard_label");
+    els.scoreChangeCodeButton = card.querySelector("#map_change_code_btn");
     syncScoreHoleMeta();
     syncTickerMount();
 
@@ -4081,6 +4510,79 @@ function ensureScoreCard() {
         return;
       }
       await submitFromPanel();
+    });
+    bindImmediateButtonAction(els.scoreChangeCodeButton, clearCodeAndReload);
+
+    const scoreboardOverlay = document.createElement("div");
+    scoreboardOverlay.className = "hole-map-scoreboard-overlay";
+    scoreboardOverlay.id = "map_scoreboard_overlay";
+    scoreboardOverlay.hidden = true;
+    scoreboardOverlay.setAttribute("aria-hidden", "true");
+    scoreboardOverlay.innerHTML = `
+      <div class="card hole-map-scoreboard-panel" role="dialog" aria-modal="true" aria-label="Scoreboard">
+        <div class="hole-map-scoreboard-toolbar">
+          <div class="hole-map-scoreboard-filters">
+            <select id="round_filter"></select>
+            <div class="toggle" id="lb_toggle" aria-label="Leaderboard mode">
+              <button id="btn_team" type="button">Team</button>
+              <button id="btn_player" class="active" type="button">Individual</button>
+            </div>
+          </div>
+          <button id="map_scoreboard_close_btn" class="secondary hole-map-scoreboard-close" type="button" aria-label="Close scoreboard">X</button>
+        </div>
+        <div class="small hole-map-scoreboard-status" id="status" hidden></div>
+        <div class="hole-map-scoreboard-body">
+          <table class="table" id="lb_tbl">
+            <thead>
+              <tr id="lb_head"></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="hole-map-scoreboard-support" hidden aria-hidden="true">
+          <pre id="raw"></pre>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(scoreboardOverlay);
+    els.scoreboardPreviewOverlay = scoreboardOverlay;
+    els.scoreboardPreviewCloseButton = scoreboardOverlay.querySelector("#map_scoreboard_close_btn");
+
+    const closeScoreboardPreview = () => {
+      if (!els.scoreboardPreviewOverlay) return;
+      els.scoreboardPreviewOverlay.hidden = true;
+      els.scoreboardPreviewOverlay.setAttribute("aria-hidden", "true");
+      document.body.classList.remove("hole-map-scoreboard-open");
+    };
+    const openScoreboardPreview = async () => {
+      if (!entryState.tid || !els.scoreboardPreviewOverlay) return;
+      syncHoleControlsStickyOffset();
+      els.scoreboardPreviewOverlay.hidden = false;
+      els.scoreboardPreviewOverlay.setAttribute("aria-hidden", "false");
+      document.body.classList.add("hole-map-scoreboard-open");
+      window.__SCOREBOARD_TID = entryState.tid;
+      window.__SCOREBOARD_COMPACT = true;
+      if (!scoreboardModulePromise) {
+        scoreboardModulePromise = import("./scoreboard.js");
+      }
+      try {
+        await scoreboardModulePromise;
+      } catch (error) {
+        setScoreStatus(`Could not open scoreboard: ${error?.message || String(error)}`, true);
+      }
+    };
+
+    bindImmediateButtonAction(els.scoreboardDockButton, () => {
+      if (!entryState.tid || !els.scoreboardPreviewOverlay) return;
+      if (!els.scoreboardPreviewOverlay.hidden) {
+        closeScoreboardPreview();
+        return;
+      }
+      openScoreboardPreview();
+    });
+    bindImmediateButtonAction(els.scoreboardPreviewCloseButton, closeScoreboardPreview);
+    scoreboardOverlay.addEventListener("click", (event) => {
+      if (event.target === scoreboardOverlay) closeScoreboardPreview();
     });
     bindImmediateButtonAction(els.scoreSubmitInline, submitFromPanel);
     bindImmediateButtonAction(els.scoreCloseButton, () => {
@@ -4944,8 +5446,6 @@ async function initializeEntryContext() {
   entryState.tid = tid;
   rememberPlayerCode(entryState.code);
   rememberTournamentId(tid);
-  if (els.pageBottomActions) els.pageBottomActions.hidden = false;
-  if (els.pageChangeCodeButton) els.pageChangeCodeButton.onclick = clearCodeAndReload;
 
   document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {
     link.setAttribute("href", `./scoreboard.html?t=${encodeURIComponent(tid)}`);
