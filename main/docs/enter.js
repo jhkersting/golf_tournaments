@@ -39,6 +39,7 @@ let code = normalizedCodeFromQuery || normalizePlayerCode(getRememberedPlayerCod
 const forms = document.getElementById("round_forms");
 const pageBottomActions = document.getElementById("enter_page_bottom_actions");
 const pageChangeCodeButton = document.getElementById("enter_change_code_page_btn");
+const pageBulkToggleButton = document.getElementById("enter_bulk_toggle_btn");
 const ticker = document.getElementById("enter_ticker");
 const tickerTitle = document.getElementById("enter_ticker_title");
 const tickerTrack = document.getElementById("enter_ticker_track");
@@ -2345,6 +2346,16 @@ async function main() {
   rememberPlayerCode(code);
   rememberTournamentId(tid);
   if (pageBottomActions) pageBottomActions.hidden = false;
+  if (pageBulkToggleButton) {
+    pageBulkToggleButton.addEventListener("click", () => {
+      const currentRound = activeRoundPaneIndex;
+      bulkInputVisibleByRound[currentRound] = !bulkInputVisibleByRound[currentRound];
+      const renderBulk = roundBulkRenderers[currentRound];
+      if (typeof renderBulk === "function") {
+        renderBulk({ focus: bulkInputVisibleByRound[currentRound] });
+      }
+    });
+  }
   pageChangeCodeButton?.addEventListener("click", clearCodeAndReload);
   document.querySelectorAll("a[data-scoreboard-link]").forEach((link) => {
     link.setAttribute("href", `./scoreboard.html?t=${encodeURIComponent(tid)}`);
@@ -2474,6 +2485,8 @@ async function main() {
   const roundTabButtons = [];
   const roundPanes = [];
   const roundHoleRenderers = [];
+  const roundBulkRenderers = [];
+  const bulkInputVisibleByRound = Array.from({ length: rounds.length }, () => false);
 
   if (rounds.length) {
     forms.appendChild(roundPanesHost);
@@ -2497,6 +2510,17 @@ async function main() {
     renderTicker(tjson, playersById, teamsById, tickerRoundIndex);
     const rerender = roundHoleRenderers[safeRound];
     if (typeof rerender === "function") rerender();
+    updateBulkToggleButton();
+  }
+
+  function updateBulkToggleButton() {
+    if (!pageBulkToggleButton) return;
+    const hasBulkRenderer = typeof roundBulkRenderers[activeRoundPaneIndex] === "function";
+    const isVisible = Boolean(bulkInputVisibleByRound[activeRoundPaneIndex]);
+    pageBulkToggleButton.hidden = !hasBulkRenderer;
+    pageBulkToggleButton.disabled = !hasBulkRenderer;
+    pageBulkToggleButton.textContent = isVisible ? "Hide bulk input" : "Show bulk input";
+    pageBulkToggleButton.setAttribute("aria-expanded", isVisible ? "true" : "false");
   }
 
   function replaceTournamentJson(nextJson) {
@@ -3292,16 +3316,19 @@ async function main() {
     }
     roundHoleRenderers[r] = renderHoleForm;
 
-    function renderBulkTable() {
+    function renderBulkTable({ focus = false } = {}) {
       bulkPane.innerHTML = "";
 
       const roundData = tjson?.score_data?.rounds?.[r] || {};
       const bulkPlayerId = [myId].filter((id) => Boolean(id) && allowedRoundPlayerSet.has(id))[0] || "";
       if (!bulkPlayerId) {
         bulkPane.style.display = "none";
+        bulkInputVisibleByRound[r] = false;
+        updateBulkToggleButton();
         return;
       }
-      bulkPane.style.display = "";
+      const bulkVisible = Boolean(bulkInputVisibleByRound[r]);
+      bulkPane.style.display = bulkVisible ? "" : "none";
 
       const savedByTarget = Object.create(null);
       for (const pid of Object.keys(roundData.player || {})) {
@@ -3476,7 +3503,17 @@ async function main() {
       }
 
       btnSubmit.onclick = () => submitBulk();
+
+      if (bulkVisible && focus) {
+        window.requestAnimationFrame(() => {
+          bulkPane.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+
+      updateBulkToggleButton();
     }
+
+    roundBulkRenderers[r] = renderBulkTable;
 
     // initial render
     renderHoleForm();
