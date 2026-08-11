@@ -2282,6 +2282,179 @@ function roundHasAnyData(roundData) {
   return false;
 }
 
+function isMatchPlayPayload(payload) {
+  return String(payload?.tournament?.competitionType || payload?.competitionType || "") === "team_match_play";
+}
+
+function matchPlayEntryFormatLabel(format) {
+  return ({
+    singles: "Singles",
+    best_ball: "Best ball",
+    alternate_shot: "Alternate shot",
+    scramble: "Scramble"
+  })[String(format || "")] || String(format || "Match").replaceAll("_", " ");
+}
+
+async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
+  if (ticker) ticker.style.display = "none";
+  if (pageBulkToggleButton) pageBulkToggleButton.hidden = true;
+  forms.innerHTML = "";
+  const players = Object.fromEntries((tjson?.players || []).map((player) => [player.playerId, player]));
+  const teams = Object.fromEntries((tjson?.teams || []).map((team) => [team.teamId, team]));
+  const myId = String(enter?.player?.playerId || "");
+  const myTeamId = String(enter?.team?.teamId || players[myId]?.teamId || "");
+  const standings = Array.isArray(tjson?.matchPlay?.standings) ? tjson.matchPlay.standings : [];
+  const myStanding = standings.find((row) => row.teamId === myTeamId);
+
+  const summary = document.createElement("section");
+  summary.className = "card";
+  const title = document.createElement("h1");
+  title.style.margin = "0 0 4px";
+  title.textContent = enter?.player?.name || players[myId]?.name || "Enter scores";
+  const teamLine = document.createElement("div");
+  teamLine.textContent = `${enter?.team?.teamName || teams[myTeamId]?.teamName || myTeamId} · ${myStanding?.points || 0} points · ${tjson?.matchPlay?.winTarget || 0} needed to win`;
+  const note = document.createElement("div");
+  note.className = "small";
+  note.textContent = "Enter your own score in singles/best ball. Either partner may enter the shared side score in alternate shot or scramble.";
+  summary.append(title, teamLine, note);
+  forms.appendChild(summary);
+
+  const savedRounds = Array.isArray(enter?.saved) ? enter.saved : [];
+  const configRounds = Array.isArray(tjson?.tournament?.rounds) ? tjson.tournament.rounds : [];
+  const derivedRounds = Array.isArray(tjson?.matchPlay?.rounds) ? tjson.matchPlay.rounds : [];
+
+  for (let roundIndex = 0; roundIndex < configRounds.length; roundIndex++) {
+    const round = configRounds[roundIndex] || {};
+    const assignment = enter?.player?.matchAssignments?.[roundIndex] || null;
+    const card = document.createElement("section");
+    card.className = "card match-play-entry-card";
+    const heading = document.createElement("div");
+    heading.className = "match-play-entry-head";
+    const headingText = document.createElement("div");
+    const roundTitle = document.createElement("h2");
+    roundTitle.style.margin = "0";
+    roundTitle.textContent = round.name || `Round ${roundIndex + 1}`;
+    const roundMeta = document.createElement("div");
+    roundMeta.className = "small";
+    roundMeta.textContent = `${matchPlayEntryFormatLabel(round.format)} · ${Number(round.holes) === 9 ? 9 : 18} holes${round.useHandicap ? " · handicaps on" : ""}`;
+    headingText.append(roundTitle, roundMeta);
+    const matchStatus = document.createElement("strong");
+    heading.append(headingText, matchStatus);
+    card.appendChild(heading);
+
+    if (!assignment?.matchId) {
+      matchStatus.textContent = "Not scheduled";
+      const empty = document.createElement("div");
+      empty.className = "small";
+      empty.textContent = "You are not assigned to a match in this round.";
+      card.appendChild(empty);
+      forms.appendChild(card);
+      continue;
+    }
+
+    const configuredMatch = (round.matches || []).find((match) => match.matchId === assignment.matchId);
+    let derivedMatch = derivedRounds[roundIndex]?.matches?.find((match) => match.matchId === assignment.matchId) || null;
+    const actorSide = configuredMatch?.teamA?.playerIds?.includes(myId) ? configuredMatch.teamA : configuredMatch?.teamB;
+    const opponentSide = actorSide === configuredMatch?.teamA ? configuredMatch?.teamB : configuredMatch?.teamA;
+    const opponentNames = (opponentSide?.playerIds || []).map((id) => players[id]?.name || id).join(" + ");
+    const opponent = document.createElement("div");
+    opponent.className = "small";
+    opponent.textContent = `vs. ${teams[opponentSide?.teamId]?.teamName || opponentSide?.teamId || "Opponent"}${opponentNames ? ` — ${opponentNames}` : ""}`;
+    card.appendChild(opponent);
+    const syncStatusText = () => {
+      if (!derivedMatch) { matchStatus.textContent = "Not started"; return; }
+      const leader = derivedMatch.leadTeamId ? teams[derivedMatch.leadTeamId]?.teamName || derivedMatch.leadTeamId : "";
+      matchStatus.textContent = leader && derivedMatch.status === "live" ? `${leader} ${derivedMatch.display}` : derivedMatch.display || "All square";
+    };
+    syncStatusText();
+
+    const activeHoles = Number(round.holes) === 9 ? 9 : 18;
+    const saved = Array.isArray(savedRounds[roundIndex]?.gross)
+      ? savedRounds[roundIndex].gross.slice(0, 18)
+      : Array(18).fill(null);
+    while (saved.length < 18) saved.push(null);
+    const grid = document.createElement("div");
+    grid.className = "match-play-entry-grid";
+    const inputs = [];
+    for (let holeIndex = 0; holeIndex < activeHoles; holeIndex++) {
+      const label = document.createElement("label");
+      label.className = "match-play-entry-hole";
+      const number = document.createElement("span");
+      number.textContent = `Hole ${holeIndex + 1}`;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.inputMode = "numeric";
+      input.min = "1";
+      input.max = "20";
+      input.step = "1";
+      input.value = saved[holeIndex] == null ? "" : String(saved[holeIndex]);
+      input.setAttribute("aria-label", `Hole ${holeIndex + 1} score`);
+      label.append(number, input);
+      grid.appendChild(label);
+      inputs.push(input);
+    }
+    card.appendChild(grid);
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    actions.style.marginTop = "12px";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Save round scores";
+    const saveStatus = document.createElement("span");
+    saveStatus.className = "small";
+    actions.append(save, saveStatus);
+    card.appendChild(actions);
+
+    save.addEventListener("click", async () => {
+      const holes = Array(18).fill(null);
+      for (let index = 0; index < activeHoles; index++) {
+        const raw = String(inputs[index].value || "").trim();
+        if (!raw) continue;
+        const value = Number(raw);
+        if (!Number.isInteger(value) || value < 1 || value > 20) {
+          saveStatus.textContent = `Hole ${index + 1} must be 1–20 or blank.`;
+          return;
+        }
+        holes[index] = value;
+      }
+      const payload = {
+        code,
+        roundIndex,
+        matchId: assignment.matchId,
+        mode: "bulk",
+        entries: [{
+          targetId: ["alternate_shot", "scramble"].includes(String(round.format || ""))
+            ? assignment.teamId
+            : myId,
+          holes
+        }],
+        override: true
+      };
+      save.disabled = true;
+      saveStatus.textContent = "Saving…";
+      try {
+        await api(`/tournaments/${encodeURIComponent(tid)}/scores`, { method: "POST", body: payload });
+        await clearPendingScoreSubmissionsMatching({ tid, code, payload });
+        savedRounds[roundIndex] = { ...(savedRounds[roundIndex] || {}), gross: holes };
+        const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
+        derivedMatch = fresh?.matchPlay?.rounds?.[roundIndex]?.matches?.find((match) => match.matchId === assignment.matchId) || derivedMatch;
+        syncStatusText();
+        saveStatus.textContent = "Saved.";
+      } catch (error) {
+        if (isNetworkFailure(error)) {
+          await enqueuePendingScoreSubmission({ tid, code, payload });
+          saveStatus.textContent = "Saved on this device and queued to sync.";
+        } else {
+          saveStatus.textContent = error?.message || String(error);
+        }
+      } finally {
+        save.disabled = false;
+      }
+    });
+    forms.appendChild(card);
+  }
+}
+
 async function main() {
   function clearCodeAndReload() {
     try {
@@ -2378,6 +2551,11 @@ async function main() {
 
   // Code path: reveal only after required data has loaded.
   $('body').show();
+
+  if (isMatchPlayPayload(tjson)) {
+    await renderMatchPlayEntry({ enter, tjson, tid, code });
+    return;
+  }
 
   const rounds = tjson.tournament?.rounds || [];
 

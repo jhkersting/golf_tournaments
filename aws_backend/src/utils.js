@@ -5,6 +5,7 @@ import { computeLiveOdds } from "./live_odds.js";
 import { appendCompactLiveOddsHistory, compactLiveOddsPayload } from "./live_odds_compact.js";
 import { normalizeCourseRecord } from "./course_data.js";
 import { normalizeRoundMaxHoleScore } from "./round_rules.js";
+import { COMPETITION_TYPE, isTeamMatchPlay, materializeMatchPlay } from "./match_play.js";
 
 export const s3 = new S3Client({});
 
@@ -632,8 +633,83 @@ export async function appendEvent(tid, payload){
   await putJson(bucket, key, payload, { gzip:false, cacheControl:"no-store" });
 }
 
+function materializeMatchPlayPublicFromState(state) {
+  const tournament = state?.tournament || {};
+  const courses = normalizeCoursesFromState(state);
+  const rounds = Array.isArray(state?.rounds) ? state.rounds : [];
+  const derived = materializeMatchPlay({
+    tournament,
+    rounds,
+    teams: state?.teams || {},
+    players: state?.players || {},
+    scores: state?.scores || { rounds: [] },
+    courses
+  });
+  const teams = Object.keys(state?.teams || {}).map((teamId) => ({
+    teamId,
+    teamName: state.teams[teamId]?.teamName || teamId,
+    ...(state.teams[teamId]?.color ? { color: state.teams[teamId].color } : {})
+  }));
+  const players = Object.keys(state?.players || {}).map((playerId) => {
+    const player = state.players[playerId] || {};
+    return {
+      playerId,
+      name: player.name || "",
+      teamId: player.teamId || "",
+      handicap: Number(player.handicap || 0)
+    };
+  });
+  const standings = derived.standings.map((row) => ({ ...row, teamColor: state.teams?.[row.teamId]?.color || null }));
+  return {
+    tournament: {
+      tournamentId: tournament.tournamentId,
+      name: tournament.name || "",
+      dates: tournament.dates || "",
+      scoring: normalizeTournamentScoring(tournament.scoring),
+      competitionType: COMPETITION_TYPE,
+      matchPlay: {
+        teamIds: derived.teamIds,
+        pointsPerMatch: derived.pointsPerMatch,
+        scheduledPoints: derived.scheduledPoints,
+        winTarget: derived.winTarget
+      },
+      rounds
+    },
+    competitionType: COMPETITION_TYPE,
+    matchPlay: { ...derived, standings },
+    course: courses[0] || defaultCourseObject(),
+    courses,
+    teams,
+    players,
+    updatedAt: state.updatedAt,
+    version: state.version,
+    score_data: {
+      rounds: derived.rounds.map((round) => ({
+        roundIndex: round.roundIndex,
+        format: round.format,
+        holes: round.holes,
+        useHandicap: round.useHandicap,
+        matches: Object.fromEntries(round.matches.map((match) => [match.matchId, match]))
+      })),
+      leaderboard_all: {
+        teams: standings.map((row) => ({
+          teamId: row.teamId,
+          teamName: row.teamName,
+          ...(row.teamColor ? { color: row.teamColor } : {}),
+          points: row.points,
+          matchesWon: row.matchesWon,
+          matchesHalved: row.matchesHalved,
+          matchesLost: row.matchesLost
+        })),
+        players: []
+      }
+    }
+  };
+}
+
 export function materializePublicFromState(state){
   // Build a single tournament JSON with score_data and leaderboards.
+  if (isTeamMatchPlay(state)) return materializeMatchPlayPublicFromState(state);
   const t = state.tournament;
   const scoring = normalizeTournamentScoring(t?.scoring);
   const courses = normalizeCoursesFromState(state);
@@ -1356,6 +1432,30 @@ export async function writePublicObjectsFromState(state){
     }
 
     const saved = rounds.map((round, rIdx) => {
+      if (isTeamMatchPlay(state)) {
+        const scheduledMatch = round.matches?.find((match) =>
+          match.teamA?.playerIds?.includes(pid) || match.teamB?.playerIds?.includes(pid)
+        );
+        const sideTeamId = scheduledMatch?.teamA?.playerIds?.includes(pid)
+          ? scheduledMatch.teamA.teamId
+          : scheduledMatch?.teamB?.playerIds?.includes(pid) ? scheduledMatch.teamB.teamId : null;
+        const sideScores = sideTeamId && scheduledMatch
+          ? scores.rounds?.[rIdx]?.matches?.[scheduledMatch.matchId]?.sides?.[sideTeamId]?.holes
+          : null;
+        const target = scheduledMatch && ["alternate_shot", "scramble"].includes(round.format)
+          ? "match_side"
+          : "player";
+        const gross = target === "match_side"
+          ? (sideScores || Array(18).fill(null))
+          : (scores.rounds?.[rIdx]?.players?.[pid]?.holes || Array(18).fill(null));
+        return {
+          roundIndex: rIdx,
+          target,
+          matchId: scheduledMatch?.matchId || null,
+          teamId: sideTeamId,
+          gross: gross.map(v => (v === 0 ? null : v))
+        };
+      }
       const isScramble = round.format === "scramble";
       const isTwoMan = isTwoManFormat(round?.format);
       const target = isScramble ? "team" : isTwoMan ? "group" : "player";
@@ -1380,8 +1480,11 @@ export async function writePublicObjectsFromState(state){
       tournament: {
         name: state.tournament.name,
         dates: state.tournament.dates,
-        scoring: normalizeTournamentScoring(state?.tournament?.scoring)
+        scoring: normalizeTournamentScoring(state?.tournament?.scoring),
+        competitionType: state?.tournament?.competitionType || "stroke_play",
+        ...(state?.tournament?.matchPlay ? { matchPlay: state.tournament.matchPlay } : {})
       },
+      ...(isTeamMatchPlay(state) ? { matchPlay: tournamentJson.matchPlay } : {}),
       rounds,
       course,
       courses,
@@ -1392,7 +1495,17 @@ export async function writePublicObjectsFromState(state){
         groups: Array.from({ length: rounds.length }, (_, r) => groupValueForRound(p, r) || null),
         group: p.group || null,
         teeTimes,
-        teeTime: teeTimes.find((v) => !!v) || p.teeTime || null
+        teeTime: teeTimes.find((v) => !!v) || p.teeTime || null,
+        ...(isTeamMatchPlay(state) ? {
+          matchAssignments: rounds.map((round) => {
+            const match = round.matches?.find((item) =>
+              item.teamA?.playerIds?.includes(pid) || item.teamB?.playerIds?.includes(pid)
+            );
+            if (!match) return null;
+            const side = match.teamA.playerIds.includes(pid) ? match.teamA : match.teamB;
+            return { matchId: match.matchId, teamId: side.teamId, format: round.format };
+          })
+        } : {})
       },
       team: { teamId: team.teamId, teamName: team.teamName, group: p.group || null },
       saved

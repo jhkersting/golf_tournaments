@@ -5,6 +5,10 @@ const addRoundBtn = document.getElementById("add_round");
 const createBtn = document.getElementById("create_tournament");
 const createStatus = document.getElementById("create_status");
 const scoringEl = document.getElementById("t_scoring");
+const competitionTypeEl = document.getElementById("competition_type");
+const matchPlaySettingsEl = document.getElementById("match_play_settings");
+const matchPointsEl = document.getElementById("match_points");
+const matchWinTargetEl = document.getElementById("match_win_target");
 
 const createdBox = document.getElementById("created_box");
 const tidEl = document.getElementById("tid");
@@ -18,6 +22,10 @@ const starterCsvEl = document.getElementById("starter_csv");
 const teeStartEl = document.getElementById("tee_start");
 const teeIntervalEl = document.getElementById("tee_interval");
 let latestEditCode = "";
+
+function isTeamMatchPlayDraft(){
+  return String(competitionTypeEl?.value || "stroke_play") === "team_match_play";
+}
 
 const parRow = document.getElementById("par_row");
 const siRow = document.getElementById("si_row");
@@ -676,7 +684,7 @@ function roundCard(){
       </div>
       <div class="col">
         <label>Format</label>
-        <select data-format>
+        <select data-format data-stroke-only>
           <option value="scramble">scramble</option>
           <option value="team_best_ball">team best ball</option>
           <option value="two_man_scramble">two man scramble</option>
@@ -684,6 +692,12 @@ function roundCard(){
           <option value="two_man_best_ball">two man best ball</option>
           <option value="shamble">shamble</option>
           <option value="singles">singles</option>
+        </select>
+        <select data-match-format data-match-only hidden>
+          <option value="singles">singles</option>
+          <option value="best_ball">best ball</option>
+          <option value="alternate_shot">alternate shot</option>
+          <option value="scramble">scramble</option>
         </select>
       </div>
       <div class="col">
@@ -693,9 +707,24 @@ function roundCard(){
           <option value="true">Yes</option>
         </select>
       </div>
-      <div class="col">
+      <div class="col" data-stroke-only>
         <label>Weight</label>
         <input data-weight type="number" step="0.01" placeholder="0.50" />
+      </div>
+      <div class="col" data-match-only hidden>
+        <label>Holes</label>
+        <select data-holes>
+          <option value="18">18 holes</option>
+          <option value="9">9 holes</option>
+        </select>
+      </div>
+      <div class="col" data-best-ball-size hidden>
+        <label>Players per side</label>
+        <select data-side-size>
+          <option value="2">2 players</option>
+          <option value="4">4 players</option>
+          <option value="3">3 players</option>
+        </select>
       </div>
       <div class="col">
         <label>Course for round</label>
@@ -707,7 +736,7 @@ function roundCard(){
         <label>Tee</label>
         <select data-tee-ref></select>
       </div>
-      <div class="col">
+      <div class="col" data-stroke-only>
         <label>Hole max</label>
         <select data-max-hole-score>
           ${roundMaxHoleScoreOptionsHtml("none")}
@@ -715,7 +744,7 @@ function roundCard(){
       </div>
     </div>
 
-    <div class="row" style="margin-top:8px;" data-aggrow>
+    <div class="row" style="margin-top:8px;" data-aggrow data-stroke-only>
       <div class="col">
         <label>Top X scores taken</label>
         <input data-topx type="number" min="1" max="4" step="1" value="4" />
@@ -725,6 +754,9 @@ function roundCard(){
   `;
 
   const fmt = div.querySelector("[data-format]");
+  const matchFmt = div.querySelector("[data-match-format]");
+  const handicap = div.querySelector("[data-handicap]");
+  const bestBallSize = div.querySelector("[data-best-ball-size]");
   const aggRow = div.querySelector("[data-aggrow]");
   function syncAggVisibility(){
     // Scramble and two-man formats use fixed team scoring; aggregation inputs are not used.
@@ -738,6 +770,22 @@ function roundCard(){
   }
   fmt.addEventListener("change", syncAggVisibility);
   syncAggVisibility();
+
+  function syncMatchControls(){
+    const matchMode = isTeamMatchPlayDraft();
+    div.querySelectorAll("[data-stroke-only]").forEach((node) => { node.hidden = matchMode; });
+    div.querySelectorAll("[data-match-only]").forEach((node) => { node.hidden = !matchMode; });
+    const matchFormat = String(matchFmt?.value || "singles");
+    if (bestBallSize) bestBallSize.hidden = !matchMode || matchFormat !== "best_ball";
+    if (handicap) {
+      const allowed = !matchMode || matchFormat === "singles" || matchFormat === "best_ball";
+      handicap.disabled = !allowed;
+      if (!allowed) handicap.value = "false";
+    }
+  }
+  matchFmt?.addEventListener("change", syncMatchControls);
+  div.syncCompetitionType = syncMatchControls;
+  syncMatchControls();
 
   const courseSelectEl = div.querySelector("[data-course-ref]");
   if (courseSelectEl) {
@@ -757,8 +805,22 @@ function roundCard(){
 function addRound(){ roundsEl.appendChild(roundCard()); }
 addRoundBtn.onclick = addRound;
 
+function syncCompetitionTypeUi(){
+  const matchMode = isTeamMatchPlayDraft();
+  if (matchPlaySettingsEl) matchPlaySettingsEl.hidden = !matchMode;
+  if (scoringEl) {
+    scoringEl.disabled = matchMode;
+    if (matchMode) scoringEl.value = "stroke";
+  }
+  document.querySelector("[data-stroke-round-help]")?.toggleAttribute("hidden", matchMode);
+  document.querySelector("[data-match-round-help]")?.toggleAttribute("hidden", !matchMode);
+  roundsEl.querySelectorAll(".card").forEach((card) => card.syncCompetitionType?.());
+}
+competitionTypeEl?.addEventListener("change", syncCompetitionTypeUi);
+
 // Defaults: 2 rounds
 addRound(); addRound();
+syncCompetitionTypeUi();
 rebuildCourseRows();
 if (courseRefreshBtn) courseRefreshBtn.onclick = () => loadCourses();
 if (courseImportBtn) courseImportBtn.onclick = () => importBlueGolfCourse();
@@ -798,7 +860,10 @@ loadCourses();
 function getRounds(){
   const cards = [...roundsEl.querySelectorAll(".card")];
   const rounds = cards.map(c => {
-    const format = c.querySelector("[data-format]")?.value;
+    const matchMode = isTeamMatchPlayDraft();
+    const format = matchMode
+      ? c.querySelector("[data-match-format]")?.value
+      : c.querySelector("[data-format]")?.value;
     const useHandicap = c.querySelector("[data-handicap]")?.value === "true";
     const rawWeight = String(c.querySelector("[data-weight]")?.value || "").trim();
     const parsedWeight = rawWeight === "" ? null : Number(rawWeight);
@@ -807,6 +872,28 @@ function getRounds(){
     const courseRef = String(c.querySelector("[data-course-ref]")?.value || PRIMARY_COURSE_REF).trim();
     const teeRef = String(c.querySelector("[data-tee-ref]")?.value || "").trim();
     const maxHoleScore = parseRoundMaxHoleScoreValue(c.querySelector("[data-max-hole-score]")?.value);
+
+    if (matchMode) {
+      const holes = Number(c.querySelector("[data-holes]")?.value || 18);
+      const sideSize = format === "singles"
+        ? 1
+        : format === "best_ball"
+          ? Number(c.querySelector("[data-side-size]")?.value || 2)
+          : 2;
+      if (useHandicap && format !== "singles" && format !== "best_ball") {
+        throw new Error(`Handicaps are not available for ${String(format || "this format").replaceAll("_", " ")}.`);
+      }
+      return {
+        name: c.querySelector("[data-name]")?.value.trim() || "Round",
+        format,
+        holes: holes === 9 ? 9 : 18,
+        useHandicap,
+        sideSize,
+        courseRef: courseRef || PRIMARY_COURSE_REF,
+        teeRef,
+        matches: []
+      };
+    }
 
     return {
       name: c.querySelector("[data-name]")?.value.trim() || "Round",
@@ -823,6 +910,7 @@ function getRounds(){
     };
   });
 
+  if (isTeamMatchPlayDraft()) return rounds;
   const anyExplicitWeight = rounds.some((r) => Number.isFinite(r.weight) && r.weight > 0);
   return rounds.map((r) => ({
     ...r,
@@ -977,6 +1065,116 @@ async function importPlayersCsv(tid, rawText, editCode){
   });
 }
 
+function parseDelimitedRows(text){
+  const source = String(text || "").replace(/\r\n?/g, "\n");
+  const delimiter = source.split("\n", 1)[0]?.includes("\t") ? "\t" : ",";
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i <= source.length; i++) {
+    const char = source[i] ?? "\n";
+    if (quoted) {
+      if (char === '"' && source[i + 1] === '"') { cell += '"'; i += 1; }
+      else if (char === '"') quoted = false;
+      else cell += char;
+      continue;
+    }
+    if (char === '"') { quoted = true; continue; }
+    if (char === delimiter) { row.push(cell.trim()); cell = ""; continue; }
+    if (char === "\n") {
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  if (quoted) throw new Error("Starter CSV has an unclosed quote.");
+  return rows;
+}
+
+function matchPlayStarterPayload(rawText){
+  const rows = parseDelimitedRows(rawText);
+  if (rows.length < 2) throw new Error("Team match play requires a starter CSV with a header and players.");
+  const header = rows[0].map((value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+  const nameIndex = header.findIndex((value) => ["name", "player", "golfer"].includes(value));
+  const teamIndex = header.indexOf("team");
+  const handicapIndex = header.findIndex((value) => value === "handicap" || value === "hcp");
+  const codeIndex = header.indexOf("code");
+  if (nameIndex < 0 || teamIndex < 0) throw new Error("Starter CSV needs name and team columns.");
+
+  const teamByName = new Map();
+  const teams = [];
+  const players = [];
+  for (const cells of rows.slice(1)) {
+    const name = String(cells[nameIndex] || "").trim();
+    const teamName = String(cells[teamIndex] || "").trim();
+    if (!name || !teamName) continue;
+    const key = teamName.toLowerCase();
+    if (!teamByName.has(key)) {
+      const teamId = `mp_team_${teams.length + 1}`;
+      const team = { teamId, teamName };
+      teamByName.set(key, team);
+      teams.push(team);
+    }
+    const team = teamByName.get(key);
+    const handicap = Number(handicapIndex >= 0 ? cells[handicapIndex] : 0);
+    const code = String(codeIndex >= 0 ? cells[codeIndex] || "" : "").trim().toUpperCase().replace(/\s+/g, "");
+    players.push({
+      playerId: `mp_player_${players.length + 1}`,
+      name,
+      teamId: team.teamId,
+      handicap: Number.isFinite(handicap) ? handicap : 0,
+      ...(code ? { code } : {})
+    });
+  }
+  if (teams.length !== 2) throw new Error(`Team match play requires exactly two teams; the starter CSV contains ${teams.length}.`);
+  if (!players.length) throw new Error("No valid starter players were found.");
+  return { teams, players };
+}
+
+function scheduleMatchPlayRounds(rounds, teams, players, pointsPerMatch){
+  const [teamA, teamB] = teams;
+  const playersA = players.filter((player) => player.teamId === teamA.teamId);
+  const playersB = players.filter((player) => player.teamId === teamB.teamId);
+  return rounds.map((round, roundIndex) => {
+    const sideSize = round.format === "singles" ? 1 : Math.max(2, Math.min(4, Number(round.sideSize) || 2));
+    const matchCount = Math.min(Math.floor(playersA.length / sideSize), Math.floor(playersB.length / sideSize));
+    if (!matchCount) {
+      throw new Error(`${round.name || `Round ${roundIndex + 1}`} needs at least ${sideSize} players on each team.`);
+    }
+    const matches = Array.from({ length: matchCount }, (_, matchIndex) => ({
+      matchId: `r${roundIndex + 1}m${matchIndex + 1}`,
+      points: pointsPerMatch,
+      teamA: {
+        teamId: teamA.teamId,
+        playerIds: playersA.slice(matchIndex * sideSize, (matchIndex + 1) * sideSize).map((player) => player.playerId)
+      },
+      teamB: {
+        teamId: teamB.teamId,
+        playerIds: playersB.slice(matchIndex * sideSize, (matchIndex + 1) * sideSize).map((player) => player.playerId)
+      }
+    }));
+    const { sideSize: _sideSize, weight: _weight, maxHoleScore: _maxHoleScore, teamAggregation: _teamAggregation, ...cleanRound } = round;
+    return { ...cleanRound, matches };
+  });
+}
+
+function adminPlayersCsv(payload, baseUrl){
+  const teamNames = Object.fromEntries((payload?.teams || []).map((team) => [team.teamId, team.teamName || team.teamId]));
+  const lines = [["name", "team", "handicap", "code", "enterUrl"]];
+  for (const player of payload?.players || []) {
+    const enterUrl = player.code ? `${baseUrl}/enter.html?code=${encodeURIComponent(player.code)}` : "";
+    lines.push([player.name || "", teamNames[player.teamId] || player.teamId || "", player.handicap ?? 0, player.code || "", enterUrl]);
+  }
+  return lines.map((row) => row.map((value) => {
+    const text = String(value ?? "");
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }).join(",")).join("\n");
+}
+
 createBtn.onclick = async () => {
   createStatus.textContent = "";
   try{
@@ -984,10 +1182,34 @@ createBtn.onclick = async () => {
     const dates = document.getElementById("t_dates").value.trim();
     const scoring = String(scoringEl?.value || "stroke").trim() || "stroke";
     const roundDraft = getRounds();
+    const matchMode = isTeamMatchPlayDraft();
     if (!name) throw new Error("Tournament name is required.");
     if (!roundDraft.length) throw new Error("Add at least one round.");
     const primaryCourse = collectPrimaryCourseForTournament();
-    const { courses, rounds } = await resolveCoursesAndRounds(roundDraft, primaryCourse);
+    const resolved = await resolveCoursesAndRounds(roundDraft, primaryCourse);
+    const courses = resolved.courses;
+    let rounds = resolved.rounds;
+    const starterRaw = String(starterCsvEl?.value || "").trim();
+    let matchPlayBody = null;
+    let matchPlayTeams = null;
+    let matchPlayPlayers = null;
+    if (matchMode) {
+      if (!starterRaw) throw new Error("Paste the starter player CSV before creating team match play.");
+      const starter = matchPlayStarterPayload(starterRaw);
+      const pointsPerMatch = Number(matchPointsEl?.value || 1);
+      if (!Number.isFinite(pointsPerMatch) || pointsPerMatch <= 0) throw new Error("Points per match must be greater than zero.");
+      rounds = scheduleMatchPlayRounds(rounds, starter.teams, starter.players, pointsPerMatch);
+      const targetRaw = String(matchWinTargetEl?.value || "").trim();
+      const winTarget = targetRaw ? Number(targetRaw) : null;
+      if (targetRaw && (!Number.isFinite(winTarget) || winTarget <= 0)) throw new Error("Points to win must be greater than zero.");
+      matchPlayBody = {
+        teamIds: starter.teams.map((team) => team.teamId),
+        pointsPerMatch,
+        ...(winTarget != null ? { winTarget } : {})
+      };
+      matchPlayTeams = starter.teams;
+      matchPlayPlayers = starter.players;
+    }
 
     createStatus.textContent = "Creating…";
     const out = await api("/tournaments", {
@@ -995,8 +1217,15 @@ createBtn.onclick = async () => {
       body:{
         name,
         dates,
-        scoring,
-        tournament: { scoring },
+        scoring: matchMode ? "stroke" : scoring,
+        competitionType: matchMode ? "team_match_play" : "stroke_play",
+        tournament: {
+          scoring: matchMode ? "stroke" : scoring,
+          competitionType: matchMode ? "team_match_play" : "stroke_play"
+        },
+        ...(matchPlayBody ? { matchPlay: matchPlayBody } : {}),
+        ...(matchPlayTeams ? { teams: matchPlayTeams } : {}),
+        ...(matchPlayPlayers ? { players: matchPlayPlayers } : {}),
         rounds,
         courses,
         course: courses[0]
@@ -1013,9 +1242,20 @@ createBtn.onclick = async () => {
     const base = baseUrlForGithubPages();
     scoreboardLinkEl.textContent = `${base}/scoreboard.html?t=${encodeURIComponent(tid)}`;
     createdBox.style.display = "block";
-    const starterRaw = String(starterCsvEl?.value || "").trim();
-
-    if (starterRaw) {
+    if (matchMode) {
+      createStatus.textContent = "Created team match play. Loading player codes…";
+      try {
+        const editable = await api(`/tournaments/${encodeURIComponent(tid)}/admin?code=${encodeURIComponent(editCode)}`);
+        const csvText = adminPlayersCsv(editable, base);
+        csvEl.value = csvText;
+        downloadText(`players_with_codes_${tid}.csv`, csvText);
+        importStatus.textContent = `Created ${editable?.players?.length || 0} players across two teams.`;
+        createStatus.textContent = "Created team match play. Opening the match editor…";
+      } catch (e) {
+        console.error(e);
+        createStatus.textContent = "Created team match play. Open the editor to review pairings and player codes.";
+      }
+    } else if (starterRaw) {
       createStatus.textContent = "Created. Generating tee times/codes…";
       importStatus.textContent = "Importing starter players…";
       try {

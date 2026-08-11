@@ -29,7 +29,15 @@ const scoresStatus = document.getElementById("scores_status");
 const nameEl = document.getElementById("e_name");
 const datesEl = document.getElementById("e_dates");
 const scoringEl = document.getElementById("e_scoring");
+const competitionTypeEl = document.getElementById("e_competition_type");
+const matchPlaySettingsEl = document.getElementById("e_match_play_settings");
+const matchPointsEl = document.getElementById("e_match_points");
+const matchWinTargetEl = document.getElementById("e_match_win_target");
 const roundRows = document.getElementById("round_rows");
+const strokeRoundsWrap = document.getElementById("stroke_rounds_wrap");
+const strokeRoundsHelp = document.getElementById("stroke_rounds_help");
+const matchPlayRoundsEl = document.getElementById("match_play_rounds");
+const scoresCard = document.getElementById("scores_card");
 const teamRows = document.getElementById("team_rows");
 const playersHead = document.getElementById("players_head");
 const playerRows = document.getElementById("player_rows");
@@ -65,6 +73,10 @@ let scoreGridRowsByRound = new Map();
 let tournamentCourses = [];
 let savedCourses = [];
 
+function isMatchPlayEditor(){
+  return String(competitionTypeEl?.value || currentData?.tournament?.competitionType || "stroke_play").trim().toLowerCase() === "team_match_play";
+}
+
 const ROUND_FORMATS = [
   { value: "scramble", label: "scramble" },
   { value: "team_best_ball", label: "team best ball" },
@@ -73,6 +85,12 @@ const ROUND_FORMATS = [
   { value: "two_man_best_ball", label: "two man best ball" },
   { value: "shamble", label: "shamble" },
   { value: "singles", label: "singles" }
+];
+const MATCH_PLAY_FORMATS = [
+  { value: "singles", label: "Singles (1 vs 1)", minPlayers: 1, maxPlayers: 1 },
+  { value: "best_ball", label: "Best ball (2–4 vs 2–4)", minPlayers: 2, maxPlayers: 4 },
+  { value: "alternate_shot", label: "Alternate shot (2 vs 2)", minPlayers: 2, maxPlayers: 2 },
+  { value: "scramble", label: "Scramble (2 vs 2)", minPlayers: 2, maxPlayers: 2 }
 ];
 const MAX_HOLE_SCORE_OPTIONS = [
   { value: "none", label: "No max" },
@@ -86,6 +104,14 @@ const MAX_HOLE_SCORE_OPTIONS = [
   { value: "score:10", label: "Max score 10" }
 ];
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function matchPlayFormatRule(format) {
+  return MATCH_PLAY_FORMATS.find((entry) => entry.value === String(format || "")) || MATCH_PLAY_FORMATS[0];
+}
+
+function matchPlayFormatLabel(format) {
+  return matchPlayFormatRule(format).label;
+}
 
 function roundMaxHoleScoreValue(rule) {
   if (!rule || typeof rule !== "object") return "none";
@@ -546,6 +572,8 @@ function renderScoresEditor() {
   scoreInputIndex = new Map();
   scoreRowMetaByKey = new Map();
   scoreGridRowsByRound = new Map();
+
+  if (isMatchPlayEditor()) return;
 
   const roundDraft = collectRoundsSafe();
   const rounds = roundDraft.length ? roundDraft : (Array.isArray(currentData?.rounds) ? currentData.rounds : []);
@@ -1177,8 +1205,229 @@ function collectCourse() {
   return out;
 }
 
+function matchPlayTeamIds(){
+  const configured = currentData?.tournament?.matchPlay?.teamIds || currentData?.matchPlay?.teamIds;
+  const ids = Array.isArray(configured)
+    ? configured.map((value) => String(value?.teamId || value?.id || value || "").trim()).filter(Boolean)
+    : [];
+  if (ids.length === 2) return ids;
+  const teams = Array.isArray(currentData?.teams) ? currentData.teams : Object.values(currentData?.teams || {});
+  return teams.map((team) => String(team?.teamId || "").trim()).filter(Boolean).slice(0, 2);
+}
+
+function selectedValues(select){
+  return [...(select?.selectedOptions || [])].map((option) => option.value).filter(Boolean);
+}
+
+function matchPlayerOptions(teamId, selectedIds = [], assignedElsewhere = new Set()){
+  const selected = new Set(selectedIds || []);
+  const draftPlayers = collectPlayersSafe();
+  const players = draftPlayers.length || !Array.isArray(currentData?.players)
+    ? draftPlayers
+    : currentData.players;
+  const options = players
+    .filter((player) => !player.remove && player.playerId && String(player.teamId || "") === String(teamId || ""))
+    .map((player) => {
+      const playerId = String(player.playerId);
+      const disabled = assignedElsewhere.has(playerId) && !selected.has(playerId);
+      return `<option value="${escapeHtml(playerId)}" ${selected.has(playerId) ? "selected" : ""}${disabled ? " disabled" : ""}>${escapeHtml(player.name || playerId || "Player")}</option>`;
+    })
+    .join("");
+  return options || `<option value="" disabled>No imported players on this team</option>`;
+}
+
+function syncMatchPlayAssignments(roundCard) {
+  if (!roundCard) return;
+  const format = String(roundCard.querySelector("[data-field='matchFormat']")?.value || "singles");
+  const rule = matchPlayFormatRule(format);
+  const matchRows = [...roundCard.querySelectorAll("[data-match-editor]")];
+  const assignments = matchRows.map((row) => new Set([
+    ...selectedValues(row.querySelector("[data-side='a']")),
+    ...selectedValues(row.querySelector("[data-side='b']"))
+  ]));
+  const duplicateIds = new Set();
+  const seen = new Set();
+  assignments.forEach((ids) => ids.forEach((id) => {
+    if (seen.has(id)) duplicateIds.add(id);
+    seen.add(id);
+  }));
+  matchRows.forEach((row, index) => {
+    const assignedElsewhere = new Set();
+    assignments.forEach((ids, otherIndex) => {
+      if (otherIndex !== index) ids.forEach((id) => assignedElsewhere.add(id));
+    });
+    for (const side of ["a", "b"]) {
+      const select = row.querySelector(`[data-side='${side}']`);
+      if (!select) continue;
+      [...select.options].forEach((option) => {
+        if (!option.value) {
+          option.disabled = true;
+          return;
+        }
+        option.disabled = assignedElsewhere.has(option.value) && !option.selected;
+      });
+    }
+    const counts = [
+      selectedValues(row.querySelector("[data-side='a']")).length,
+      selectedValues(row.querySelector("[data-side='b']")).length
+    ];
+    const message = row.querySelector("[data-match-validation]");
+    if (message) {
+      const countText = rule.minPlayers === rule.maxPlayers
+        ? `exactly ${rule.minPlayers}`
+        : `${rule.minPlayers}–${rule.maxPlayers}`;
+      message.textContent = counts.every((count) => count >= rule.minPlayers && count <= rule.maxPlayers)
+        ? `${matchPlayFormatLabel(format)} • ${counts.join(" vs ")} players`
+        : `${matchPlayFormatLabel(format)} • choose ${countText} players per side`;
+      if (duplicateIds.size) message.textContent += " • duplicate player assignment in this round";
+    }
+  });
+}
+
+function appendMatchEditor(roundCard, match, roundIndex, matchIndex, teamIds){
+  const matchesHost = roundCard.querySelector("[data-matches]");
+  if (!matchesHost || teamIds.length !== 2) return;
+  const points = Number(match?.points || matchPointsEl?.value || 1);
+  const matchId = String(match?.matchId || `r${roundIndex + 1}m${matchIndex + 1}`);
+  const teamAId = String(match?.teamA?.teamId || teamIds[0]);
+  const teamBId = String(match?.teamB?.teamId || teamIds[1]);
+  const teamName = (teamId) => {
+    const sourceTeams = Array.isArray(currentData?.teams) ? currentData.teams : Object.values(currentData?.teams || {});
+    return sourceTeams.find((team) => String(team?.teamId || "") === teamId)?.teamName
+      || collectTeamsSafe().find((team) => String(team?.teamId || "") === teamId)?.teamName
+      || teamId;
+  };
+  const row = document.createElement("div");
+  row.className = "card";
+  row.dataset.matchEditor = "true";
+  row.dataset.matchId = matchId;
+  row.style.margin = "10px 0 0";
+  row.innerHTML = `
+    <div class="actions" style="justify-content:space-between; align-items:center;">
+      <b>${escapeHtml(matchId)}</b>
+      <button type="button" class="secondary" data-remove-match>Remove match</button>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <div class="col">
+        <label>${escapeHtml(teamName(teamAId))}</label>
+        <select data-side="a" data-team-id="${escapeHtml(teamAId)}" multiple size="4">${matchPlayerOptions(teamAId, match?.teamA?.playerIds)}</select>
+      </div>
+      <div class="col">
+        <label>${escapeHtml(teamName(teamBId))}</label>
+        <select data-side="b" data-team-id="${escapeHtml(teamBId)}" multiple size="4">${matchPlayerOptions(teamBId, match?.teamB?.playerIds)}</select>
+      </div>
+      <div class="col">
+        <label>Points</label>
+        <input data-match-points type="number" min="0.5" step="0.5" value="${Number.isFinite(points) && points > 0 ? points : 1}" />
+      </div>
+    </div>
+    <div class="small" data-match-validation style="margin-top:8px;"></div>
+  `;
+  row.querySelector("[data-remove-match]")?.addEventListener("click", () => {
+    row.remove();
+    syncMatchPlayAssignments(roundCard);
+  });
+  row.querySelectorAll("select[data-side]").forEach((select) => {
+    select.addEventListener("change", () => syncMatchPlayAssignments(roundCard));
+  });
+  matchesHost.appendChild(row);
+  syncMatchPlayAssignments(roundCard);
+}
+
+function renderMatchPlayRounds(rounds){
+  if (!matchPlayRoundsEl) return;
+  const rows = Array.isArray(rounds) ? rounds : [];
+  const teamIds = matchPlayTeamIds();
+  matchPlayRoundsEl.innerHTML = "";
+  if (teamIds.length !== 2) {
+    matchPlayRoundsEl.innerHTML = `<div class="small" style="margin-top:10px; color:var(--bad);">Team match play requires exactly two teams with saved player IDs.</div>`;
+    return;
+  }
+  rows.forEach((round, roundIndex) => {
+    const format = ["singles", "best_ball", "alternate_shot", "scramble"].includes(round?.format) ? round.format : "singles";
+    const fallbackCourseIdx = Number.isInteger(Number(round?.courseIndex)) ? Number(round.courseIndex) : 0;
+    const courseRef = String(round?.courseRef || `tournament:${Math.max(0, fallbackCourseIdx)}`);
+    const fallbackCourse = tournamentCourses[fallbackCourseIdx] || null;
+    const teeRef = String(round?.teeRef || fallbackCourse?.selectedTeeKey || "");
+    const card = document.createElement("div");
+    card.className = "card";
+    card.dataset.roundIndex = String(roundIndex);
+    card.dataset.teeRef = teeRef;
+    card.style.margin = "12px 0 0";
+    card.innerHTML = `
+      <div class="actions" style="justify-content:space-between; align-items:center;">
+        <b>Round ${roundIndex + 1}</b>
+        <label style="display:flex; gap:6px; align-items:center; margin:0;"><input data-remove-round type="checkbox" /> Remove</label>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <div class="col"><label>Name</label><input data-field="name" value="${escapeHtml(round?.name || `Round ${roundIndex + 1}`)}" /></div>
+        <div class="col"><label>Format</label><select data-field="matchFormat">
+          <option value="singles" ${format === "singles" ? "selected" : ""}>singles</option>
+          <option value="best_ball" ${format === "best_ball" ? "selected" : ""}>best ball</option>
+          <option value="alternate_shot" ${format === "alternate_shot" ? "selected" : ""}>alternate shot</option>
+          <option value="scramble" ${format === "scramble" ? "selected" : ""}>scramble</option>
+        </select></div>
+        <div class="col"><label>Holes</label><select data-field="holes"><option value="18" ${Number(round?.holes) === 9 ? "" : "selected"}>18</option><option value="9" ${Number(round?.holes) === 9 ? "selected" : ""}>9</option></select></div>
+        <div class="col"><label>Handicap</label><select data-field="handicap"><option value="false" ${round?.useHandicap ? "" : "selected"}>No</option><option value="true" ${round?.useHandicap ? "selected" : ""}>Yes</option></select></div>
+        <div class="col"><label>Course</label><select data-field="course">${roundCourseOptionsHtml(courseRef)}</select></div>
+        <div class="col"><label>Tee</label><select data-field="tee"></select></div>
+      </div>
+      <div class="actions" style="margin-top:10px; justify-content:space-between;">
+        <div class="small" data-format-help></div>
+        <button type="button" class="secondary" data-add-match>+ Add match</button>
+      </div>
+      <div data-matches></div>
+    `;
+    matchPlayRoundsEl.appendChild(card);
+    syncRoundTeeSelect(card);
+    const formatEl = card.querySelector("[data-field='matchFormat']");
+    const handicapEl = card.querySelector("[data-field='handicap']");
+    const helpEl = card.querySelector("[data-format-help]");
+    const syncFormat = () => {
+      const value = String(formatEl?.value || "singles");
+      const allowed = value === "singles" || value === "best_ball";
+      if (handicapEl) {
+        handicapEl.disabled = !allowed;
+        if (!allowed) handicapEl.value = "false";
+      }
+      if (helpEl) helpEl.textContent = value === "singles" ? "Select 1 player per side." : value === "best_ball" ? "Select 2–4 players per side." : "Select exactly 2 players per side.";
+      syncMatchPlayAssignments(card);
+    };
+    formatEl?.addEventListener("change", syncFormat);
+    syncFormat();
+    (round?.matches || []).forEach((match, matchIndex) => appendMatchEditor(card, match, roundIndex, matchIndex, teamIds));
+    syncMatchPlayAssignments(card);
+    card.querySelector("[data-add-match]")?.addEventListener("click", () => {
+      const usedIds = new Set([...card.querySelectorAll("[data-match-id]")].map((row) => String(row.dataset.matchId || "")));
+      let nextIndex = 1;
+      while (usedIds.has(`r${roundIndex + 1}m${nextIndex}`)) nextIndex += 1;
+      nextIndex -= 1;
+      appendMatchEditor(card, null, roundIndex, nextIndex, teamIds);
+    });
+  });
+}
+
+function syncCompetitionEditorUi(){
+  const matchMode = isMatchPlayEditor();
+  if (matchPlaySettingsEl) matchPlaySettingsEl.hidden = !matchMode;
+  if (strokeRoundsWrap) strokeRoundsWrap.hidden = matchMode;
+  if (strokeRoundsHelp) strokeRoundsHelp.hidden = matchMode;
+  if (matchPlayRoundsEl) matchPlayRoundsEl.hidden = !matchMode;
+  if (scoresCard) scoresCard.hidden = matchMode;
+  if (scoringEl) {
+    scoringEl.disabled = matchMode;
+    if (matchMode) scoringEl.value = "stroke";
+  }
+}
+
 function renderRounds(rounds) {
   const rows = Array.isArray(rounds) ? rounds : [];
+  syncCompetitionEditorUi();
+  if (isMatchPlayEditor()) {
+    roundRows.innerHTML = "";
+    renderMatchPlayRounds(rows);
+    return;
+  }
   roundRows.innerHTML = "";
   rows.forEach((round) => {
     const currentFmtRaw = String(round?.format || "").toLowerCase();
@@ -1391,7 +1640,67 @@ function renderPlayers(players, roundCount = 1) {
   });
 }
 
+function collectMatchPlayRounds(){
+  const teamIds = matchPlayTeamIds();
+  if (teamIds.length !== 2) throw new Error("Team match play requires exactly two teams.");
+  const players = collectPlayers().filter((player) => !player.remove);
+  const playerById = new Map(players.map((player) => [player.playerId, player]));
+  const rounds = [...matchPlayRoundsEl.querySelectorAll(":scope > .card")]
+    .filter((card) => !card.querySelector("[data-remove-round]")?.checked)
+    .map((card, roundIndex) => {
+      const name = String(card.querySelector("[data-field='name']")?.value || "").trim() || `Round ${roundIndex + 1}`;
+      const format = String(card.querySelector("[data-field='matchFormat']")?.value || "singles");
+      const holes = Number(card.querySelector("[data-field='holes']")?.value || 18) === 9 ? 9 : 18;
+      const useHandicap = card.querySelector("[data-field='handicap']")?.value === "true";
+      if (useHandicap && format !== "singles" && format !== "best_ball") throw new Error(`${name}: handicaps are allowed only for singles and best ball.`);
+      const courseRef = String(card.querySelector("[data-field='course']")?.value || "tournament:0");
+      const teeRef = String(card.querySelector("[data-field='tee']")?.value || "");
+      const usedPlayers = new Set();
+      const usedMatchIds = new Set();
+      const matches = [...card.querySelectorAll("[data-match-id]")].map((row, matchIndex) => {
+        const matchId = String(row.dataset.matchId || `r${roundIndex + 1}m${matchIndex + 1}`);
+        if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(matchId)) throw new Error(`${name}, match ${matchIndex + 1}: invalid stable match ID.`);
+        if (usedMatchIds.has(matchId)) throw new Error(`${name}: duplicate match ID "${matchId}".`);
+        usedMatchIds.add(matchId);
+        const selectA = row.querySelector("[data-side='a']");
+        const selectB = row.querySelector("[data-side='b']");
+        const teamAId = String(selectA?.dataset.teamId || teamIds[0]);
+        const teamBId = String(selectB?.dataset.teamId || teamIds[1]);
+        if (!teamIds.includes(teamAId) || !teamIds.includes(teamBId) || teamAId === teamBId) {
+          throw new Error(`${name}, ${matchId}: match sides must use the two configured teams.`);
+        }
+        const playerIdsA = selectedValues(selectA);
+        const playerIdsB = selectedValues(selectB);
+        const validateSide = (ids, teamId, label) => {
+          const validCount = format === "singles" ? ids.length === 1 : format === "best_ball" ? ids.length >= 2 && ids.length <= 4 : ids.length === 2;
+          if (!validCount) throw new Error(`${name}, ${matchId}: ${label} must select ${format === "singles" ? "1 player" : format === "best_ball" ? "2–4 players" : "2 players"}.`);
+          for (const playerId of ids) {
+            if (usedPlayers.has(playerId)) throw new Error(`${name}: a player cannot appear in more than one match.`);
+            const player = playerById.get(playerId);
+            if (!player || String(player.teamId || "") !== teamId) throw new Error(`${name}, ${matchId}: a selected player is not on the assigned team.`);
+            usedPlayers.add(playerId);
+          }
+        };
+        validateSide(playerIdsA, teamAId, "first side");
+        validateSide(playerIdsB, teamBId, "second side");
+        const points = Number(row.querySelector("[data-match-points]")?.value || matchPointsEl?.value || 1);
+        if (!Number.isFinite(points) || points <= 0) throw new Error(`${name}, ${matchId}: points must be greater than zero.`);
+        return {
+          matchId,
+          points,
+          teamA: { teamId: teamAId, playerIds: playerIdsA },
+          teamB: { teamId: teamBId, playerIds: playerIdsB }
+        };
+      });
+      if (!matches.length) throw new Error(`${name} needs at least one match.`);
+      return { name, format, holes, useHandicap, courseRef, teeRef, matches };
+    });
+  if (!rounds.length) throw new Error("At least one match-play round is required.");
+  return rounds;
+}
+
 function collectRounds() {
+  if (isMatchPlayEditor()) return collectMatchPlayRounds();
   const rows = [...roundRows.querySelectorAll("tr")];
   const rounds = rows
     .map((tr) => {
@@ -1530,6 +1839,19 @@ function regenerateCodes() {
 
 function addRoundRow() {
   const rounds = collectRoundsSafe();
+  if (isMatchPlayEditor()) {
+    rounds.push({
+      name: `Round ${rounds.length + 1}`,
+      format: "singles",
+      holes: 18,
+      useHandicap: false,
+      courseRef: "tournament:0",
+      teeRef: "",
+      matches: []
+    });
+    renderMatchPlayRounds(rounds);
+    return;
+  }
   rounds.push({
     name: `Round ${rounds.length + 1}`,
     format: "singles",
@@ -1599,6 +1921,11 @@ function renderPage(data) {
   nameEl.value = data?.tournament?.name || "";
   datesEl.value = data?.tournament?.dates || "";
   if (scoringEl) scoringEl.value = String(data?.tournament?.scoring || "stroke").trim() || "stroke";
+  if (competitionTypeEl) competitionTypeEl.value = String(data?.tournament?.competitionType || "stroke_play");
+  const matchPlay = data?.matchPlay || data?.tournament?.matchPlay || {};
+  if (matchPointsEl) matchPointsEl.value = String(matchPlay?.pointsPerMatch || 1);
+  if (matchWinTargetEl) matchWinTargetEl.value = matchPlay?.winTarget == null ? "" : String(matchPlay.winTarget);
+  syncCompetitionEditorUi();
   const course = tournamentCourses[0] || normalizeCourseForUi(data?.course || null);
   if (courseNameEl) courseNameEl.value = course.name;
   fillCourseRows(course.pars, course.strokeIndex);
@@ -1782,19 +2109,36 @@ async function saveTournament() {
     const primaryCourse = collectCourse();
     const roundDraft = collectRounds();
     const { courses, rounds } = await resolveCoursesAndRoundsForSave(roundDraft, primaryCourse);
+    const matchMode = isMatchPlayEditor();
+    const teams = collectTeams();
+    const pointsPerMatch = Number(matchPointsEl?.value || 1);
+    const winTargetRaw = String(matchWinTargetEl?.value || "").trim();
+    const winTarget = winTargetRaw ? Number(winTargetRaw) : null;
+    if (matchMode && teams.length !== 2) throw new Error("Team match play requires exactly two teams.");
+    if (matchMode && (!Number.isFinite(pointsPerMatch) || pointsPerMatch <= 0)) throw new Error("Default points per match must be greater than zero.");
+    if (matchMode && winTargetRaw && (!Number.isFinite(winTarget) || winTarget <= 0)) throw new Error("Points to win must be greater than zero.");
     const payload = {
       editCode: currentEditCode,
+      competitionType: matchMode ? "team_match_play" : "stroke_play",
       tournament: {
         name: String(nameEl.value || "").trim(),
         dates: String(datesEl.value || "").trim(),
-        scoring: String(scoringEl?.value || "stroke").trim() || "stroke"
+        scoring: matchMode ? "stroke" : (String(scoringEl?.value || "stroke").trim() || "stroke"),
+        competitionType: matchMode ? "team_match_play" : "stroke_play"
       },
+      ...(matchMode ? {
+        matchPlay: {
+          teamIds: teams.map((team) => team.teamId),
+          pointsPerMatch,
+          ...(winTarget != null ? { winTarget } : {})
+        }
+      } : {}),
       course: courses[0],
       courses,
       rounds,
-      teams: collectTeams(),
+      teams,
       players: collectPlayers(),
-      scores: collectScoresForSave()
+      ...(!matchMode ? { scores: collectScoresForSave() } : {})
     };
     await api(`/tournaments/${encodeURIComponent(currentTid)}/admin`, {
       method: "POST",
@@ -1993,6 +2337,11 @@ editCodeInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") loadTournament(tidInput.value, editCodeInput.value);
 });
 addRoundBtn.addEventListener("click", addRoundRow);
+competitionTypeEl?.addEventListener("change", () => {
+  syncCompetitionEditorUi();
+  renderRounds(Array.isArray(currentData?.rounds) ? currentData.rounds : []);
+  renderScoresEditor();
+});
 addPlayerBtn.addEventListener("click", addPlayerRow);
 autoGroupsBtn.addEventListener("click", autoAssignGroups);
 regenCodesBtn.addEventListener("click", regenerateCodes);

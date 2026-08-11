@@ -4511,6 +4511,135 @@ function buildScoreboardResponse(tournamentJson, viewRound) {
   };
 }
 
+function isMatchPlayTournament(tournament = TOURN) {
+  return String(tournament?.tournament?.competitionType || tournament?.competitionType || "") === "team_match_play";
+}
+
+function matchPlayFormatLabel(format) {
+  const labels = {
+    singles: "Singles",
+    best_ball: "Best ball",
+    alternate_shot: "Alternate shot",
+    scramble: "Scramble"
+  };
+  return labels[String(format || "")] || String(format || "Match").replaceAll("_", " ");
+}
+
+function renderMatchPlayScoreboard() {
+  const matchPlay = TOURN?.matchPlay || {};
+  const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
+  const players = Object.fromEntries((TOURN?.players || []).map((player) => [player.playerId, player]));
+  const teams = Object.fromEntries((TOURN?.teams || []).map((team) => [team.teamId, team]));
+  const leaderboard = lbTbl?.closest(".scoreboard-leaderboard");
+  if (!leaderboard) return;
+  const leaderboardToggle = document.getElementById("lb_toggle");
+  if (leaderboardToggle) {
+    leaderboardToggle.hidden = true;
+    leaderboardToggle.style.display = "none";
+  }
+  if (lbTitle) lbTitle.textContent = "Team Match Play";
+  if (lbTitleHelp) lbTitleHelp.textContent = `First to ${Number(matchPlay.winTarget || 0)} points wins.`;
+  if (lbTbl) lbTbl.hidden = true;
+  if (scorecardCard) scorecardCard.hidden = true;
+  document.getElementById("trend_panel")?.toggleAttribute("hidden", true);
+  document.getElementById("stats_panel_card")?.toggleAttribute("hidden", true);
+  if (oddsPanel) oddsPanel.hidden = true;
+
+  let root = document.getElementById("match_play_scoreboard");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "match_play_scoreboard";
+    root.className = "match-play-scoreboard";
+    leaderboard.appendChild(root);
+  }
+  root.innerHTML = "";
+
+  const pointsGrid = document.createElement("section");
+  pointsGrid.className = "match-play-points-grid";
+  standings.forEach((standing) => {
+    const card = document.createElement("article");
+    card.className = "match-play-team-score";
+    const color = teams[standing.teamId]?.color || standing.teamColor || colorForTeam(standing.teamId, standing.teamName);
+    card.style.setProperty("--team-accent", color);
+    const name = document.createElement("div");
+    name.className = "match-play-team-name";
+    name.textContent = standing.teamName || teams[standing.teamId]?.teamName || standing.teamId;
+    const score = document.createElement("strong");
+    score.className = "match-play-team-points";
+    score.textContent = String(standing.points ?? 0);
+    const record = document.createElement("div");
+    record.className = "small";
+    record.textContent = `${standing.matchesWon || 0} won · ${standing.matchesHalved || 0} halved · ${standing.matchesLost || 0} lost`;
+    card.append(name, score, record);
+    pointsGrid.appendChild(card);
+  });
+  root.appendChild(pointsGrid);
+
+  const target = document.createElement("div");
+  target.className = "match-play-target";
+  if (matchPlay.winnerTeamId) {
+    const winner = standings.find((row) => row.teamId === matchPlay.winnerTeamId);
+    target.textContent = `${winner?.teamName || teams[matchPlay.winnerTeamId]?.teamName || matchPlay.winnerTeamId} has won the match.`;
+  } else {
+    target.textContent = `${matchPlay.scheduledPoints || 0} points available · ${matchPlay.winTarget || 0} needed to win`;
+  }
+  root.appendChild(target);
+
+  const rounds = Array.isArray(matchPlay.rounds) ? matchPlay.rounds : [];
+  const visibleRounds = currentRound === "all"
+    ? rounds
+    : rounds.filter((round) => Number(round.roundIndex) === Number(currentRound));
+  for (const round of visibleRounds) {
+    const section = document.createElement("section");
+    section.className = "match-play-round";
+    const heading = document.createElement("div");
+    heading.className = "match-play-round-head";
+    const title = document.createElement("h3");
+    title.textContent = round.name || `Round ${Number(round.roundIndex) + 1}`;
+    const meta = document.createElement("span");
+    meta.className = "small";
+    meta.textContent = `${matchPlayFormatLabel(round.format)} · ${round.holes || 18} holes${round.useHandicap ? " · handicaps" : ""}`;
+    heading.append(title, meta);
+    section.appendChild(heading);
+    for (const match of round.matches || []) {
+      const card = document.createElement("article");
+      card.className = "match-play-match-card";
+      const side = (sideData, sideKey) => {
+        const node = document.createElement("div");
+        node.className = `match-play-side match-play-side-${sideKey}`;
+        const teamName = document.createElement("b");
+        teamName.textContent = teams[sideData?.teamId]?.teamName || sideData?.teamId || "Team";
+        const names = document.createElement("span");
+        names.textContent = (sideData?.playerIds || []).map((id) => players[id]?.name || id).join(" + ") || "Players TBD";
+        node.append(teamName, names);
+        return node;
+      };
+      const center = document.createElement("div");
+      center.className = "match-play-match-state";
+      const state = document.createElement("strong");
+      if (match.result === "halved") state.textContent = "Halved";
+      else if (match.status === "final" || match.status === "closed") {
+        const winnerName = teams[match.winnerTeamId]?.teamName || match.winnerTeamId || "Winner";
+        state.textContent = `${winnerName} ${match.display || "wins"}`;
+      } else if (match.leadTeamId) {
+        const leaderName = teams[match.leadTeamId]?.teamName || match.leadTeamId;
+        state.textContent = `${leaderName} ${match.display || "leads"}`;
+      } else state.textContent = match.display || "All square";
+      const detail = document.createElement("span");
+      detail.textContent = `${match.pointsAvailable || 1} point${Number(match.pointsAvailable || 1) === 1 ? "" : "s"}`;
+      center.append(state, detail);
+      card.append(side(match.teamA, "a"), center, side(match.teamB, "b"));
+      section.appendChild(card);
+    }
+    root.appendChild(section);
+  }
+
+  if (updated) {
+    const ts = TOURN.updatedAt ? new Date(TOURN.updatedAt).toLocaleString() : "—";
+    updated.textContent = `Updated: ${ts}`;
+  }
+}
+
 async function loadTournament() {
   try {
     const [tournamentJson, oddsJson] = await Promise.all([
@@ -4579,7 +4708,7 @@ async function refreshTournamentData() {
   try {
     const previousTournament = TOURN;
     const nextTournament = await loadTournament();
-    const newEvents = collectNewScoreEvents(previousTournament, nextTournament);
+    const newEvents = isMatchPlayTournament(nextTournament) ? [] : collectNewScoreEvents(previousTournament, nextTournament);
     TOURN = nextTournament;
     teamColorsSeeded = false;
     rebuildTeamColors();
@@ -4604,6 +4733,10 @@ function startAutoRefresh() {
 function render() {
   if (!TOURN) return;
   setHeaderTournamentName(TOURN?.tournament?.name);
+  if (isMatchPlayTournament()) {
+    renderMatchPlayScoreboard();
+    return;
+  }
   const weightedLeader = weightedTeamLeaderRow();
   if (weightedLeader) {
     setBrandDotColor(colorForTeam(weightedLeader?.teamId, weightedLeader?.teamName));
@@ -4741,6 +4874,11 @@ roundFilter.onchange = () => {
   const nextRound = v === "all" ? "all" : Number(v);
   const switchedRounds = String(nextRound) !== String(currentRound);
   currentRound = nextRound;
+  if (isMatchPlayTournament()) {
+    writeScoreboardPrefs();
+    render();
+    return;
+  }
   if (switchedRounds && isIndividualDefaultRound(currentRound) && !isScrambleRound(currentRound)) {
     mode = "player";
   }
@@ -4773,6 +4911,18 @@ window.addEventListener("resize", scheduleOddsHeadFixedStateSync);
     teamColorsSeeded = false;
     rebuildTeamColors();
     $('body').show();
+
+    if (isMatchPlayTournament()) {
+      currentRound = hasStoredRoundPreference ? currentRound : "all";
+      syncRoundFilterOptions();
+      if (status) {
+        status.textContent = "";
+        status.hidden = true;
+      }
+      render();
+      startAutoRefresh();
+      return;
+    }
 
     const roundCount = (TOURN.tournament.rounds || []).length;
     if (!hasStoredRoundPreference) {

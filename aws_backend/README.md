@@ -48,6 +48,38 @@ Chat messages are not stored; they are pushed directly to subscribed devices.
 - `two_man_shamble` (players enter both scores for the pair; group and team totals are derived from those player holes)
 - `two_man_best_ball` (players enter both scores for the pair; group and team totals use the best gross/net hole score)
 
+### Team match play
+
+The first team match-play version is selected with `tournament.competitionType: "team_match_play"`. It requires exactly two teams and stores the organizer configuration in `tournament.matchPlay`:
+
+```json
+{
+  "competitionType": "team_match_play",
+  "matchPlay": {
+    "teamIds": ["red", "blue"],
+    "pointsPerMatch": 1,
+    "winTarget": 3.5
+  },
+  "rounds": [{
+    "name": "Morning Four-ball",
+    "holes": 9,
+    "format": "best_ball",
+    "useHandicap": true,
+    "matches": [{
+      "matchId": "r1m1",
+      "teamA": { "teamId": "red", "playerIds": ["p1", "p2"] },
+      "teamB": { "teamId": "blue", "playerIds": ["p3", "p4"] }
+    }]
+  }]
+}
+```
+
+Match-play formats are `singles`, `best_ball`, `alternate_shot`, and `scramble`. Singles has exactly one player per side; best ball accepts two to four players per side (the UI defaults to two); alternate shot and scramble use exactly two players per side. Handicaps are accepted only for singles and best ball. Match IDs are stable and generated as `r{round}m{match}` when omitted. The state keeps player holes for singles/best ball and one `scores.rounds[].matches[matchId].sides[teamId]` hole array for alternate shot/scramble.
+
+Score writes for match play include `matchId` and remain authorized by the player code. A player can write only their own scheduled match and team side. Nine-hole rounds store the normal 18-slot arrays but ignore slots 10-18. The server derives each match's `status` (`not_started`, `live`, `final`, or `closed`), `result`, `display`, `thru`, `holesRemaining`, and points. A completed tie splits the match points equally; a lead greater than holes remaining closes the match early. The default event target is `scheduledPoints / 2 + 0.5`; `winTarget` overrides it.
+
+Public tournament JSON includes the canonical configuration under `tournament.matchPlay` and derived standings/status under the top-level `matchPlay` object. `score_data.rounds[].matches` contains the same server-derived match results. Enter JSON includes the player's scheduled `matchId`, target (`player` or `match_side`), and saved holes.
+
 Top-X behavior for player-based formats (`team_best_ball`, `singles`, `shamble`):
 - Round team leaderboard: sum of Top X
 - Weighted all-round team leaderboard: average of Top X

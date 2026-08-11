@@ -60,6 +60,31 @@
         <option value="stableford">Stableford</option>
       </select>
     </div>
+    <div class="col">
+      <label for="competition_type">Competition</label>
+      <select id="competition_type">
+        <option value="stroke_play">Stroke play tournament</option>
+        <option value="team_match_play">Team match play</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="match_play_settings" hidden>
+  <h2 style="margin-top:0;">Team match play</h2>
+  <div class="small" style="margin-bottom:10px;">
+    Starter players must belong to exactly two teams. Players are paired in CSV order and can be rearranged in the editor after creation.
+  </div>
+  <div class="row">
+    <div class="col">
+      <label for="match_points">Points per match</label>
+      <input id="match_points" type="number" min="0.5" step="0.5" value="1" />
+    </div>
+    <div class="col">
+      <label for="match_win_target">Points to win (optional)</label>
+      <input id="match_win_target" type="number" min="0.5" step="0.5" placeholder="Automatic" />
+      <div class="small">Blank uses total scheduled points / 2 + 0.5.</div>
+    </div>
   </div>
 </div>
 
@@ -89,6 +114,7 @@
   </div>
   <div id="rounds"></div>
   <div class="small">
+    <span data-stroke-round-help>
     Team leaderboard by round uses <b>sum of Top X</b> for player-based formats.
     Team Best Ball applies Top X per hole; singles/shamble apply Top X on round totals.
     Full-tournament weighted team totals use average of Top X.
@@ -99,6 +125,10 @@
     Two man best ball uses the best gross or net hole score within each pair.
     Scramble uses fixed team scoring in both views, with team handicap capped at the team's low handicap.
     Individuals always show each player's own (weighted) total for that view.
+    </span>
+    <span data-match-round-help hidden>
+      Match play supports singles, best ball, alternate shot, and scramble. Handicaps are available only for singles and best ball. Every scheduled match is worth one point by default; tied completed matches split the point.
+    </span>
   </div>
 </div>
 

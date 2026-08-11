@@ -92,6 +92,31 @@
           <option value="stableford">Stableford</option>
         </select>
       </div>
+      <div class="col">
+        <label for="e_competition_type">Competition</label>
+        <select id="e_competition_type">
+          <option value="stroke_play">Stroke play tournament</option>
+          <option value="team_match_play">Team match play</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="e_match_play_settings" hidden>
+    <h2 style="margin-top:0;">Team match play settings</h2>
+    <div class="small" style="margin-bottom:10px;">
+      Every match defaults to one point. Leave Points to win blank to recalculate the backend default (scheduled points / 2 + 0.5), or enter an explicit target.
+    </div>
+    <div class="row">
+      <div class="col">
+        <label for="e_match_points">Default points per match</label>
+        <input id="e_match_points" type="number" min="0.5" step="0.5" value="1" />
+      </div>
+      <div class="col">
+        <label for="e_match_win_target">Points to win</label>
+        <input id="e_match_win_target" type="number" min="0.5" step="0.5" />
+        <div class="small">The backend defaults to scheduled points / 2 + 0.5.</div>
+      </div>
     </div>
   </div>
 
@@ -130,12 +155,12 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="rounds_card">
     <div class="actions" style="justify-content:space-between;">
       <h2 style="margin:0;">Rounds</h2>
       <button class="secondary" id="add_round_btn">+ Add round</button>
     </div>
-    <div class="scoregrid" style="margin-top:10px;">
+    <div class="scoregrid" id="stroke_rounds_wrap" style="margin-top:10px;">
       <table class="table" id="round_tbl">
         <thead>
           <tr>
@@ -153,7 +178,12 @@
         <tbody id="round_rows"></tbody>
       </table>
     </div>
-    <div class="small" style="margin-top:8px;">Top X applies to player-based formats (team best ball, singles, shamble): round team leaderboard uses sum of Top X; weighted total team uses average. Two-man rounds use sum of groups for that round and average of groups in weighted totals. Two man scramble uses one score per pair, while two man shamble and two man best ball derive pair totals from player scores.</div>
+    <div class="small" id="stroke_rounds_help" style="margin-top:8px;">Top X applies to player-based formats (team best ball, singles, shamble): round team leaderboard uses sum of Top X; weighted total team uses average. Two-man rounds use sum of groups for that round and average of groups in weighted totals. Two man scramble uses one score per pair, while two man shamble and two man best ball derive pair totals from player scores.</div>
+    <div id="match_play_rounds" hidden>
+      <div class="small" style="margin-top:8px;">
+        Schedule each match after players are imported. A player can appear in only one match per round; player lists are filtered to the selected team.
+      </div>
+    </div>
   </div>
 
   <div class="card">
@@ -211,7 +241,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="scores_card">
     <h2 style="margin-top:0;">Scores (All Rounds)</h2>
     <div class="small">Edit hole scores for every round in one place, paste a score block from Excel into any hole cell, or download/upload a scores CSV.</div>
     <div class="actions" style="margin-top:10px;">
