@@ -30,6 +30,23 @@ function normalizeFormat(value) {
   return raw;
 }
 
+function normalizeNineHoleSide(value, holes, roundIndex) {
+  if (holes !== 9) return null;
+  const raw = text(value).toLowerCase().replace(/[\s-]+/g, "_");
+  if (!raw || raw === "front" || raw === "front_9" || raw === "front_nine") return "front";
+  if (raw === "back" || raw === "back_9" || raw === "back_nine") return "back";
+  fail(`rounds[${roundIndex}].nineHoleSide must be "front" or "back".`);
+}
+
+export function matchPlayHoleIndices(round = {}) {
+  const holes = Number(round.holes ?? round.holeCount ?? 18);
+  if (holes === 9) {
+    const start = text(round.nineHoleSide).toLowerCase() === "back" ? 9 : 0;
+    return Array.from({ length: 9 }, (_, index) => start + index);
+  }
+  return Array.from({ length: 18 }, (_, index) => index);
+}
+
 function normalizePlayerIds(value) {
   const values = Array.isArray(value) ? value : value == null ? [] : [value];
   const out = values.map(text).filter(Boolean);
@@ -129,6 +146,7 @@ export function normalizeMatchPlayRounds(roundsIn, existingRounds = [], defaultP
     return {
       name: text(round.name) || `Round ${roundIndex + 1}`,
       holes,
+      nineHoleSide: normalizeNineHoleSide(round.nineHoleSide, holes, roundIndex),
       format,
       useHandicap: !!round.useHandicap,
       courseIndex: Number.isInteger(Number(round.courseIndex)) && Number(round.courseIndex) >= 0
@@ -218,10 +236,11 @@ export function emptyMatchPlayScores(rounds = []) {
   }));
 }
 
-function holesFor(value, holes) {
+function holesFor(value, activeHoleIndices) {
   const source = Array.isArray(value) ? value : value?.holes;
+  const active = new Set(activeHoleIndices);
   return Array.from({ length: 18 }, (_, index) => {
-    if (index >= holes || !Array.isArray(source)) return null;
+    if (!active.has(index) || !Array.isArray(source)) return null;
     const number = Number(source[index]);
     return Number.isFinite(number) && number >= 1 && number <= 20 ? number : null;
   });
@@ -234,13 +253,13 @@ function handicapShots(handicap, strokeIndex) {
   return Array.from({ length: 18 }, (_, index) => base + (Number(strokeIndex?.[index] ?? index + 1) <= remainder ? 1 : 0));
 }
 
-function sideScores(match, format, side, roundScores, players, course, holes, useHandicap) {
+function sideScores(match, format, side, roundScores, players, course, activeHoleIndices, useHandicap) {
   if (format === "alternate_shot" || format === "scramble") {
-    return holesFor(roundScores?.matches?.[match.matchId]?.sides?.[side.teamId], holes);
+    return holesFor(roundScores?.matches?.[match.matchId]?.sides?.[side.teamId], activeHoleIndices);
   }
   const values = side.playerIds.map((playerId) => {
     const player = players[playerId] || {};
-    const gross = holesFor(roundScores?.players?.[playerId], holes);
+    const gross = holesFor(roundScores?.players?.[playerId], activeHoleIndices);
     const shots = useHandicap ? handicapShots(player.handicap, course?.strokeIndex) : Array(18).fill(0);
     return { gross, net: gross.map((value, index) => value == null ? null : value - shots[index]) };
   });
@@ -260,13 +279,14 @@ function resultText(result, holes) {
 }
 
 function materializeMatch(match, round, roundScores, players, course) {
-  const sideA = sideScores(match, round.format, match.teamA, roundScores, players, course, round.holes, round.useHandicap);
-  const sideB = sideScores(match, round.format, match.teamB, roundScores, players, course, round.holes, round.useHandicap);
+  const activeHoleIndices = matchPlayHoleIndices(round);
+  const sideA = sideScores(match, round.format, match.teamA, roundScores, players, course, activeHoleIndices, round.useHandicap);
+  const sideB = sideScores(match, round.format, match.teamB, roundScores, players, course, activeHoleIndices, round.useHandicap);
   const holeResults = Array(18).fill(null);
   let aWins = 0;
   let bWins = 0;
   const played = [];
-  for (let index = 0; index < round.holes; index++) {
+  for (const index of activeHoleIndices) {
     if (sideA[index] == null || sideB[index] == null) continue;
     played.push(index);
     if (sideA[index] < sideB[index]) { aWins += 1; holeResults[index] = match.teamA.teamId; }
@@ -288,7 +308,9 @@ function materializeMatch(match, round, roundScores, players, course) {
         [match.teamA.teamId]: result === match.teamA.teamId ? match.points : 0,
         [match.teamB.teamId]: result === match.teamB.teamId ? match.points : 0
       };
-  const thru = played.length ? Math.max(...played) + 1 : 0;
+  const thru = played.length
+    ? Math.max(...played.map((holeIndex) => activeHoleIndices.indexOf(holeIndex))) + 1
+    : 0;
   const output = {
     matchId: match.matchId,
     pointsAvailable: match.points,
@@ -318,7 +340,15 @@ export function materializeMatchPlay({ tournament, rounds, teams, players, score
     const course = (courses || [])[Number(round.courseIndex)] || (courses || [])[0] || {};
     const roundScores = scores?.rounds?.[roundIndex] || {};
     const matches = round.matches.map((match) => materializeMatch(match, round, roundScores, players || {}, course));
-    return { roundIndex, name: round.name, holes: round.holes, format: round.format, useHandicap: round.useHandicap, matches };
+    return {
+      roundIndex,
+      name: round.name,
+      holes: round.holes,
+      nineHoleSide: round.nineHoleSide,
+      format: round.format,
+      useHandicap: round.useHandicap,
+      matches
+    };
   });
   const standings = config.teamIds.map((teamId) => ({
     teamId,

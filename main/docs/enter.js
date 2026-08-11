@@ -2295,6 +2295,24 @@ function matchPlayEntryFormatLabel(format) {
   })[String(format || "")] || String(format || "Match").replaceAll("_", " ");
 }
 
+function matchPlayEntryNineHoleSide(value) {
+  return String(value || "").trim().toLowerCase() === "back" ? "back" : "front";
+}
+
+function matchPlayEntryHoleIndices(round, derivedRound) {
+  if (Number(round?.holes) !== 9) return Array.from({ length: 18 }, (_, index) => index);
+  const side = matchPlayEntryNineHoleSide(round?.nineHoleSide ?? derivedRound?.nineHoleSide);
+  const start = side === "back" ? 9 : 0;
+  return Array.from({ length: 9 }, (_, index) => start + index);
+}
+
+function matchPlayEntryNineHoleLabel(round, derivedRound) {
+  if (Number(round?.holes) !== 9) return "";
+  return matchPlayEntryNineHoleSide(round?.nineHoleSide ?? derivedRound?.nineHoleSide) === "back"
+    ? "Back nine"
+    : "Front nine";
+}
+
 async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
   if (ticker) ticker.style.display = "none";
   if (pageBulkToggleButton) pageBulkToggleButton.hidden = true;
@@ -2325,6 +2343,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
 
   for (let roundIndex = 0; roundIndex < configRounds.length; roundIndex++) {
     const round = configRounds[roundIndex] || {};
+    const derivedRound = derivedRounds[roundIndex] || {};
     const assignment = enter?.player?.matchAssignments?.[roundIndex] || null;
     const card = document.createElement("section");
     card.className = "card match-play-entry-card";
@@ -2336,7 +2355,8 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
     roundTitle.textContent = round.name || `Round ${roundIndex + 1}`;
     const roundMeta = document.createElement("div");
     roundMeta.className = "small";
-    roundMeta.textContent = `${matchPlayEntryFormatLabel(round.format)} · ${Number(round.holes) === 9 ? 9 : 18} holes${round.useHandicap ? " · handicaps on" : ""}`;
+    const nineHoleLabel = matchPlayEntryNineHoleLabel(round, derivedRound);
+    roundMeta.textContent = `${matchPlayEntryFormatLabel(round.format)} · ${Number(round.holes) === 9 ? 9 : 18} holes${nineHoleLabel ? ` · ${nineHoleLabel}` : ""}${round.useHandicap ? " · handicaps on" : ""}`;
     headingText.append(roundTitle, roundMeta);
     const matchStatus = document.createElement("strong");
     heading.append(headingText, matchStatus);
@@ -2368,7 +2388,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
     };
     syncStatusText();
 
-    const activeHoles = Number(round.holes) === 9 ? 9 : 18;
+    const activeHoleIndices = matchPlayEntryHoleIndices(round, derivedRound);
     const saved = Array.isArray(savedRounds[roundIndex]?.gross)
       ? savedRounds[roundIndex].gross.slice(0, 18)
       : Array(18).fill(null);
@@ -2376,7 +2396,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
     const grid = document.createElement("div");
     grid.className = "match-play-entry-grid";
     const inputs = [];
-    for (let holeIndex = 0; holeIndex < activeHoles; holeIndex++) {
+    for (const holeIndex of activeHoleIndices) {
       const label = document.createElement("label");
       label.className = "match-play-entry-hole";
       const number = document.createElement("span");
@@ -2391,7 +2411,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
       input.setAttribute("aria-label", `Hole ${holeIndex + 1} score`);
       label.append(number, input);
       grid.appendChild(label);
-      inputs.push(input);
+      inputs.push({ holeIndex, input });
     }
     card.appendChild(grid);
     const actions = document.createElement("div");
@@ -2407,15 +2427,15 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
 
     save.addEventListener("click", async () => {
       const holes = Array(18).fill(null);
-      for (let index = 0; index < activeHoles; index++) {
-        const raw = String(inputs[index].value || "").trim();
+      for (const { holeIndex, input } of inputs) {
+        const raw = String(input.value || "").trim();
         if (!raw) continue;
         const value = Number(raw);
         if (!Number.isInteger(value) || value < 1 || value > 20) {
-          saveStatus.textContent = `Hole ${index + 1} must be 1–20 or blank.`;
+          saveStatus.textContent = `Hole ${holeIndex + 1} must be 1–20 or blank.`;
           return;
         }
-        holes[index] = value;
+        holes[holeIndex] = value;
       }
       const payload = {
         code,

@@ -63,6 +63,7 @@ The first team match-play version is selected with `tournament.competitionType: 
   "rounds": [{
     "name": "Morning Four-ball",
     "holes": 9,
+    "nineHoleSide": "front",
     "format": "best_ball",
     "useHandicap": true,
     "matches": [{
@@ -76,7 +77,7 @@ The first team match-play version is selected with `tournament.competitionType: 
 
 Match-play formats are `singles`, `best_ball`, `alternate_shot`, and `scramble`. Singles has exactly one player per side; best ball accepts two to four players per side (the UI defaults to two); alternate shot and scramble use exactly two players per side. Handicaps are accepted only for singles and best ball. Match IDs are stable and generated as `r{round}m{match}` when omitted. The state keeps player holes for singles/best ball and one `scores.rounds[].matches[matchId].sides[teamId]` hole array for alternate shot/scramble.
 
-Score writes for match play include `matchId` and remain authorized by the player code. A player can write only their own scheduled match and team side. Nine-hole rounds store the normal 18-slot arrays but ignore slots 10-18. The server derives each match's `status` (`not_started`, `live`, `final`, or `closed`), `result`, `display`, `thru`, `holesRemaining`, and points. A completed tie splits the match points equally; a lead greater than holes remaining closes the match early. The default event target is `scheduledPoints / 2 + 0.5`; `winTarget` overrides it.
+Score writes for match play include `matchId` and remain authorized by the player code. A player can write only their own scheduled match and team side. Nine-hole rounds use `nineHoleSide: "front" | "back"`; legacy rounds without the field default to `"front"`. Scores keep the normal 18-slot arrays: a front-nine round uses indices 0-8 (holes 1-9), while a back-nine round uses indices 9-17 (holes 10-18), and inactive slots are ignored. The server derives each match's `status` (`not_started`, `live`, `final`, or `closed`), `result`, `display`, `thru`, `holesRemaining`, and points. A completed tie splits the match points equally; a lead greater than holes remaining closes the match early. The default event target is `scheduledPoints / 2 + 0.5`; `winTarget` overrides it.
 
 Public tournament JSON includes the canonical configuration under `tournament.matchPlay` and derived standings/status under the top-level `matchPlay` object. `score_data.rounds[].matches` contains the same server-derived match results. Enter JSON includes the player's scheduled `matchId`, target (`player` or `match_side`), and saved holes.
 

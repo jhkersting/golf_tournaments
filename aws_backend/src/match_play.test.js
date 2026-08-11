@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  matchPlayHoleIndices,
   materializeMatchPlay,
   normalizeMatchPlayConfiguration,
   normalizeMatchPlayRounds
@@ -26,7 +27,7 @@ const course = {
   strokeIndex: Array.from({ length: 18 }, (_, index) => index + 1)
 };
 
-function fixture({ format = "singles", holes = 18, useHandicap = false, scores = {} } = {}) {
+function fixture({ format = "singles", holes = 18, nineHoleSide = null, useHandicap = false, scores = {} } = {}) {
   const players = {
     A1: { playerId: "A1", name: "Alice", teamId: "A", handicap: useHandicap ? 18 : 0 },
     A2: { playerId: "A2", name: "Avery", teamId: "A", handicap: 0 },
@@ -38,6 +39,7 @@ function fixture({ format = "singles", holes = 18, useHandicap = false, scores =
   const rounds = [{
     name: "Round 1",
     holes,
+    ...(holes === 9 && nineHoleSide ? { nineHoleSide } : {}),
     format,
     useHandicap,
     matches: [{
@@ -75,6 +77,7 @@ test("normalizes the two-team match-play contract and defaults the event target"
     players: { A1: { teamId: "A" }, A2: { teamId: "A" }, B1: { teamId: "B" }, B2: { teamId: "B" } }
   });
   assert.equal(config.rounds[0].format, "alternate_shot");
+  assert.equal(config.rounds[0].nineHoleSide, "front");
   assert.equal(config.rounds[0].matches[0].matchId, "opening");
   assert.equal(config.scheduledPoints, 1);
   assert.equal(config.winTarget, 1);
@@ -88,6 +91,22 @@ test("normalizes the two-team match-play contract and defaults the event target"
   });
   assert.equal(weighted.scheduledPoints, 2);
   assert.equal(weighted.winTarget, 1.5);
+});
+
+test("normalizes front and back nine selections and rejects an invalid nine-hole side", () => {
+  const base = {
+    holes: 9,
+    format: "singles",
+    matches: [{ teamA: { teamId: "A", playerIds: ["A1"] }, teamB: { teamId: "B", playerIds: ["B1"] } }]
+  };
+  const [back] = normalizeMatchPlayRounds([{ ...base, nineHoleSide: "back-nine" }]);
+  assert.equal(back.nineHoleSide, "back");
+  assert.deepEqual(matchPlayHoleIndices(back), [9, 10, 11, 12, 13, 14, 15, 16, 17]);
+  assert.deepEqual(matchPlayHoleIndices({ holes: 9 }), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.throws(
+    () => normalizeMatchPlayRounds([{ ...base, nineHoleSide: "middle" }]),
+    /nineHoleSide must be "front" or "back"/
+  );
 });
 
 test("accepts four-player best ball sides and derives the best available player score", () => {
@@ -162,6 +181,44 @@ test("uses one match-side score for alternate shot and ignores holes after a nin
   assert.equal(match.holesRemaining, 0);
   assert.deepEqual(match.sideScores.A.slice(9), empty18().slice(9));
   assert.equal(output.standings.find((row) => row.teamId === "A").points, 1);
+});
+
+test("uses holes 10 through 18 for a back-nine match and reports thru within the selected nine", () => {
+  const state = fixture({ format: "alternate_shot", holes: 9, nineHoleSide: "back" });
+  state.scores.rounds[0].matches = {
+    r1m1: {
+      sides: {
+        A: { holes: [2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4] },
+        B: { holes: [1, 1, 1, 1, 1, 1, 1, 1, 1, 5, 4, 5] }
+      }
+    }
+  };
+  const output = materializeMatchPlay({ ...state, scores: state.scores });
+  const match = output.rounds[0].matches[0];
+  assert.equal(output.rounds[0].nineHoleSide, "back");
+  assert.deepEqual(match.sideScores.A.slice(0, 9), empty18().slice(0, 9));
+  assert.deepEqual(match.sideScores.B.slice(0, 9), empty18().slice(0, 9));
+  assert.deepEqual(match.sideScores.A.slice(9, 12), [4, 4, 4]);
+  assert.equal(match.status, "live");
+  assert.equal(match.thru, 3);
+  assert.equal(match.holesRemaining, 6);
+  assert.equal(match.lead, 2);
+});
+
+test("applies handicap strokes using the selected back-nine course holes", () => {
+  const state = fixture({ format: "singles", holes: 9, nineHoleSide: "back", useHandicap: true });
+  state.players.A1.handicap = 1;
+  state.courses[0].strokeIndex = [10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  state.scores.rounds[0].players = {
+    A1: { holes: [...Array(9).fill(2), 5] },
+    B1: { holes: [...Array(9).fill(1), 4] }
+  };
+  const match = materializeMatchPlay({ ...state, scores: state.scores }).rounds[0].matches[0];
+  assert.equal(match.sideScores.A[0], null);
+  assert.equal(match.sideScores.A[9], 4);
+  assert.equal(match.sideScores.B[9], 4);
+  assert.equal(match.thru, 1);
+  assert.equal(match.lead, 0);
 });
 
 test("awards a completed match point to the winning second side", () => {

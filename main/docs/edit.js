@@ -1345,6 +1345,12 @@ function renderMatchPlayRounds(rounds){
   }
   rows.forEach((round, roundIndex) => {
     const format = ["singles", "best_ball", "alternate_shot", "scramble"].includes(round?.format) ? round.format : "singles";
+    const rawNineHoleSide = String(round?.nineHoleSide || "").toLowerCase();
+    const nineHoleSide = rawNineHoleSide === "back"
+      ? "back"
+      : rawNineHoleSide === "front" || Number(round?.holes) === 9
+        ? "front"
+        : "";
     const fallbackCourseIdx = Number.isInteger(Number(round?.courseIndex)) ? Number(round.courseIndex) : 0;
     const courseRef = String(round?.courseRef || `tournament:${Math.max(0, fallbackCourseIdx)}`);
     const fallbackCourse = tournamentCourses[fallbackCourseIdx] || null;
@@ -1368,6 +1374,7 @@ function renderMatchPlayRounds(rounds){
           <option value="scramble" ${format === "scramble" ? "selected" : ""}>scramble</option>
         </select></div>
         <div class="col"><label>Holes</label><select data-field="holes"><option value="18" ${Number(round?.holes) === 9 ? "" : "selected"}>18</option><option value="9" ${Number(round?.holes) === 9 ? "selected" : ""}>9</option></select></div>
+        <div class="col" data-nine-hole-side-wrap ${Number(round?.holes) === 9 ? "" : "hidden"}><label>Nine-hole side</label><select data-field="nineHoleSide" ${Number(round?.holes) === 9 ? "" : "disabled"}><option value="" ${nineHoleSide ? "" : "selected"}>Choose front or back nine</option><option value="front" ${nineHoleSide === "front" ? "selected" : ""}>Front Nine (1–9)</option><option value="back" ${nineHoleSide === "back" ? "selected" : ""}>Back Nine (10–18)</option></select></div>
         <div class="col"><label>Handicap</label><select data-field="handicap"><option value="false" ${round?.useHandicap ? "" : "selected"}>No</option><option value="true" ${round?.useHandicap ? "selected" : ""}>Yes</option></select></div>
         <div class="col"><label>Course</label><select data-field="course">${roundCourseOptionsHtml(courseRef)}</select></div>
         <div class="col"><label>Tee</label><select data-field="tee"></select></div>
@@ -1381,6 +1388,9 @@ function renderMatchPlayRounds(rounds){
     matchPlayRoundsEl.appendChild(card);
     syncRoundTeeSelect(card);
     const formatEl = card.querySelector("[data-field='matchFormat']");
+    const holesEl = card.querySelector("[data-field='holes']");
+    const nineHoleSideEl = card.querySelector("[data-field='nineHoleSide']");
+    const nineHoleSideWrap = card.querySelector("[data-nine-hole-side-wrap]");
     const handicapEl = card.querySelector("[data-field='handicap']");
     const helpEl = card.querySelector("[data-format-help]");
     const syncFormat = () => {
@@ -1393,8 +1403,15 @@ function renderMatchPlayRounds(rounds){
       if (helpEl) helpEl.textContent = value === "singles" ? "Select 1 player per side." : value === "best_ball" ? "Select 2–4 players per side." : "Select exactly 2 players per side.";
       syncMatchPlayAssignments(card);
     };
+    const syncNineHoleSide = () => {
+      const show = Number(holesEl?.value || 18) === 9;
+      if (nineHoleSideWrap) nineHoleSideWrap.hidden = !show;
+      if (nineHoleSideEl) nineHoleSideEl.disabled = !show;
+    };
     formatEl?.addEventListener("change", syncFormat);
+    holesEl?.addEventListener("change", syncNineHoleSide);
     syncFormat();
+    syncNineHoleSide();
     (round?.matches || []).forEach((match, matchIndex) => appendMatchEditor(card, match, roundIndex, matchIndex, teamIds));
     syncMatchPlayAssignments(card);
     card.querySelector("[data-add-match]")?.addEventListener("click", () => {
@@ -1651,6 +1668,10 @@ function collectMatchPlayRounds(){
       const name = String(card.querySelector("[data-field='name']")?.value || "").trim() || `Round ${roundIndex + 1}`;
       const format = String(card.querySelector("[data-field='matchFormat']")?.value || "singles");
       const holes = Number(card.querySelector("[data-field='holes']")?.value || 18) === 9 ? 9 : 18;
+      const nineHoleSide = String(card.querySelector("[data-field='nineHoleSide']")?.value || "");
+      if (holes === 9 && !["front", "back"].includes(nineHoleSide)) {
+        throw new Error(`${name}: choose Front Nine or Back Nine.`);
+      }
       const useHandicap = card.querySelector("[data-field='handicap']")?.value === "true";
       if (useHandicap && format !== "singles" && format !== "best_ball") throw new Error(`${name}: handicaps are allowed only for singles and best ball.`);
       const courseRef = String(card.querySelector("[data-field='course']")?.value || "tournament:0");
@@ -1693,7 +1714,16 @@ function collectMatchPlayRounds(){
         };
       });
       if (!matches.length) throw new Error(`${name} needs at least one match.`);
-      return { name, format, holes, useHandicap, courseRef, teeRef, matches };
+      return {
+        name,
+        format,
+        holes,
+        ...(holes === 9 ? { nineHoleSide } : {}),
+        useHandicap,
+        courseRef,
+        teeRef,
+        matches
+      };
     });
   if (!rounds.length) throw new Error("At least one match-play round is required.");
   return rounds;

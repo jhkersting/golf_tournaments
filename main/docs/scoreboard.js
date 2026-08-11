@@ -4525,6 +4525,11 @@ function matchPlayFormatLabel(format) {
   return labels[String(format || "")] || String(format || "Match").replaceAll("_", " ");
 }
 
+function matchPlayNineHoleLabel(round) {
+  if (Number(round?.holes) !== 9) return "";
+  return String(round?.nineHoleSide || "").trim().toLowerCase() === "back" ? "Back nine" : "Front nine";
+}
+
 function renderMatchPlayScoreboard() {
   const matchPlay = TOURN?.matchPlay || {};
   const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
@@ -4598,7 +4603,8 @@ function renderMatchPlayScoreboard() {
     title.textContent = round.name || `Round ${Number(round.roundIndex) + 1}`;
     const meta = document.createElement("span");
     meta.className = "small";
-    meta.textContent = `${matchPlayFormatLabel(round.format)} · ${round.holes || 18} holes${round.useHandicap ? " · handicaps" : ""}`;
+    const nineHoleLabel = matchPlayNineHoleLabel(round);
+    meta.textContent = `${matchPlayFormatLabel(round.format)} · ${round.holes || 18} holes${nineHoleLabel ? ` · ${nineHoleLabel}` : ""}${round.useHandicap ? " · handicaps" : ""}`;
     heading.append(title, meta);
     section.appendChild(heading);
     for (const match of round.matches || []) {

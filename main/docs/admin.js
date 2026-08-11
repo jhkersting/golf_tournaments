@@ -718,6 +718,14 @@ function roundCard(){
           <option value="9">9 holes</option>
         </select>
       </div>
+      <div class="col" data-match-only data-nine-hole-side-wrap hidden>
+        <label>Nine-hole side</label>
+        <select data-nine-hole-side>
+          <option value="" selected>Choose front or back nine</option>
+          <option value="front">Front Nine (1–9)</option>
+          <option value="back">Back Nine (10–18)</option>
+        </select>
+      </div>
       <div class="col" data-best-ball-size hidden>
         <label>Players per side</label>
         <select data-side-size>
@@ -757,6 +765,9 @@ function roundCard(){
   const matchFmt = div.querySelector("[data-match-format]");
   const handicap = div.querySelector("[data-handicap]");
   const bestBallSize = div.querySelector("[data-best-ball-size]");
+  const holes = div.querySelector("[data-holes]");
+  const nineHoleSideWrap = div.querySelector("[data-nine-hole-side-wrap]");
+  const nineHoleSide = div.querySelector("[data-nine-hole-side]");
   const aggRow = div.querySelector("[data-aggrow]");
   function syncAggVisibility(){
     // Scramble and two-man formats use fixed team scoring; aggregation inputs are not used.
@@ -777,6 +788,9 @@ function roundCard(){
     div.querySelectorAll("[data-match-only]").forEach((node) => { node.hidden = !matchMode; });
     const matchFormat = String(matchFmt?.value || "singles");
     if (bestBallSize) bestBallSize.hidden = !matchMode || matchFormat !== "best_ball";
+    const showNineHoleSide = matchMode && Number(holes?.value || 18) === 9;
+    if (nineHoleSideWrap) nineHoleSideWrap.hidden = !showNineHoleSide;
+    if (nineHoleSide) nineHoleSide.disabled = !showNineHoleSide;
     if (handicap) {
       const allowed = !matchMode || matchFormat === "singles" || matchFormat === "best_ball";
       handicap.disabled = !allowed;
@@ -784,6 +798,7 @@ function roundCard(){
     }
   }
   matchFmt?.addEventListener("change", syncMatchControls);
+  holes?.addEventListener("change", syncMatchControls);
   div.syncCompetitionType = syncMatchControls;
   syncMatchControls();
 
@@ -875,6 +890,12 @@ function getRounds(){
 
     if (matchMode) {
       const holes = Number(c.querySelector("[data-holes]")?.value || 18);
+      const normalizedHoles = holes === 9 ? 9 : 18;
+      const nineHoleSide = String(c.querySelector("[data-nine-hole-side]")?.value || "");
+      if (normalizedHoles === 9 && !["front", "back"].includes(nineHoleSide)) {
+        const roundName = c.querySelector("[data-name]")?.value.trim() || "Round";
+        throw new Error(`${roundName}: choose Front Nine or Back Nine.`);
+      }
       const sideSize = format === "singles"
         ? 1
         : format === "best_ball"
@@ -886,7 +907,8 @@ function getRounds(){
       return {
         name: c.querySelector("[data-name]")?.value.trim() || "Round",
         format,
-        holes: holes === 9 ? 9 : 18,
+        holes: normalizedHoles,
+        ...(normalizedHoles === 9 ? { nineHoleSide } : {}),
         useHandicap,
         sideSize,
         courseRef: courseRef || PRIMARY_COURSE_REF,

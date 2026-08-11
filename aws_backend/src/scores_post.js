@@ -1,6 +1,6 @@
 import { json, parseBody, normalizeHoles, getJson, updateStateWithRetry, appendEvent, writePublicObjectsFromState } from "./utils.js";
 import { notifyScoreSubscribers } from "./push_notifications.js";
-import { isTeamMatchPlay } from "./match_play.js";
+import { isTeamMatchPlay, matchPlayHoleIndices } from "./match_play.js";
 
 function asInt(v){
   const n = Number(v);
@@ -61,14 +61,15 @@ function normalizeTwoManFormat(format){
   return "";
 }
 
-function matchWriteHoles(raw, activeHoles) {
+function matchWriteHoles(raw, activeHoleIndices) {
   if (!Array.isArray(raw) || raw.length !== 18) {
     const error = new Error("holes must be an array of length 18");
     error.statusCode = 400;
     throw error;
   }
+  const active = new Set(activeHoleIndices);
   return raw.map((value, index) => {
-    if (index >= activeHoles || value == null || (typeof value === "string" && value.trim() === "")) return null;
+    if (!active.has(index) || value == null || (typeof value === "string" && value.trim() === "")) return null;
     const number = Number(value);
     if (!Number.isFinite(number) || Math.round(number) < 1 || Math.round(number) > 20) {
       const error = new Error("hole scores must be numbers between 1 and 20 or blank");
@@ -115,6 +116,13 @@ async function handleMatchPlayScore(event, body, tid) {
       error.statusCode = 404;
       throw error;
     }
+    const activeHoleIndices = matchPlayHoleIndices(round);
+    const activeHoleSet = new Set(activeHoleIndices);
+    if (mode === "hole" && !activeHoleSet.has(holeIndex)) {
+      const error = new Error("holeIndex is not active for this match-play round");
+      error.statusCode = 400;
+      throw error;
+    }
     actorPlayerId = current.codeIndex?.[code];
     const actor = current.players?.[actorPlayerId];
     if (!actor) {
@@ -155,7 +163,7 @@ async function handleMatchPlayScore(event, body, tid) {
       else matchScores.sides[targetId] = entry;
     };
     const apply = (targetType, targetId, index, value) => {
-      if (index >= round.holes || value === undefined) return;
+      if (!activeHoleSet.has(index) || value === undefined) return;
       const entry = getEntry(targetType, targetId);
       const existing = entry.holes[index];
       const metadata = entry.meta[index];
@@ -210,11 +218,11 @@ async function handleMatchPlayScore(event, body, tid) {
         const value = entry?.strokes === "" ? undefined : entry?.strokes === null ? null : Number(entry?.strokes);
         apply(targetType, targetId, holeIndex, value);
       } else {
-        const holes = matchWriteHoles(entry?.holes, round.holes);
-        for (let index = 0; index < round.holes; index++) apply(targetType, targetId, index, holes[index]);
+        const holes = matchWriteHoles(entry?.holes, activeHoleIndices);
+        for (const index of activeHoleIndices) apply(targetType, targetId, index, holes[index]);
         for (const clearIndex of Array.isArray(entry?.clearHoles) ? entry.clearHoles : []) {
           const index = Number(clearIndex);
-          if (Number.isInteger(index) && index >= 0 && index < round.holes) apply(targetType, targetId, index, null);
+          if (Number.isInteger(index) && activeHoleSet.has(index)) apply(targetType, targetId, index, null);
         }
       }
     }
