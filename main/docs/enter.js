@@ -1750,7 +1750,8 @@ function collectNewScoreEvents(prevTournament, nextTournament) {
 function renderScoreNotifierEvent(event) {
   if (!scoreNotifier || !event) return;
   scoreNotifier.innerHTML = "";
-  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat");
+  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat", "score-match");
+  scoreNotifier.style.removeProperty("--team-accent");
 
   if (event.kind === "chat") {
     scoreNotifier.classList.add("score-chat");
@@ -1767,6 +1768,19 @@ function renderScoreNotifierEvent(event) {
 
     scoreNotifier.appendChild(kicker);
     scoreNotifier.appendChild(line);
+    return;
+  }
+
+  if (event.kind === "match") {
+    scoreNotifier.classList.add("score-match");
+    if (event.accent) scoreNotifier.style.setProperty("--team-accent", event.accent);
+    const kicker = document.createElement("div");
+    kicker.className = "score-notifier-kicker";
+    kicker.textContent = String(event.title || "Match play").trim() || "Match play";
+    const line = document.createElement("div");
+    line.className = "score-notifier-line score-notifier-message";
+    line.textContent = String(event.body || "Match score updated").trim() || "Match score updated";
+    scoreNotifier.append(kicker, line);
     return;
   }
 
@@ -1821,7 +1835,8 @@ function pumpScoreNotifierQueue() {
         return;
       }
       scoreNotifier.innerHTML = "";
-      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat");
+      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat", "score-match");
+      scoreNotifier.style.removeProperty("--team-accent");
     }, SCORE_NOTIFIER_GAP_MS);
   }, SCORE_NOTIFIER_SHOW_MS);
 }
@@ -2313,6 +2328,139 @@ function matchPlayEntryNineHoleLabel(round, derivedRound) {
     : "Front nine";
 }
 
+function matchPlayEntryTeamName(teamId, teams, fallback = "Team") {
+  const id = String(teamId || "").trim();
+  return teams?.[id]?.teamName || teams?.[id]?.name || id || fallback;
+}
+
+function matchPlayEntryTeamColor(teamId, teams) {
+  const id = String(teamId || "").trim();
+  return teams?.[id]?.color || colorForTeam(id);
+}
+
+function matchPlayEntryPoints(value) {
+  const points = Number(value);
+  if (!Number.isFinite(points)) return "0";
+  return Number.isInteger(points) ? String(points) : String(Number(points.toFixed(3)));
+}
+
+function matchPlayEntryMatchResult(match) {
+  if (!match) return "Not started";
+  if (match.result === "halved") return "Halved";
+  const status = String(match.status || "").toLowerCase();
+  if (status === "final" || status === "closed") return match.display || "Final";
+  return match.display || (status === "live" ? "AS" : "Not started");
+}
+
+function matchPlayEntryMatchDisplay(match, teams) {
+  const result = matchPlayEntryMatchResult(match);
+  if (!match?.leadTeamId || match?.status !== "live") return result;
+  return `${matchPlayEntryTeamName(match.leadTeamId, teams)} ${result}`;
+}
+
+function matchPlayEntryPointsLabel(standings, teams) {
+  return (standings || []).slice(0, 2).map((standing) => (
+    `${matchPlayEntryTeamName(standing?.teamId, teams)} ${matchPlayEntryPoints(standing?.points)} pt${Number(standing?.points) === 1 ? "" : "s"}`
+  )).join(" · ");
+}
+
+function matchPlayEntryScoreEvents(previousTournament, nextTournament) {
+  const previousRounds = Array.isArray(previousTournament?.matchPlay?.rounds)
+    ? previousTournament.matchPlay.rounds
+    : [];
+  const nextRounds = Array.isArray(nextTournament?.matchPlay?.rounds)
+    ? nextTournament.matchPlay.rounds
+    : [];
+  const teams = Object.fromEntries((nextTournament?.teams || []).map((team) => [team.teamId, team]));
+  const events = [];
+
+  for (const nextRound of nextRounds) {
+    const roundIndex = Number(nextRound?.roundIndex);
+    const previousRound = previousRounds.find((round) => Number(round?.roundIndex) === roundIndex) || {};
+    for (const nextMatch of nextRound?.matches || []) {
+      const previousMatch = (previousRound.matches || []).find((match) => match.matchId === nextMatch.matchId) || {};
+      const activeHoleIndices = matchPlayEntryHoleIndices(nextRound, nextRound);
+      const changedHole = activeHoleIndices.find((holeIndex) => {
+        const previousA = previousMatch?.sideScores?.[nextMatch.teamA?.teamId]?.[holeIndex] ?? null;
+        const previousB = previousMatch?.sideScores?.[nextMatch.teamB?.teamId]?.[holeIndex] ?? null;
+        const nextA = nextMatch?.sideScores?.[nextMatch.teamA?.teamId]?.[holeIndex] ?? null;
+        const nextB = nextMatch?.sideScores?.[nextMatch.teamB?.teamId]?.[holeIndex] ?? null;
+        return previousA !== nextA || previousB !== nextB;
+      });
+      const previousDisplay = String(previousMatch?.display || "");
+      const nextDisplay = String(nextMatch?.display || "");
+      if (changedHole == null && previousDisplay === nextDisplay && previousMatch?.status === nextMatch?.status) continue;
+
+      const teamAName = matchPlayEntryTeamName(nextMatch.teamA?.teamId, teams);
+      const teamBName = matchPlayEntryTeamName(nextMatch.teamB?.teamId, teams);
+      const status = matchPlayEntryMatchResult(nextMatch);
+      const pointLabel = matchPlayEntryPointsLabel(nextTournament?.matchPlay?.standings, teams);
+      const thru = Number(nextMatch?.thru || 0);
+      events.push({
+        kind: "match",
+        title: nextRound?.name || `Round ${roundIndex + 1}`,
+        body: `${teamAName} ${status} ${teamBName}${thru > 0 ? ` · Thru ${thru}` : ""}${pointLabel ? ` · ${pointLabel}` : ""}`,
+        accent: matchPlayEntryTeamColor(nextMatch.winnerTeamId || nextMatch.leadTeamId || nextMatch.teamA?.teamId, teams)
+      });
+    }
+  }
+  return events;
+}
+
+function renderMatchPlayEntryTicker(tjson, teams) {
+  if (!ticker || !tickerTrack || !tickerTitle) return;
+  const matchPlay = tjson?.matchPlay || {};
+  const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
+  const rounds = Array.isArray(matchPlay.rounds) ? matchPlay.rounds : [];
+  const teamItems = standings.slice(0, 2).map((standing) => {
+    const teamId = String(standing?.teamId || "");
+    const color = matchPlayEntryTeamColor(teamId, teams);
+    const record = `${Number(standing?.matchesWon || 0)}-${Number(standing?.matchesHalved || 0)}-${Number(standing?.matchesLost || 0)}`;
+    return el(
+      "span",
+      { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
+      `${matchPlayEntryTeamName(teamId, teams)} ${matchPlayEntryPoints(standing?.points)} pts (${record})`
+    );
+  });
+  const matchItems = [];
+  for (const round of rounds) {
+    for (const match of round?.matches || []) {
+      const teamAName = matchPlayEntryTeamName(match.teamA?.teamId, teams);
+      const teamBName = matchPlayEntryTeamName(match.teamB?.teamId, teams);
+      const status = matchPlayEntryMatchResult(match);
+      const color = matchPlayEntryTeamColor(match.winnerTeamId || match.leadTeamId || match.teamA?.teamId, teams);
+      matchItems.push(el(
+        "span",
+        { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
+        `${teamAName} ${status} ${teamBName}`
+      ));
+    }
+  }
+  const sections = [];
+  if (teamItems.length) sections.push({ label: "Team points", items: teamItems });
+  if (matchItems.length) sections.push({ label: "Match play", items: matchItems });
+  if (!sections.length) {
+    stopTickerRotation();
+    ticker.style.display = "";
+    tickerTitle.textContent = "Match play";
+    tickerTrack.innerHTML = "";
+    tickerTrack.appendChild(el("div", { class: "enter-ticker-run" }, "No match scores yet"));
+    return;
+  }
+  ticker.style.display = "";
+  tickerSections = sections;
+  if (!tickerLoopRunning) {
+    tickerLoopRunning = true;
+    tickerSectionIndex = 0;
+    tickerCurrentX = 0;
+    setTickerSection(tickerSections[tickerSectionIndex], false);
+    tickerRafId = requestAnimationFrame(runTickerFrame);
+    return;
+  }
+  if (tickerSectionIndex >= tickerSections.length) tickerSectionIndex = 0;
+  setTickerSection(tickerSections[tickerSectionIndex], true);
+}
+
 function createEnterScoreQueueSync({ tid, code, refreshTournamentJson, renderSyncStatus }) {
   let pendingSyncPromise = null;
   return async function syncPendingScores({ quiet = false } = {}) {
@@ -2372,8 +2520,8 @@ function registerEnterScoreQueueListeners({ renderSyncStatus, syncPendingScores,
   void syncPendingScores({ quiet: true });
 }
 
-async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
-  if (ticker) ticker.style.display = "none";
+async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournamentJson = null }) {
+  if (ticker) ticker.style.display = "";
   if (pageBulkToggleButton) pageBulkToggleButton.hidden = true;
   forms.innerHTML = "";
   const players = Object.fromEntries((tjson?.players || []).map((player) => [player.playerId, player]));
@@ -2381,8 +2529,6 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
   seedTeamColors(tjson, players);
   const myId = String(enter?.player?.playerId || "");
   const myTeamId = String(enter?.team?.teamId || players[myId]?.teamId || "");
-  const standings = Array.isArray(tjson?.matchPlay?.standings) ? tjson.matchPlay.standings : [];
-  const myStanding = standings.find((row) => row.teamId === myTeamId);
 
   const summary = document.createElement("section");
   summary.className = "card";
@@ -2390,16 +2536,43 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
   title.style.margin = "0 0 4px";
   title.textContent = enter?.player?.name || players[myId]?.name || "Enter scores";
   const teamLine = document.createElement("div");
-  teamLine.textContent = `${enter?.team?.teamName || teams[myTeamId]?.teamName || myTeamId} · ${myStanding?.points || 0} points · ${tjson?.matchPlay?.winTarget || 0} needed to win`;
+  const teamOverview = document.createElement("div");
+  teamOverview.className = "match-play-entry-overview";
+  const renderTeamOverview = () => {
+    const matchPlay = tjson?.matchPlay || {};
+    const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
+    const myStanding = standings.find((row) => row.teamId === myTeamId);
+    teamLine.textContent = `${enter?.team?.teamName || teams[myTeamId]?.teamName || myTeamId} · ${matchPlayEntryPoints(myStanding?.points)} points · ${matchPlayEntryPoints(matchPlay.winTarget)} needed to win`;
+    teamOverview.innerHTML = "";
+    for (const standing of standings.slice(0, 2)) {
+      const teamId = String(standing?.teamId || "");
+      const team = document.createElement("article");
+      team.className = "match-play-entry-team";
+      team.style.setProperty("--team-accent", matchPlayEntryTeamColor(teamId, teams));
+      const name = document.createElement("strong");
+      name.textContent = matchPlayEntryTeamName(teamId, teams);
+      const points = document.createElement("b");
+      points.textContent = matchPlayEntryPoints(standing?.points);
+      const record = document.createElement("span");
+      record.className = "small";
+      record.textContent = `${Number(standing?.matchesWon || 0)} won · ${Number(standing?.matchesHalved || 0)} halved · ${Number(standing?.matchesLost || 0)} lost`;
+      team.append(name, points, record);
+      teamOverview.appendChild(team);
+    }
+  };
+  renderTeamOverview();
   const note = document.createElement("div");
   note.className = "small";
   note.textContent = "Choose the current hole, then enter scores for both sides of your match. Team colors identify each player or shared team score.";
-  summary.append(title, teamLine, note);
+  summary.append(title, teamLine, teamOverview, note);
   forms.appendChild(summary);
+  if (ticker) forms.appendChild(ticker);
+  renderMatchPlayEntryTicker(tjson, teams);
 
   const savedRounds = Array.isArray(enter?.saved) ? enter.saved : [];
   const configRounds = Array.isArray(tjson?.tournament?.rounds) ? tjson.tournament.rounds : [];
   const derivedRounds = Array.isArray(tjson?.matchPlay?.rounds) ? tjson.matchPlay.rounds : [];
+  const matchViews = [];
   const usedAccessibleLabels = new Set();
   const uniqueAccessibleLabel = (base) => {
     const root = String(base || "Score").trim() || "Score";
@@ -2455,10 +2628,18 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
     card.appendChild(opponent);
     const syncStatusText = () => {
       if (!derivedMatch) { matchStatus.textContent = "Not started"; return; }
-      const leader = derivedMatch.leadTeamId ? teams[derivedMatch.leadTeamId]?.teamName || derivedMatch.leadTeamId : "";
-      matchStatus.textContent = leader && derivedMatch.status === "live" ? `${leader} ${derivedMatch.display}` : derivedMatch.display || "All square";
+      matchStatus.textContent = matchPlayEntryMatchDisplay(derivedMatch, teams);
     };
     syncStatusText();
+    matchViews.push({
+      roundIndex,
+      matchId: assignment.matchId,
+      refresh() {
+        const latest = tjson?.matchPlay?.rounds?.[roundIndex]?.matches?.find((match) => match.matchId === assignment.matchId);
+        if (latest) derivedMatch = latest;
+        syncStatusText();
+      }
+    });
 
     const activeHoleIndices = matchPlayEntryHoleIndices(round, derivedRound);
     const savedRound = savedRounds[roundIndex] || {};
@@ -2674,15 +2855,25 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
 
       bindImmediateButtonAction(save, async () => {
         const entries = [];
+        let hasScoreValue = false;
         for (const { group, input } of activeInputs) {
           const raw = String(input.value || "").trim();
-          if (!raw) continue;
+          if (!raw) {
+            // A blank/— value is an intentional cancellation when this target
+            // already has a score for the current hole. Keep untouched blanks
+            // out of the request so a new hole still requires a score.
+            if (group.saved[holeIndex] != null) {
+              entries.push({ targetId: group.targetId, strokes: null });
+            }
+            continue;
+          }
           const value = Number(raw);
           if (!Number.isInteger(value) || value < 1 || value > 20) {
             feedbackMessage = `${group.label}, Hole ${holeNumber} must be 1–20 or blank.`;
             saveStatus.textContent = feedbackMessage;
             return;
           }
+          hasScoreValue = true;
           entries.push({ targetId: group.targetId, strokes: value });
         }
         if (!entries.length) {
@@ -2707,10 +2898,12 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
           await clearPendingScoreSubmissionsMatching({ tid, code, payload });
           persistSubmittedEntries(holeIndex, entries);
           overwritePending = false;
-          const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
+          const fresh = typeof refreshTournamentJson === "function"
+            ? await refreshTournamentJson({ quietSync: true })
+            : await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
           derivedMatch = fresh?.matchPlay?.rounds?.[roundIndex]?.matches?.find((match) => match.matchId === assignment.matchId) || derivedMatch;
           syncStatusText();
-          feedbackMessage = `Hole ${holeNumber} saved.`;
+          feedbackMessage = hasScoreValue ? `Hole ${holeNumber} saved.` : `Hole ${holeNumber} scores cleared.`;
           if (!isLastHole) currentHolePosition += 1;
           renderCurrentHoleEditor();
         } catch (error) {
@@ -2760,6 +2953,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
           await api(`/tournaments/${encodeURIComponent(tid)}/scores`, { method: "POST", body: payload });
           await clearPendingScoreSubmissionsMatching({ tid, code, payload });
           persistSubmittedEntries(holeIndex, entries);
+          if (typeof refreshTournamentJson === "function") await refreshTournamentJson({ quietSync: true });
           overwritePending = false;
           feedbackMessage = `Hole ${holeNumber} scores undone.`;
           renderCurrentHoleEditor();
@@ -2783,6 +2977,14 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
     renderCurrentHoleEditor();
     forms.appendChild(card);
   }
+
+  return {
+    refresh() {
+      renderTeamOverview();
+      renderMatchPlayEntryTicker(tjson, teams);
+      for (const view of matchViews) view.refresh();
+    }
+  };
 }
 
 async function main() {
@@ -2883,12 +3085,26 @@ async function main() {
   $('body').show();
 
   if (isMatchPlayPayload(tjson)) {
-    const refreshMatchPlayTournamentJson = async () => {
-      const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
-      const nextJson = await applyPendingScoreSubmissionsToTournament(fresh, { tid, code });
-      for (const key of Object.keys(tjson)) delete tjson[key];
-      Object.assign(tjson, nextJson);
-      return tjson;
+    let matchPlayEntryView = null;
+    let matchPlayRefreshPromise = null;
+    const refreshMatchPlayTournamentJson = async ({ quietSync = false } = {}) => {
+      if (matchPlayRefreshPromise) return matchPlayRefreshPromise;
+      matchPlayRefreshPromise = (async () => {
+        const previousTournament = tjson;
+        const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
+        const nextJson = await applyPendingScoreSubmissionsToTournament(fresh, { tid, code });
+        const events = matchPlayEntryScoreEvents(previousTournament, nextJson);
+        for (const key of Object.keys(tjson)) delete tjson[key];
+        Object.assign(tjson, nextJson);
+        matchPlayEntryView?.refresh();
+        if (events.length) showScoreNotifier(events);
+        return tjson;
+      })();
+      try {
+        return await matchPlayRefreshPromise;
+      } finally {
+        matchPlayRefreshPromise = null;
+      }
     };
     const syncMatchPlayStatus = async () => {};
     const syncPendingScores = createEnterScoreQueueSync({
@@ -2902,7 +3118,12 @@ async function main() {
       syncPendingScores,
       periodicSync: true,
     });
-    await renderMatchPlayEntry({ enter, tjson, tid, code });
+    const matchPlayRefreshTimer = window.setInterval(() => {
+      void refreshMatchPlayTournamentJson({ quietSync: true });
+    }, 10_000);
+    window.addEventListener("pagehide", () => window.clearInterval(matchPlayRefreshTimer), { once: true });
+    matchPlayEntryView = await renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournamentJson: refreshMatchPlayTournamentJson });
+    matchPlayEntryView?.refresh();
     return;
   }
 
@@ -3714,9 +3935,15 @@ async function main() {
         const submittedHoleIndex = currentHole;
 
         const entries = [];
+        let hasScoreValue = false;
         for (const { targetId, input } of inputs) {
           const v = (input.value ?? "").trim();
-          if (v === "") continue; // skip blanks
+          if (v === "") {
+            const existing = savedByTarget[targetId]?.[submittedHoleIndex];
+            if (!isEmptyScore(existing)) entries.push({ targetId, strokes: null });
+            continue;
+          }
+          hasScoreValue = true;
           entries.push({ targetId, strokes: Number(v) });
         }
         if (!entries.length) {
@@ -3744,7 +3971,7 @@ async function main() {
           });
 
           await clearPendingScoreSubmissionsMatching({ tid, code, payload });
-          status.textContent = "Saved.";
+          status.textContent = hasScoreValue ? "Saved." : "Score cleared.";
 
           // clear drafts ONLY for the targets you actually submitted (for this hole)
           clearHoleDraftTargets(

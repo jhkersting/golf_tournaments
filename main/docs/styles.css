@@ -137,6 +137,12 @@
 .match-play-match-card.is-leading-b {
   border-right: 5px solid var(--team-b-accent, var(--border));
 }
+.match-play-match-card.is-final-winner-a {
+  background: color-mix(in srgb, var(--team-a-accent, var(--surface)) 25%, var(--surface) 75%);
+}
+.match-play-match-card.is-final-winner-b {
+  background: color-mix(in srgb, var(--team-b-accent, var(--surface)) 25%, var(--surface) 75%);
+}
 .match-play-side,
 .match-play-match-state {
   display: grid;
@@ -171,6 +177,55 @@
 .match-play-entry-card {
   display: grid;
   gap: 12px;
+}
+.match-play-entry-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.match-play-entry-team {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name points"
+    "record record";
+  align-items: baseline;
+  gap: 1px 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-left: 4px solid var(--team-accent, var(--border-strong));
+  background: color-mix(in srgb, var(--team-accent, var(--surface)) 10%, var(--surface) 90%);
+}
+.match-play-entry-team + .match-play-entry-team {
+  border-left: 1px solid var(--border);
+  border-right: 4px solid var(--team-accent, var(--border-strong));
+}
+.match-play-entry-team strong,
+.match-play-entry-team span {
+  overflow-wrap: anywhere;
+}
+.match-play-entry-team strong {
+  grid-area: name;
+  font-size: .82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.match-play-entry-team b {
+  font-family: var(--font-mono);
+  grid-area: points;
+  font-size: 1.2rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.match-play-entry-team span {
+  grid-area: record;
+  color: var(--muted);
+  font-size: .66rem;
+  white-space: nowrap;
 }
 .match-play-entry-head {
   display: flex;
@@ -253,6 +308,7 @@
   .match-play-entry-head {
     flex-direction: column;
   }
+  .match-play-entry-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .match-play-score-target {
     flex-basis: 100%;
   }
@@ -1374,6 +1430,15 @@ hr {
 .score-notifier.score-chat {
   background: rgba(15, 93, 216, 0.14);
   border-color: rgba(15, 93, 216, 0.28);
+}
+
+.score-notifier.score-match {
+  border-left: 4px solid var(--team-accent, var(--border-strong));
+  background: color-mix(in srgb, var(--team-accent, var(--surface)) 18%, var(--surface) 82%);
+}
+
+.score-notifier.score-match .score-notifier-line {
+  white-space: normal;
 }
 
 .score-notifier.score-under.score-light {
