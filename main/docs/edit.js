@@ -256,6 +256,20 @@ function scoreRoundFormat(round) {
   return "singles";
 }
 
+function scoreHoleIndicesForRound(round) {
+  if (Number(round?.holes) !== 9) return Array.from({ length: 18 }, (_, index) => index);
+  const side = String(round?.nineHoleSide || "").trim().toLowerCase() === "back" ? "back" : "front";
+  const start = side === "back" ? 9 : 0;
+  return Array.from({ length: 9 }, (_, index) => start + index);
+}
+
+function scoreRoundHoleMeta(round) {
+  if (Number(round?.holes) !== 9) return "18 holes";
+  return String(round?.nineHoleSide || "").trim().toLowerCase() === "back"
+    ? "9 holes · Back nine"
+    : "9 holes · Front nine";
+}
+
 function scoreTargetTypeForRound(round) {
   if (isMatchPlayEditor()) return "match_side";
   const fmt = scoreRoundFormat(round);
@@ -632,6 +646,7 @@ function renderScoresEditor() {
   rounds.forEach((round, roundIndex) => {
     const scoreRound = scores.rounds[roundIndex] || { teams: {}, players: {}, groups: {}, matches: {} };
     const { targetType, targets } = buildScoreTargetsForRound(roundIndex, round, scoreRound, players, teams);
+    const activeHoleIndices = scoreHoleIndicesForRound(round);
     const roundGridRows = [];
 
     const section = document.createElement("div");
@@ -641,7 +656,7 @@ function renderScoresEditor() {
     section.innerHTML = `
       <div style="margin-bottom:8px;">
         <b>Round ${roundIndex + 1}: ${escapeHtml(round?.name || `Round ${roundIndex + 1}`)}</b>
-        <span class="small">(${escapeHtml(scoreRoundFormat(round))} • ${escapeHtml(targetType)})</span>
+        <span class="small">(${escapeHtml(scoreRoundFormat(round))} • ${escapeHtml(scoreRoundHoleMeta(round))} • ${escapeHtml(targetType)})</span>
       </div>
     `;
 
@@ -654,7 +669,7 @@ function renderScoresEditor() {
     const headerRow = document.createElement("tr");
     headerRow.innerHTML =
       `<th class="left">${targetType === "team" ? "Team" : targetType === "group" ? "Group" : targetType === "match_side" ? "Match side" : "Player"}</th>` +
-      Array.from({ length: 18 }, (_, i) => `<th>${i + 1}</th>`).join("");
+      activeHoleIndices.map((holeIndex) => `<th>${holeIndex + 1}</th>`).join("");
     thead.appendChild(headerRow);
     table.appendChild(thead);
 
@@ -668,7 +683,7 @@ function renderScoresEditor() {
 
       const key = scoreKey(roundIndex, targetType, target.id);
       const rowInputs = Array(18).fill(null);
-      for (let h = 0; h < 18; h++) {
+      for (const h of activeHoleIndices) {
         const td = document.createElement("td");
         const inp = document.createElement("input");
         inp.type = "number";
@@ -806,13 +821,18 @@ function applyScoresCsvToEditor(csvText) {
     for (let h = 0; h < 18; h++) {
       const hCol = idx[`h${h + 1}`] ?? idx[`hole${h + 1}`];
       if (hCol == null) continue;
+      const targetInput = inputs[h];
+      if (!targetInput) {
+        if (String(row[hCol] ?? "").trim()) skipped += 1;
+        continue;
+      }
       const val = String(row[hCol] ?? "").trim();
       if (!val) {
-        inputs[h].value = "";
+        targetInput.value = "";
         continue;
       }
       const n = scoreCellToNumber(val, `CSV row ${r + 1} h${h + 1}`);
-      inputs[h].value = n == null ? "" : String(n);
+      targetInput.value = n == null ? "" : String(n);
     }
 
     matched += 1;
@@ -1472,6 +1492,7 @@ function renderMatchPlayRounds(rounds){
       syncNineHoleSide();
       renderScoresEditor();
     });
+    nineHoleSideEl?.addEventListener("change", () => renderScoresEditor());
     syncFormat();
     syncNineHoleSide();
     (round?.matches || []).forEach((match, matchIndex) => appendMatchEditor(card, match, roundIndex, matchIndex, teamIds));
