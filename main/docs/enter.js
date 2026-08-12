@@ -2529,7 +2529,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
     const roundCourse = courseForRound(tjson, roundIndex);
 
     const persistSubmittedEntries = (holeIndex, entries) => {
-      const submittedById = new Map(entries.map((entry) => [entry.targetId, Number(entry.strokes)]));
+      const submittedById = new Map(entries.map((entry) => [entry.targetId, entry.strokes == null ? null : Number(entry.strokes)]));
       for (const group of inputGroups) {
         if (!submittedById.has(group.targetId)) continue;
         group.saved[holeIndex] = submittedById.get(group.targetId);
@@ -2650,12 +2650,16 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
         : isLastHole
           ? `Save Hole ${holeNumber}`
           : `Save Hole ${holeNumber} & next`;
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.className = "secondary";
+      undo.textContent = `Undo Hole ${holeNumber} scores`;
       const saveStatus = document.createElement("span");
       saveStatus.className = "small";
       saveStatus.setAttribute("role", "status");
       saveStatus.setAttribute("aria-live", "polite");
       saveStatus.textContent = feedbackMessage;
-      actions.append(save, saveStatus);
+      actions.append(save, undo, saveStatus);
       editor.appendChild(actions);
 
       const moveTo = (position) => {
@@ -2734,6 +2738,45 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
           }
         } finally {
           save.disabled = false;
+        }
+      });
+
+      bindImmediateButtonAction(undo, async () => {
+        const entries = inputGroups.map((group) => ({ targetId: group.targetId, strokes: null }));
+        if (!entries.length) return;
+        const payload = {
+          code,
+          roundIndex,
+          matchId: assignment.matchId,
+          mode: "hole",
+          holeIndex,
+          entries,
+          override: true
+        };
+        save.disabled = true;
+        undo.disabled = true;
+        saveStatus.textContent = "Undoing…";
+        try {
+          await api(`/tournaments/${encodeURIComponent(tid)}/scores`, { method: "POST", body: payload });
+          await clearPendingScoreSubmissionsMatching({ tid, code, payload });
+          persistSubmittedEntries(holeIndex, entries);
+          overwritePending = false;
+          feedbackMessage = `Hole ${holeNumber} scores undone.`;
+          renderCurrentHoleEditor();
+        } catch (error) {
+          if (isNetworkFailure(error)) {
+            await enqueuePendingScoreSubmission({ tid, code, payload });
+            persistSubmittedEntries(holeIndex, entries);
+            overwritePending = false;
+            feedbackMessage = `Hole ${holeNumber} scores undone on this device and queued to sync.`;
+            renderCurrentHoleEditor();
+          } else {
+            feedbackMessage = error?.message || String(error);
+            saveStatus.textContent = feedbackMessage;
+          }
+        } finally {
+          save.disabled = false;
+          undo.disabled = false;
         }
       });
     };

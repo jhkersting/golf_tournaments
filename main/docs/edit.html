@@ -243,12 +243,13 @@
 
   <div class="card" id="scores_card">
     <h2 style="margin-top:0;">Scores (All Rounds)</h2>
-    <div class="small">Edit hole scores for every round in one place, paste a score block from Excel into any hole cell, or download/upload a scores CSV.</div>
+    <div class="small">Edit hole scores for every round in one place, including each team side of every match-play match. Paste a score block from Excel into any hole cell, or download/upload a scores CSV.</div>
     <div class="actions" style="margin-top:10px;">
       <button class="secondary" id="download_scores_csv_btn" type="button">Download scores CSV</button>
       <input id="scores_csv_file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" />
       <button class="secondary" id="load_scores_csv_file_btn" type="button">Load CSV file</button>
       <button class="secondary" id="upload_scores_csv_btn" type="button">Upload scores CSV to table</button>
+      <button class="secondary" id="undo_scores_btn" type="button">Undo scores</button>
       <span id="scores_status" class="small"></span>
     </div>
     <div id="scores_editor_wrap" style="margin-top:12px;"></div>
