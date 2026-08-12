@@ -2378,6 +2378,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
   forms.innerHTML = "";
   const players = Object.fromEntries((tjson?.players || []).map((player) => [player.playerId, player]));
   const teams = Object.fromEntries((tjson?.teams || []).map((team) => [team.teamId, team]));
+  seedTeamColors(tjson, players);
   const myId = String(enter?.player?.playerId || "");
   const myTeamId = String(enter?.team?.teamId || players[myId]?.teamId || "");
   const standings = Array.isArray(tjson?.matchPlay?.standings) ? tjson.matchPlay.standings : [];
@@ -2392,7 +2393,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
   teamLine.textContent = `${enter?.team?.teamName || teams[myTeamId]?.teamName || myTeamId} · ${myStanding?.points || 0} points · ${tjson?.matchPlay?.winTarget || 0} needed to win`;
   const note = document.createElement("div");
   note.className = "small";
-  note.textContent = "Enter scores for both sides of your match. Singles and best ball use one scorecard per player; alternate shot and scramble use one shared scorecard per team.";
+  note.textContent = "Choose the current hole, then enter scores for both sides of your match. Team colors identify each player or shared team score.";
   summary.append(title, teamLine, note);
   forms.appendChild(summary);
 
@@ -2478,6 +2479,8 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
           targetId: teamId,
           targetType: "match_side",
           teamId,
+          teamName,
+          relation,
           label: `${teamName} team score`,
           detail: `${relation}${playerNames ? ` · ${playerNames}` : ""}`
         }];
@@ -2486,12 +2489,13 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
         targetId: String(playerId),
         targetType: "player",
         teamId,
+        teamName,
+        relation,
         label: players[playerId]?.name || playerId,
         detail: `${teamName} · ${relation}`
       }));
     }).filter((target) => target.targetId);
-    const inputGroups = [];
-    for (const target of targets) {
+    const inputGroups = targets.map((target) => {
       const savedEntry = savedEntries.get(target.targetId);
       const legacyTargetId = sharedSideFormat
         ? String(assignment.teamId || myTeamId || savedRound.teamId || "")
@@ -2503,135 +2507,237 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
           : [];
       const saved = rawSaved.slice(0, 18);
       while (saved.length < 18) saved.push(null);
-
-      const scorecard = document.createElement("section");
-      const scorecardTitle = document.createElement("h3");
-      scorecardTitle.style.margin = "4px 0 0";
-      scorecardTitle.textContent = target.label;
-      const scorecardDetail = document.createElement("div");
-      scorecardDetail.className = "small";
-      scorecardDetail.textContent = target.detail;
-      const grid = document.createElement("div");
-      grid.className = "match-play-entry-grid";
-      const inputs = [];
-      for (const holeIndex of activeHoleIndices) {
-        const label = document.createElement("label");
-        label.className = "match-play-entry-hole";
-        const number = document.createElement("span");
-        number.textContent = `Hole ${holeIndex + 1}`;
-        const input = document.createElement("input");
-        input.type = "number";
-        input.inputMode = "numeric";
-        input.min = "1";
-        input.max = "20";
-        input.step = "1";
-        input.value = saved[holeIndex] == null ? "" : String(saved[holeIndex]);
-        input.setAttribute(
-          "aria-label",
-          uniqueAccessibleLabel(`${round.name || `Round ${roundIndex + 1}`}, ${target.detail}, ${target.label}, Hole ${holeIndex + 1} score`)
-        );
-        label.append(number, input);
-        grid.appendChild(label);
-        inputs.push({ holeIndex, input });
-      }
-      scorecard.append(scorecardTitle, scorecardDetail, grid);
-      card.appendChild(scorecard);
-      inputGroups.push({ ...target, inputs });
-    }
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    actions.style.marginTop = "12px";
-    const save = document.createElement("button");
-    save.type = "button";
-    save.textContent = "Save all match scores";
-    const saveStatus = document.createElement("span");
-    saveStatus.className = "small";
-    saveStatus.setAttribute("role", "status");
-    saveStatus.setAttribute("aria-live", "polite");
-    actions.append(save, saveStatus);
-    card.appendChild(actions);
-
+      return {
+        ...target,
+        saved,
+        drafts: new Map(),
+        teamColor: teams[target.teamId]?.color || colorForTeam(target.teamId)
+      };
+    });
+    const editor = document.createElement("section");
+    editor.className = "match-play-hole-editor";
+    card.appendChild(editor);
+    const firstIncompleteHole = activeHoleIndices.find((holeIndex) => (
+      inputGroups.some((group) => group.saved[holeIndex] == null)
+    ));
+    let currentHolePosition = Math.max(
+      0,
+      activeHoleIndices.indexOf(firstIncompleteHole ?? activeHoleIndices[activeHoleIndices.length - 1])
+    );
     let overwritePending = false;
-    for (const group of inputGroups) {
-      for (const { input } of group.inputs) {
-        input.addEventListener("input", () => {
-          if (!overwritePending) return;
-          overwritePending = false;
-          save.textContent = "Save all match scores";
-          saveStatus.textContent = "Scores changed; save again to check for conflicts.";
-        });
-      }
-    }
+    let feedbackMessage = "";
+    const roundCourse = courseForRound(tjson, roundIndex);
 
-    save.addEventListener("click", async () => {
-      const entries = [];
+    const persistSubmittedEntries = (holeIndex, entries) => {
+      const submittedById = new Map(entries.map((entry) => [entry.targetId, Number(entry.strokes)]));
       for (const group of inputGroups) {
-        const holes = Array(18).fill(null);
-        for (const { holeIndex, input } of group.inputs) {
+        if (!submittedById.has(group.targetId)) continue;
+        group.saved[holeIndex] = submittedById.get(group.targetId);
+        group.drafts.delete(holeIndex);
+      }
+      savedRounds[roundIndex] = {
+        ...(savedRounds[roundIndex] || {}),
+        matchEntries: inputGroups.map((group) => ({
+          targetId: group.targetId,
+          targetType: group.targetType,
+          teamId: group.teamId,
+          gross: group.saved.slice()
+        }))
+      };
+    };
+
+    const renderCurrentHoleEditor = () => {
+      closeActiveScoreWheel();
+      editor.innerHTML = "";
+      const holeIndex = activeHoleIndices[currentHolePosition];
+      const holeNumber = holeIndex + 1;
+
+      const controls = document.createElement("div");
+      controls.className = "hole-map-controls enter-page-hole-controls match-play-hole-controls";
+      const nav = document.createElement("div");
+      nav.className = "hole-map-nav";
+      const previous = document.createElement("button");
+      previous.type = "button";
+      previous.className = "secondary";
+      previous.setAttribute("aria-label", "Previous hole");
+      previous.textContent = currentHolePosition > 0 ? String(activeHoleIndices[currentHolePosition - 1] + 1) : "—";
+      previous.disabled = currentHolePosition <= 0;
+      const holeSelect = document.createElement("select");
+      holeSelect.setAttribute("aria-label", `${round.name || `Round ${roundIndex + 1}`} current hole`);
+      activeHoleIndices.forEach((activeHoleIndex, position) => {
+        const option = document.createElement("option");
+        option.value = String(position);
+        option.textContent = holeSummaryLabel(roundCourse, activeHoleIndex, roundIndex);
+        option.selected = position === currentHolePosition;
+        holeSelect.appendChild(option);
+      });
+      const next = document.createElement("button");
+      next.type = "button";
+      next.className = "secondary";
+      next.setAttribute("aria-label", "Next hole");
+      next.textContent = currentHolePosition < activeHoleIndices.length - 1
+        ? String(activeHoleIndices[currentHolePosition + 1] + 1)
+        : "—";
+      next.disabled = currentHolePosition >= activeHoleIndices.length - 1;
+      nav.append(previous, holeSelect, next);
+      controls.appendChild(nav);
+      editor.appendChild(controls);
+
+      const holeTitle = document.createElement("div");
+      holeTitle.className = "match-play-current-hole-title";
+      holeTitle.textContent = `Hole ${holeNumber} scores`;
+      editor.appendChild(holeTitle);
+
+      const rows = document.createElement("div");
+      rows.className = "enter-inline-score-rows match-play-current-hole-rows";
+      const activeInputs = [];
+      const holePar = Number(roundCourse?.pars?.[holeIndex]);
+      for (const group of inputGroups) {
+        const row = document.createElement("article");
+        row.className = `hole-row hole-score-row match-play-score-target${group.teamId === myTeamId ? " is-own-team" : ""}`;
+        row.style.setProperty("--team-accent", group.teamColor);
+        const identity = document.createElement("div");
+        identity.className = "match-play-score-target-identity";
+        const targetName = document.createElement("div");
+        targetName.className = "hole-score-row-title";
+        targetName.textContent = group.label;
+        const targetDetail = document.createElement("div");
+        targetDetail.className = "small match-play-score-target-detail";
+        targetDetail.textContent = group.detail;
+        identity.append(targetName, targetDetail);
+        row.appendChild(identity);
+
+        const initialValue = group.drafts.has(holeIndex)
+          ? group.drafts.get(holeIndex)
+          : group.saved[holeIndex] == null
+            ? ""
+            : String(group.saved[holeIndex]);
+        const wheel = createScoreWheel(initialValue, {
+          parValue: holePar,
+          onChange(nextValue) {
+            group.drafts.set(holeIndex, nextValue);
+            if (!overwritePending) return;
+            overwritePending = false;
+            feedbackMessage = "Scores changed; save again to check for conflicts.";
+            renderCurrentHoleEditor();
+          }
+        });
+        const accessibleLabel = uniqueAccessibleLabel(
+          `${round.name || `Round ${roundIndex + 1}`}, ${group.teamName}, ${group.label}, Hole ${holeNumber} score`
+        );
+        wheel.focusTarget.setAttribute("aria-label", accessibleLabel);
+        wheel.viewport.setAttribute("aria-label", accessibleLabel);
+        wheel.input.dataset.enterScope = "match-play-hole";
+        wheel.input.dataset.targetId = group.targetId;
+        wheel.input.dataset.holeIndex = String(holeIndex);
+        const wheelRow = document.createElement("div");
+        wheelRow.className = "score-wheel-row";
+        wheelRow.appendChild(wheel.root);
+        row.appendChild(wheelRow);
+        rows.appendChild(row);
+        activeInputs.push({ group, input: wheel.input });
+        window.requestAnimationFrame(() => wheel.sync());
+      }
+      editor.appendChild(rows);
+
+      const actions = document.createElement("div");
+      actions.className = "actions enter-inline-score-actions match-play-hole-actions";
+      const save = document.createElement("button");
+      save.type = "button";
+      const isLastHole = currentHolePosition >= activeHoleIndices.length - 1;
+      save.textContent = overwritePending
+        ? `Overwrite Hole ${holeNumber} scores`
+        : isLastHole
+          ? `Save Hole ${holeNumber}`
+          : `Save Hole ${holeNumber} & next`;
+      const saveStatus = document.createElement("span");
+      saveStatus.className = "small";
+      saveStatus.setAttribute("role", "status");
+      saveStatus.setAttribute("aria-live", "polite");
+      saveStatus.textContent = feedbackMessage;
+      actions.append(save, saveStatus);
+      editor.appendChild(actions);
+
+      const moveTo = (position) => {
+        overwritePending = false;
+        feedbackMessage = "";
+        currentHolePosition = Math.max(0, Math.min(activeHoleIndices.length - 1, position));
+        renderCurrentHoleEditor();
+      };
+      previous.addEventListener("click", () => moveTo(currentHolePosition - 1));
+      next.addEventListener("click", () => moveTo(currentHolePosition + 1));
+      holeSelect.addEventListener("change", () => moveTo(Number(holeSelect.value)));
+
+      bindImmediateButtonAction(save, async () => {
+        const entries = [];
+        for (const { group, input } of activeInputs) {
           const raw = String(input.value || "").trim();
           if (!raw) continue;
           const value = Number(raw);
           if (!Number.isInteger(value) || value < 1 || value > 20) {
-            saveStatus.textContent = `${group.label}, Hole ${holeIndex + 1} must be 1–20 or blank.`;
+            feedbackMessage = `${group.label}, Hole ${holeNumber} must be 1–20 or blank.`;
+            saveStatus.textContent = feedbackMessage;
             return;
           }
-          holes[holeIndex] = value;
+          entries.push({ targetId: group.targetId, strokes: value });
         }
-        entries.push({ targetId: group.targetId, holes });
-      }
-      const payload = {
-        code,
-        roundIndex,
-        matchId: assignment.matchId,
-        mode: "bulk",
-        entries,
-        override: false
-      };
-      const overwriteRequested = overwritePending;
-      if (overwriteRequested) payload.override = true;
-      save.disabled = true;
-      saveStatus.textContent = overwriteRequested ? "Overwriting…" : "Saving…";
-      try {
-        await api(`/tournaments/${encodeURIComponent(tid)}/scores`, { method: "POST", body: payload });
-        await clearPendingScoreSubmissionsMatching({ tid, code, payload });
-        overwritePending = false;
-        save.textContent = "Save all match scores";
-        savedRounds[roundIndex] = {
-          ...(savedRounds[roundIndex] || {}),
-          matchEntries: inputGroups.map((group, index) => ({
-            targetId: group.targetId,
-            targetType: group.targetType,
-            teamId: group.teamId,
-            gross: entries[index].holes
-          }))
+        if (!entries.length) {
+          feedbackMessage = `Enter at least one score for Hole ${holeNumber}.`;
+          saveStatus.textContent = feedbackMessage;
+          return;
+        }
+        const overwriteRequested = overwritePending;
+        const payload = {
+          code,
+          roundIndex,
+          matchId: assignment.matchId,
+          mode: "hole",
+          holeIndex,
+          entries,
+          override: overwriteRequested
         };
-        const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
-        derivedMatch = fresh?.matchPlay?.rounds?.[roundIndex]?.matches?.find((match) => match.matchId === assignment.matchId) || derivedMatch;
-        syncStatusText();
-        saveStatus.textContent = "Saved.";
-      } catch (error) {
-        if (isNetworkFailure(error)) {
-          await enqueuePendingScoreSubmission({ tid, code, payload });
-          saveStatus.textContent = overwriteRequested
-            ? "Overwrite saved on this device and queued to sync."
-            : "Saved on this device and queued to sync.";
-        } else if (Number(error?.status) === 409) {
-          overwritePending = true;
-          save.textContent = "Overwrite existing scores";
-          const conflictCount = Array.isArray(error?.data?.conflicts) ? error.data.conflicts.length : 0;
-          const conflictText = conflictCount
-            ? `${conflictCount} existing score${conflictCount === 1 ? "" : "s"} conflict${conflictCount === 1 ? "" : "s"}`
-            : "Existing scores conflict";
-          saveStatus.textContent = `${conflictText}. Review the fields, then choose “Overwrite existing scores” to retry.`;
-        } else {
+        save.disabled = true;
+        saveStatus.textContent = overwriteRequested ? "Overwriting…" : "Saving…";
+        try {
+          await api(`/tournaments/${encodeURIComponent(tid)}/scores`, { method: "POST", body: payload });
+          await clearPendingScoreSubmissionsMatching({ tid, code, payload });
+          persistSubmittedEntries(holeIndex, entries);
           overwritePending = false;
-          save.textContent = "Save all match scores";
-          saveStatus.textContent = error?.message || String(error);
+          const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
+          derivedMatch = fresh?.matchPlay?.rounds?.[roundIndex]?.matches?.find((match) => match.matchId === assignment.matchId) || derivedMatch;
+          syncStatusText();
+          feedbackMessage = `Hole ${holeNumber} saved.`;
+          if (!isLastHole) currentHolePosition += 1;
+          renderCurrentHoleEditor();
+        } catch (error) {
+          if (isNetworkFailure(error)) {
+            await enqueuePendingScoreSubmission({ tid, code, payload });
+            persistSubmittedEntries(holeIndex, entries);
+            overwritePending = false;
+            feedbackMessage = overwriteRequested
+              ? `Hole ${holeNumber} overwrite saved on this device and queued to sync.`
+              : `Hole ${holeNumber} saved on this device and queued to sync.`;
+            if (!isLastHole) currentHolePosition += 1;
+            renderCurrentHoleEditor();
+          } else if (Number(error?.status) === 409) {
+            overwritePending = true;
+            const conflictCount = Array.isArray(error?.data?.conflicts) ? error.data.conflicts.length : 0;
+            const conflictText = conflictCount
+              ? `${conflictCount} existing score${conflictCount === 1 ? "" : "s"} conflict${conflictCount === 1 ? "" : "s"}`
+              : "Existing scores conflict";
+            feedbackMessage = `${conflictText}. Review Hole ${holeNumber}, then choose overwrite to retry.`;
+            renderCurrentHoleEditor();
+          } else {
+            overwritePending = false;
+            feedbackMessage = error?.message || String(error);
+            saveStatus.textContent = feedbackMessage;
+          }
+        } finally {
+          save.disabled = false;
         }
-      } finally {
-        save.disabled = false;
-      }
-    });
+      });
+    };
+    renderCurrentHoleEditor();
     forms.appendChild(card);
   }
 }

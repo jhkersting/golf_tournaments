@@ -4530,6 +4530,30 @@ function matchPlayNineHoleLabel(round) {
   return String(round?.nineHoleSide || "").trim().toLowerCase() === "back" ? "Back nine" : "Front nine";
 }
 
+function formatMatchPlayPoints(value) {
+  const points = Number(value);
+  if (!Number.isFinite(points)) return "0";
+  return Number.isInteger(points) ? String(points) : String(Number(points.toFixed(3)));
+}
+
+function matchPlayLiveProjection(matchPlay, teamIds) {
+  const projected = Object.fromEntries(teamIds.map((teamId) => [teamId, 0]));
+  for (const round of matchPlay?.rounds || []) {
+    for (const match of round?.matches || []) {
+      if (match?.status !== "live") continue;
+      const points = Math.max(0, Number(match.pointsAvailable) || 0);
+      if (match.leadTeamId && Object.hasOwn(projected, match.leadTeamId)) {
+        projected[match.leadTeamId] += points;
+        continue;
+      }
+      const sideTeamIds = [match?.teamA?.teamId, match?.teamB?.teamId]
+        .filter((teamId) => Object.hasOwn(projected, teamId));
+      for (const teamId of sideTeamIds) projected[teamId] += points / 2;
+    }
+  }
+  return projected;
+}
+
 function renderMatchPlayScoreboard() {
   const matchPlay = TOURN?.matchPlay || {};
   const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
@@ -4559,26 +4583,71 @@ function renderMatchPlayScoreboard() {
   }
   root.innerHTML = "";
 
-  const pointsGrid = document.createElement("section");
-  pointsGrid.className = "match-play-points-grid";
-  standings.forEach((standing) => {
+  const race = document.createElement("section");
+  race.className = "match-play-race";
+  race.setAttribute("aria-label", "Team match score");
+  const raceTeams = document.createElement("div");
+  raceTeams.className = "match-play-race-teams";
+  const raceStandings = standings.slice(0, 2);
+  const teamIds = raceStandings.map((standing) => standing.teamId);
+  const liveProjection = matchPlayLiveProjection(matchPlay, teamIds);
+  const colors = raceStandings.map((standing) => (
+    teams[standing.teamId]?.color || standing.teamColor || colorForTeam(standing.teamId, standing.teamName)
+  ));
+
+  raceStandings.forEach((standing, index) => {
     const card = document.createElement("article");
-    card.className = "match-play-team-score";
-    const color = teams[standing.teamId]?.color || standing.teamColor || colorForTeam(standing.teamId, standing.teamName);
-    card.style.setProperty("--team-accent", color);
+    card.className = `match-play-race-team match-play-race-team-${index === 0 ? "a" : "b"}`;
+    card.style.setProperty("--team-accent", colors[index]);
     const name = document.createElement("div");
     name.className = "match-play-team-name";
     name.textContent = standing.teamName || teams[standing.teamId]?.teamName || standing.teamId;
+    const scoreLine = document.createElement("div");
+    scoreLine.className = "match-play-team-score-line";
     const score = document.createElement("strong");
     score.className = "match-play-team-points";
-    score.textContent = String(standing.points ?? 0);
-    const record = document.createElement("div");
-    record.className = "small";
-    record.textContent = `${standing.matchesWon || 0} won · ${standing.matchesHalved || 0} halved · ${standing.matchesLost || 0} lost`;
-    card.append(name, score, record);
-    pointsGrid.appendChild(card);
+    score.textContent = formatMatchPlayPoints(standing.points);
+    const active = document.createElement("span");
+    active.className = "match-play-team-active";
+    const activePoints = Number(liveProjection[standing.teamId] || 0);
+    active.textContent = activePoints > 0 ? `(${formatMatchPlayPoints(activePoints)})` : "";
+    active.hidden = activePoints <= 0;
+    scoreLine.append(score, active);
+    card.append(name, scoreLine);
+    raceTeams.appendChild(card);
   });
-  root.appendChild(pointsGrid);
+  race.appendChild(raceTeams);
+
+  if (raceStandings.length === 2) {
+    const scheduledPoints = Math.max(0, Number(matchPlay.scheduledPoints) || 0);
+    const pointPercent = (value) => scheduledPoints > 0
+      ? `${Math.min(100, Math.max(0, Number(value) || 0) / scheduledPoints * 100)}%`
+      : "0%";
+    const track = document.createElement("div");
+    track.className = "match-play-race-track";
+    const [teamA, teamB] = raceStandings;
+    const trackLabel = [teamA, teamB].map((standing) => {
+      const live = Number(liveProjection[standing.teamId] || 0);
+      return `${standing.teamName}: ${formatMatchPlayPoints(standing.points)} points${live > 0 ? `, ${formatMatchPlayPoints(live)} projected` : ""}`;
+    }).join("; ");
+    track.setAttribute("role", "img");
+    track.setAttribute("aria-label", `${trackLabel}; ${formatMatchPlayPoints(scheduledPoints)} total points`);
+
+    const addSegment = (className, color, points, offset) => {
+      const segment = document.createElement("span");
+      segment.className = `match-play-race-segment ${className}`;
+      segment.style.setProperty("--segment-size", pointPercent(points));
+      segment.style.setProperty("--segment-offset", pointPercent(offset));
+      segment.style.setProperty("--team-accent", color);
+      segment.setAttribute("aria-hidden", "true");
+      track.appendChild(segment);
+    };
+    addSegment("match-play-race-segment-a match-play-race-segment-earned", colors[0], teamA.points, 0);
+    addSegment("match-play-race-segment-a match-play-race-segment-live", colors[0], liveProjection[teamA.teamId], teamA.points);
+    addSegment("match-play-race-segment-b match-play-race-segment-earned", colors[1], teamB.points, 0);
+    addSegment("match-play-race-segment-b match-play-race-segment-live", colors[1], liveProjection[teamB.teamId], teamB.points);
+    race.appendChild(track);
+  }
 
   const target = document.createElement("div");
   target.className = "match-play-target";
@@ -4588,7 +4657,8 @@ function renderMatchPlayScoreboard() {
   } else {
     target.textContent = `${matchPlay.scheduledPoints || 0} points available · ${matchPlay.winTarget || 0} needed to win`;
   }
-  root.appendChild(target);
+  race.appendChild(target);
+  root.appendChild(race);
 
   const rounds = Array.isArray(matchPlay.rounds) ? matchPlay.rounds : [];
   const visibleRounds = currentRound === "all"
@@ -4610,29 +4680,48 @@ function renderMatchPlayScoreboard() {
     for (const match of round.matches || []) {
       const card = document.createElement("article");
       card.className = "match-play-match-card";
+      const teamAColor = teams[match.teamA?.teamId]?.color || colorForTeam(match.teamA?.teamId);
+      const teamBColor = teams[match.teamB?.teamId]?.color || colorForTeam(match.teamB?.teamId);
+      card.style.setProperty("--team-a-accent", teamAColor);
+      card.style.setProperty("--team-b-accent", teamBColor);
+      if (match.leadTeamId === match.teamA?.teamId) card.classList.add("is-leading-a");
+      if (match.leadTeamId === match.teamB?.teamId) card.classList.add("is-leading-b");
       const side = (sideData, sideKey) => {
         const node = document.createElement("div");
         node.className = `match-play-side match-play-side-${sideKey}`;
-        const teamName = document.createElement("b");
-        teamName.textContent = teams[sideData?.teamId]?.teamName || sideData?.teamId || "Team";
-        const names = document.createElement("span");
-        names.textContent = (sideData?.playerIds || []).map((id) => players[id]?.name || id).join(" + ") || "Players TBD";
-        node.append(teamName, names);
+        if (sideData?.teamId && sideData.teamId === match.leadTeamId) node.classList.add("is-leading");
+        const playerNames = (sideData?.playerIds || []).map((id) => players[id]?.name || id);
+        for (const playerName of playerNames.length ? playerNames : ["Players TBD"]) {
+          const name = document.createElement("span");
+          name.textContent = playerName;
+          node.appendChild(name);
+        }
         return node;
       };
       const center = document.createElement("div");
       center.className = "match-play-match-state";
+      if (match.leadTeamId) {
+        const leadColor = match.leadTeamId === match.teamA?.teamId ? teamAColor : teamBColor;
+        center.style.setProperty("--leading-accent", leadColor);
+      }
       const state = document.createElement("strong");
       if (match.result === "halved") state.textContent = "Halved";
       else if (match.status === "final" || match.status === "closed") {
-        const winnerName = teams[match.winnerTeamId]?.teamName || match.winnerTeamId || "Winner";
-        state.textContent = `${winnerName} ${match.display || "wins"}`;
+        state.textContent = match.display || "Final";
       } else if (match.leadTeamId) {
-        const leaderName = teams[match.leadTeamId]?.teamName || match.leadTeamId;
-        state.textContent = `${leaderName} ${match.display || "leads"}`;
-      } else state.textContent = match.display || "All square";
+        state.textContent = Number.isFinite(Number(match.lead))
+          ? `${Math.abs(Number(match.lead))} UP`
+          : String(match.display || "").replace(/\s+thru\s+\d+$/i, "") || "Leads";
+      } else if (match.status === "live") state.textContent = "AS";
+      else state.textContent = match.display || "Not started";
       const detail = document.createElement("span");
-      detail.textContent = `${match.pointsAvailable || 1} point${Number(match.pointsAvailable || 1) === 1 ? "" : "s"}`;
+      const thru = Number(match.thru || 0);
+      detail.textContent = thru > 0
+        ? `Thru ${thru}`
+        : match.status === "final" || match.status === "closed"
+          ? "Final"
+          : "";
+      detail.hidden = !detail.textContent;
       center.append(state, detail);
       card.append(side(match.teamA, "a"), center, side(match.teamB, "b"));
       section.appendChild(card);

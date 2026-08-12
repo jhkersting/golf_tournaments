@@ -5,8 +5,8 @@
   --font-sans: "IBM Plex Sans", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --font-display: "IBM Plex Sans", sans-serif;
-  --display-letter-spacing: -0.015em;
-  --bg: #f3f5f8;
+  --display-letter-spacing: -0.03em;
+  --bg: #ffffff;
   --text: #111820;
   --WHITE: #ffffff;
   --BLACK: #111820;
@@ -32,44 +32,82 @@
   gap: 18px;
   margin-top: 14px;
 }
-.match-play-points-grid {
+.match-play-race {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0 8px;
+}
+.match-play-race-teams {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 24px;
+  align-items: end;
 }
-.match-play-team-score {
-  position: relative;
-  overflow: hidden;
+.match-play-race-team {
   min-width: 0;
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--surface);
-  text-align: center;
 }
-.match-play-team-score::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 6px;
-  background: var(--team-accent, var(--brand));
+.match-play-race-team-b {
+  text-align: right;
 }
 .match-play-team-name {
   overflow-wrap: anywhere;
-  font-weight: 700;
+  font-weight: 600;
+  font-size:25px;
+  letter-spacing: -0.03em;
+}
+.match-play-team-score-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.match-play-race-team-b .match-play-team-score-line {
+  justify-content: flex-end;
 }
 .match-play-team-points {
   display: block;
-  margin: 4px 0;
-  font-size: clamp(2.2rem, 9vw, 4rem);
+  margin-top: 2px;
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.05em;
+  font-family: JetBrains Mono;
   line-height: 1;
 }
+.match-play-team-active {
+  color: var(--team-accent, var(--muted));
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.match-play-race-track {
+  position: relative;
+  height: 18px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 0px;
+  background: color-mix(in srgb, var(--border) 55%, var(--surface));
+}
+.match-play-race-segment {
+  position: absolute;
+  inset-block: 0;
+  width: var(--segment-size, 0%);
+  background: var(--team-accent, var(--brand));
+}
+.match-play-race-segment-a {
+  left: var(--segment-offset, 0%);
+}
+.match-play-race-segment-b {
+  right: var(--segment-offset, 0%);
+}
+.match-play-race-segment-live {
+  opacity: .34;
+}
 .match-play-target {
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: var(--link-bg);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  letter-spacing: -0.02em;
   text-align: center;
-  font-weight: 650;
 }
 .match-play-round {
   display: grid;
@@ -91,8 +129,13 @@
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
   background: var(--surface);
+}
+.match-play-match-card.is-leading-a {
+  border-left: 5px solid var(--team-a-accent, var(--border));
+}
+.match-play-match-card.is-leading-b {
+  border-right: 5px solid var(--team-b-accent, var(--border));
 }
 .match-play-side,
 .match-play-match-state {
@@ -102,8 +145,12 @@
 }
 .match-play-side span {
   overflow-wrap: anywhere;
-  color: var(--muted);
-  font-size: .86rem;
+  color: var(--text);
+  font-size: .92rem;
+  line-height: 1.25;
+}
+.match-play-side.is-leading span {
+  font-weight: 700;
 }
 .match-play-side-b {
   text-align: right;
@@ -111,9 +158,15 @@
 .match-play-match-state {
   text-align: center;
 }
+.match-play-match-state strong {
+  color: var(--leading-accent, var(--text));
+  white-space: nowrap;
+}
 .match-play-match-state span {
   color: var(--muted);
   font-size: .78rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
 }
 .match-play-entry-card {
   display: grid;
@@ -132,27 +185,42 @@
   background: var(--link-bg);
   font-size: .82rem;
 }
-.match-play-entry-grid {
+.match-play-hole-editor {
   display: grid;
-  grid-template-columns: repeat(9, minmax(52px, 1fr));
-  gap: 7px;
-  overflow-x: auto;
-  padding-bottom: 3px;
+  gap: 12px;
 }
-.match-play-entry-hole {
-  display: grid;
-  gap: 4px;
-  min-width: 52px;
+.match-play-hole-controls {
+  margin-top: 2px !important;
+  padding: 4px 0;
 }
-.match-play-entry-hole span {
+.match-play-current-hole-title {
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
   color: var(--muted);
-  font-size: .72rem;
-  text-align: center;
 }
-.match-play-entry-hole input {
+.match-play-current-hole-rows {
+  margin-top: 0;
+}
+.match-play-current-hole-rows .match-play-score-target {
+  flex: 1 1 280px;
+  max-width: 100%;
+}
+.match-play-score-target-identity {
   min-width: 0;
-  padding-inline: 6px;
-  text-align: center;
+}
+.match-play-score-target .hole-score-row-title {
+  padding-left: 10px;
+  border-left: 5px solid var(--team-accent, var(--border-strong));
+}
+.match-play-score-target-detail {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+.match-play-hole-actions {
+  margin-top: 0;
 }
 
 @media (max-width: 620px) {
@@ -166,15 +234,27 @@
     flex-direction: column;
     gap: 2px;
   }
-  .match-play-team-score {
-    padding: 14px 10px;
+  .match-play-race {
+    gap: 8px;
   }
-  .match-play-entry-grid {
-    grid-template-columns: repeat(3, minmax(68px, 1fr));
-    overflow-x: visible;
+  .match-play-race-teams {
+    gap: 12px;
+  }
+
+  .match-play-team-score-line {
+    gap: 5px;
+  }
+  .match-play-team-active {
+    font-size: .68rem;
+  }
+  .match-play-race-track {
+    height: 10px;
   }
   .match-play-entry-head {
     flex-direction: column;
+  }
+  .match-play-score-target {
+    flex-basis: 100%;
   }
 }
 
@@ -310,12 +390,12 @@ header {
   color: var(--text);
   border: 1px solid var(--border);
   background: var(--link-bg);
-  border-radius: 8px;
-  padding: 8px 14px;
+  border-radius: 4px;
+  padding: 4px 8px;
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  letter-spacing: -0.025em;
+  font-family: var(--font-mono);
 }
 
 .nav a:hover,
@@ -673,7 +753,7 @@ header {
   margin: 0 8px 8px 0;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 0px;
   background: var(--surface-strong);
   min-width: 0;
   max-width: 100%;
@@ -694,46 +774,82 @@ header {
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border-bottom: 1px solid var(--text);
+  border-radius: 0px;
   padding: 18px;
-  margin: 0 0 8px;
-  box-shadow: var(--shadow);
+  margin: 0px;
   max-width: 100%;
   overflow-x: hidden;
 }
 
-.pwa-card {
-  background: var(--bg);
-  border: 0;
-  box-shadow: none;
-}
-
-.pwa-card .pwa-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
-
-.pwa-card .pwa-actions {
+.pwa-banner-actions {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 14px;
+  align-items: center;
 }
 
-.pwa-card .pwa-actions button {
-  min-height: 40px;
+.nav .pwa-banner-button,
+.nav .pwa-banner-button.secondary {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--link-bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.5;
+  text-transform: none;
 }
 
-.pwa-card .pwa-status {
-  margin-top: 10px;
+.nav .pwa-banner-button:hover,
+.nav .pwa-banner-button.secondary:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--link-bg) 65%, var(--surface-strong));
+}
+
+.pwa-banner-hint,
+.pwa-banner-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pwa-banner-actions.has-status .pwa-banner-status {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 2;
+  width: min(360px, calc(100vw - 24px));
+  height: auto;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  box-shadow: var(--shadow);
 }
 
 .enter-page .card {
-  border-radius: 12px;
+  border-radius:0px;
 }
 
 .enter-who-card {
@@ -1023,7 +1139,6 @@ body.hole-map-scoreboard-open {
   padding: 18px 18px 12px;
   background: color-mix(in srgb, var(--surface) 98%, var(--bg));
   border: 1px solid var(--border-strong);
-  border-radius: 12px 14px 0 0;
   box-shadow: 0 10px 26px rgba(15, 34, 56, 0.14);
 }
 
@@ -1039,7 +1154,6 @@ body.hole-map-scoreboard-open {
   justify-content: center;
   min-height: 40px;
   border: 1px solid var(--brand);
-  border-radius: 10px;
   background: var(--brand);
   color: var(--brand-contrast);
   font-size: 12px;
@@ -1081,7 +1195,7 @@ h2,
 h3 {
   margin: 0 0 8px;
   font-family: var(--font-display);
-  font-weight: 400;
+  font-weight: 500;
   /*font-style: italic;*/
   line-height: 1.2;
   letter-spacing: var(--display-letter-spacing);
@@ -1089,24 +1203,27 @@ h3 {
 
 h1 {
   font-size: 24px;
+  font-weight:650
 }
 
 h2 {
   font-size: 22px;
+  font-weight:550
 }
 
 h3 {
   font-size: 20px;
+  font-family: 800;
 }
 
 label {
   display: block;
   margin: 10px 0 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--muted);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: var(--BLACK);
+  letter-spacing: -0.02em;
+  font-family: JetBrains Mono;
 }
 
 input,
@@ -1116,7 +1233,6 @@ textarea {
   min-height: 44px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
   background: var(--field-bg);
   color: var(--text);
   font-family: var(--font-sans);
@@ -1141,7 +1257,6 @@ input[type="radio"] {
   height: 16px;
   min-height: 16px;
   padding: 0;
-  border-radius: 4px;
   vertical-align: middle;
 }
 
@@ -1158,7 +1273,7 @@ textarea::placeholder {
 button {
   min-height: 44px;
   border: 1px solid var(--brand);
-  border-radius: 10px;
+  border-radius: 0px;
   background: var(--brand);
   color: var(--brand-contrast);
   font-family: var(--font-sans);
@@ -1217,7 +1332,6 @@ hr {
   align-items: center;
   min-height: 30px;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
   background: var(--link-bg);
   padding: 4px 12px;
   font-family: var(--font-mono);
@@ -1233,7 +1347,6 @@ hr {
   z-index: 120;
   max-width: min(90vw, 420px);
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
   background: color-mix(in srgb, var(--surface) 92%, var(--bg));
   box-shadow: var(--shadow);
   padding: 9px 11px;
@@ -1433,7 +1546,6 @@ hr {
 #lb_tbl {
   table-layout: fixed;
   width: 100%;
-  border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--border);
 }
@@ -2409,7 +2521,7 @@ pre {
 .score-wheel-display {
   width: 100%;
   min-height: 56px;
-  border-radius: 999px;
+  border-radius: 0px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   background: color-mix(in srgb, var(--surface-strong) 58%, transparent);
   color: var(--text);
@@ -2622,7 +2734,7 @@ th.dots {
   }
 
   .container {
-    padding-top: 24px;
+    padding-top: 0px;
     padding-bottom: 42px;
   }
 
@@ -2636,7 +2748,7 @@ th.dots {
   }
 
   .card {
-    padding: 22px;
+    padding: 40px 5px;
   }
 }
 
@@ -2705,10 +2817,16 @@ th.dots {
   }
 
   .nav .actions a,
-  .nav .actions .theme-toggle {
+  .nav .actions .theme-toggle,
+  .nav .actions .pwa-banner-button {
     display: block;
     width: 100%;
     margin: 0 0 8px 0;
+  }
+
+  .nav .pwa-banner-actions {
+    width: 100%;
+    gap: 0;
   }
 
   .nav a {
@@ -2801,8 +2919,7 @@ th.dots {
   }
 
   .card {
-    padding: 12px;
-    border-radius: 12px;
+    padding: 40px 0px;
     box-shadow: none;
   }
 
@@ -3774,8 +3891,10 @@ body.hole-map-page {
   }
 
   span[data-brand-title] {
-    font-size: 17px;
+    font-size: 20px;
     white-space: nowrap;
+    margin-left:10px;
+    font-weight:500px !important;
   }
 
   .hole-map-nav {

@@ -8,6 +8,7 @@ const state = {
   installButton: null,
   alertsButton: null,
   panelHint: null,
+  showBannerStatus: false,
 };
 
 function isStandalone() {
@@ -52,6 +53,8 @@ function setStatus(message) {
   if (!state.statusEl) return;
   state.statusEl.textContent = message || "";
   state.statusEl.hidden = !message;
+  state.panel?.classList.toggle("has-status", Boolean(message) && state.showBannerStatus);
+  if (state.panel) state.panel.title = message || "";
 }
 
 function setInstallButtonVisible(visible) {
@@ -124,22 +127,22 @@ function shouldRenderPanel() {
 
 function ensurePanel() {
   if (state.panel || !shouldRenderPanel()) return state.panel;
-  const container = document.querySelector(".container");
-  if (!container) return null;
+  const bannerActions = document.querySelector("header .nav .actions");
+  if (!bannerActions) return null;
 
   const panel = document.createElement("div");
-  panel.className = "card pwa-card";
+  panel.className = "pwa-banner-actions";
   panel.dataset.pwaPanel = "true";
+  panel.setAttribute("role", "group");
+  panel.setAttribute("aria-label", "App options");
   panel.innerHTML = `
-    <div class="pill" data-pwa-state>Loading…</div>
-    <div class="pwa-actions">
-      <button type="button" data-pwa-install>Install app</button>
-      <button type="button" class="secondary" data-pwa-alerts>Enable score alerts</button>
-    </div>
-    <div class="small pwa-status" data-pwa-status></div>
+    <button type="button" class="pwa-banner-button" data-pwa-install aria-describedby="pwa_banner_hint pwa_banner_status">Install app</button>
+    <button type="button" class="pwa-banner-button" data-pwa-alerts aria-describedby="pwa_banner_hint pwa_banner_status">Enable score alerts</button>
+    <span class="pwa-banner-hint" id="pwa_banner_hint" data-pwa-state>Loading…</span>
+    <span class="pwa-banner-status" id="pwa_banner_status" data-pwa-status role="status" aria-live="polite"></span>
   `;
 
-  container.insertBefore(panel, container.firstElementChild);
+  bannerActions.appendChild(panel);
   state.panel = panel;
   state.statusEl = panel.querySelector("[data-pwa-status]");
   state.installButton = panel.querySelector("[data-pwa-install]");
@@ -147,6 +150,7 @@ function ensurePanel() {
   state.panelHint = panel.querySelector("[data-pwa-state]");
 
   state.installButton.addEventListener("click", async () => {
+    state.showBannerStatus = true;
     if (!state.installPromptEvent) {
       setStatus("Use your browser's Add to Home Screen action to install this app.");
       return;
@@ -163,6 +167,7 @@ function ensurePanel() {
   });
 
   state.alertsButton.addEventListener("click", async () => {
+    state.showBannerStatus = true;
     const hasSubscription = await refreshSubscriptionState();
     if (hasSubscription) {
       await disableScoreAlerts();
