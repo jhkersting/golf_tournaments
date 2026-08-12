@@ -18,6 +18,12 @@ const tidInput = document.getElementById("tid_input");
 const editCodeInput = document.getElementById("edit_code_input");
 const loadBtn = document.getElementById("load_tid_btn");
 const loadStatus = document.getElementById("load_status");
+const resetTidInput = document.getElementById("reset_tid_input");
+const resetKeyInput = document.getElementById("reset_key_input");
+const resetEditCodeBtn = document.getElementById("reset_edit_code_btn");
+const resetCodeStatus = document.getElementById("reset_code_status");
+const resetCodeResult = document.getElementById("reset_code_result");
+const resetCodeOutput = document.getElementById("reset_code_output");
 
 const tidValue = document.getElementById("tid_value");
 const scoreboardLink = document.getElementById("scoreboard_link");
@@ -2029,6 +2035,7 @@ function renderPage(data) {
   scoreboardLink.textContent = scoreboardUrlForTid(currentTid);
   updatedMeta.textContent = `v${data?.version || 0} • ${localDateTime(data?.updatedAt)}`;
   tidInput.value = currentTid;
+  if (resetTidInput) resetTidInput.value = currentTid;
   editCodeInput.value = currentEditCode;
   loadStatus.textContent = "";
   loadCard.style.display = "";
@@ -2064,6 +2071,45 @@ async function loadTournament(tid, editCode) {
   } catch (e) {
     console.error(e);
     loadStatus.textContent = e.message || String(e);
+  }
+}
+
+async function resetTournamentEditCode() {
+  const tid = String(resetTidInput?.value || tidInput?.value || "").trim();
+  const resetKey = String(resetKeyInput?.value || "");
+  if (!tid) {
+    if (resetCodeStatus) resetCodeStatus.textContent = "Tournament ID required.";
+    return;
+  }
+  if (!resetKey) {
+    if (resetCodeStatus) resetCodeStatus.textContent = "Secure reset token required.";
+    return;
+  }
+  if (resetEditCodeBtn) resetEditCodeBtn.disabled = true;
+  if (resetCodeResult) resetCodeResult.hidden = true;
+  if (resetCodeStatus) resetCodeStatus.textContent = "Generating…";
+  try {
+    const out = await api(`/tournaments/${encodeURIComponent(tid)}/admin/reset-code`, {
+      method: "POST",
+      headers: { "x-edit-code-reset-key": resetKey },
+      body: {}
+    });
+    const nextCode = normalizeCode(out?.editCode);
+    if (!nextCode) throw new Error("Reset completed without a new edit code.");
+    if (resetCodeOutput) resetCodeOutput.textContent = nextCode;
+    if (resetCodeResult) resetCodeResult.hidden = false;
+    rememberTournamentId(tid);
+    rememberTournamentEditCode(tid, nextCode);
+    tidInput.value = tid;
+    editCodeInput.value = nextCode;
+    if (resetKeyInput) resetKeyInput.value = "";
+    if (resetCodeStatus) resetCodeStatus.textContent = "New code generated.";
+    await loadTournament(tid, nextCode);
+  } catch (e) {
+    console.error(e);
+    if (resetCodeStatus) resetCodeStatus.textContent = e.message || String(e);
+  } finally {
+    if (resetEditCodeBtn) resetEditCodeBtn.disabled = false;
   }
 }
 
@@ -2429,6 +2475,7 @@ if (siResetBtn) {
 }
 
 loadBtn.addEventListener("click", () => loadTournament(tidInput.value, editCodeInput.value));
+resetEditCodeBtn?.addEventListener("click", resetTournamentEditCode);
 tidInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") loadTournament(tidInput.value, editCodeInput.value);
 });

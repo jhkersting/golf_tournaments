@@ -13,6 +13,7 @@ This backend stores tournament state in **S3** (no database) and publishes **gzi
 
 Parameters:
 - AdminKey (used for create/import)
+- EditCodeResetKey (server-only secret used to rotate a lost tournament edit code; never commit it or embed it in the frontend)
 - EventsBucketName / StateBucketName / PublicBucketName
 
 ## API Routes
@@ -20,6 +21,7 @@ Parameters:
 - POST `/tournaments/{tid}/players/import` (admin + tournament `editCode`)
 - GET  `/tournaments/{tid}/admin` (admin + tournament `editCode`; editable payload: rounds/players/codes/groups/per-round tee times)
 - POST `/tournaments/{tid}/admin` (admin + tournament `editCode`; update tournament settings + players)
+- POST `/tournaments/{tid}/admin/reset-code` (server-only `EditCodeResetKey`; returns a replacement edit code once and invalidates the old one)
 - POST `/tournaments/{tid}/scores` (players)
 - GET  `/push/vapid-public-key`
 - POST `/tournaments/{tid}/push/subscribe`

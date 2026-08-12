@@ -6,6 +6,10 @@ Parameters:
   AdminKey:
     Type: String
     Default: CHANGE_ME_ADMIN_KEY
+  EditCodeResetKey:
+    Type: String
+    Default: ""
+    NoEcho: true
   VapidSubject:
     Type: String
     Default: mailto:admin@example.com
@@ -34,6 +38,7 @@ Globals:
     Environment:
       Variables:
         ADMIN_KEY: !Ref AdminKey
+        EDIT_CODE_RESET_KEY: !Ref EditCodeResetKey
         VAPID_SUBJECT: !Ref VapidSubject
         VAPID_PUBLIC_KEY: !Ref VapidPublicKey
         VAPID_PRIVATE_KEY: !Ref VapidPrivateKey
@@ -43,7 +48,7 @@ Globals:
   Api:
     Cors:
       AllowMethods: "'GET,POST,OPTIONS'"
-      AllowHeaders: "'Content-Type,x-admin-key'"
+      AllowHeaders: "'Content-Type,x-admin-key,x-edit-code-reset-key'"
       AllowOrigin: "'*'"
     MinimumCompressionSize: 512
 
@@ -54,7 +59,7 @@ Resources:
       StageName: prod
       Cors:
         AllowMethods: "'GET,POST,OPTIONS'"
-        AllowHeaders: "'Content-Type,x-admin-key'"
+        AllowHeaders: "'Content-Type,x-admin-key,x-edit-code-reset-key'"
         AllowOrigin: "'*'"
 
   EventsBucket:
@@ -156,6 +161,12 @@ Resources:
           Properties:
             RestApiId: !Ref GolfApi
             Path: /tournaments/{tid}/admin
+            Method: post
+        ResetTournamentEditCode:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GolfApi
+            Path: /tournaments/{tid}/admin/reset-code
             Method: post
 
   PostScoresFunction:

@@ -2,8 +2,11 @@ import {
   json,
   parseBody,
   requireAdmin,
+  requireEditCodeResetKey,
   uid,
   code4,
+  makeEditCode,
+  hashEditCode,
   normalizeHoles,
   getJson,
   putJson,
@@ -587,12 +590,53 @@ function toAdminPayload(state) {
   };
 }
 
+function isResetCodeRoute(event) {
+  return [
+    event?.resource,
+    event?.path,
+    event?.requestContext?.resourcePath,
+    event?.requestContext?.http?.path
+  ].some((value) => String(value || "").replace(/\/+$/, "").endsWith("/admin/reset-code"));
+}
+
+async function resetTournamentEditCode(event, tid) {
+  requireEditCodeResetKey(event);
+  const now = Date.now();
+  let editCode = "";
+  const updated = await updateStateWithRetry(tid, (current) => {
+    if (!current) {
+      const err = new Error("tournament not found");
+      err.statusCode = 404;
+      throw err;
+    }
+    editCode = makeEditCode(8);
+    current.tournament = current.tournament || {};
+    current.tournament.editCodeHash = hashEditCode(editCode);
+    current.updatedAt = now;
+    current.version = Number(current.version || 0) + 1;
+    return current;
+  });
+
+  await appendEvent(tid, { type: "admin_edit_code_reset", tid, ts: now });
+  await writePublicObjectsFromState(updated);
+  return json(200, {
+    ok: true,
+    editCode,
+    updatedAt: updated.updatedAt,
+    version: updated.version
+  });
+}
+
 export async function handler(event) {
   try {
     const method = String(event?.requestContext?.http?.method || event?.httpMethod || "")
       .toUpperCase();
     const tid = String(event?.pathParameters?.tid || "").trim();
     if (!tid) return json(400, { error: "missing tid" });
+
+    if (method === "POST" && isResetCodeRoute(event)) {
+      return await resetTournamentEditCode(event, tid);
+    }
 
     if (method === "GET") {
       requireAdmin(event);

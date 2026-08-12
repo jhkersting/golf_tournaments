@@ -59,6 +59,28 @@
   </div>
 </div>
 
+<div class="card" id="reset_code_card">
+  <h2 style="margin-top:0;">Reset a lost edit code</h2>
+  <div class="small">Use the separate secure reset token supplied by the tournament administrator. The token is sent only for this request and is not stored in this browser.</div>
+  <div class="row" style="align-items:flex-end; margin-top:10px;">
+    <div class="col">
+      <label for="reset_tid_input">Tournament ID</label>
+      <input id="reset_tid_input" placeholder="t_xxxxxxxx" />
+    </div>
+    <div class="col">
+      <label for="reset_key_input">Secure reset token</label>
+      <input id="reset_key_input" type="password" autocomplete="off" />
+    </div>
+    <div class="col">
+      <button id="reset_edit_code_btn" type="button">Generate new edit code</button>
+      <span id="reset_code_status" class="small" style="margin-left:8px;"></span>
+    </div>
+  </div>
+  <div id="reset_code_result" class="pill" style="margin-top:10px;" hidden>
+    New edit code: <code id="reset_code_output"></code> — copy this now; it cannot be recovered later.
+  </div>
+</div>
+
 <div id="editor_wrap" style="display:none;">
   <div class="card">
     <div class="row">

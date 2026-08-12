@@ -4686,6 +4686,12 @@ function renderMatchPlayScoreboard() {
       card.style.setProperty("--team-b-accent", teamBColor);
       if (match.leadTeamId === match.teamA?.teamId) card.classList.add("is-leading-a");
       if (match.leadTeamId === match.teamB?.teamId) card.classList.add("is-leading-b");
+      const matchComplete = match.status === "final" || match.status === "closed";
+      const completedWinnerId = match.winnerTeamId || (
+        matchComplete && match.result && match.result !== "halved" ? match.result : null
+      );
+      if (completedWinnerId === match.teamA?.teamId) card.classList.add("is-final-winner-a");
+      if (completedWinnerId === match.teamB?.teamId) card.classList.add("is-final-winner-b");
       const side = (sideData, sideKey) => {
         const node = document.createElement("div");
         node.className = `match-play-side match-play-side-${sideKey}`;

@@ -15,7 +15,7 @@ export function json(statusCode, body, extraHeaders={}){
     headers: {
       "Content-Type":"application/json",
       "Access-Control-Allow-Origin":"*",
-      "Access-Control-Allow-Headers":"Content-Type,x-admin-key",
+      "Access-Control-Allow-Headers":"Content-Type,x-admin-key,x-edit-code-reset-key",
       "Access-Control-Allow-Methods":"GET,POST,OPTIONS",
       ...extraHeaders
     },
@@ -38,6 +38,29 @@ export function requireAdmin(event){
   if (!want) return; // allow if unset
   const got = event?.headers?.["x-admin-key"] || event?.headers?.["X-Admin-Key"] || event?.headers?.["X-ADMIN-KEY"];
   if (!got || got !== want){
+    const err = new Error("Unauthorized");
+    err.statusCode = 401;
+    throw err;
+  }
+}
+
+export function requireEditCodeResetKey(event){
+  const expected = String(process.env.EDIT_CODE_RESET_KEY || "");
+  if (!expected) {
+    const err = new Error("Edit-code reset is not configured");
+    err.statusCode = 503;
+    throw err;
+  }
+  const headers = event?.headers || {};
+  const provided = String(
+    headers["x-edit-code-reset-key"]
+      || headers["X-Edit-Code-Reset-Key"]
+      || headers["X-EDIT-CODE-RESET-KEY"]
+      || ""
+  );
+  const providedBytes = Buffer.from(provided);
+  const expectedBytes = Buffer.from(expected);
+  if (!provided || providedBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(providedBytes, expectedBytes)) {
     const err = new Error("Unauthorized");
     err.statusCode = 401;
     throw err;
