@@ -80,6 +80,35 @@ function matchWriteHoles(raw, activeHoleIndices) {
   });
 }
 
+export function resolveMatchPlayScoreTarget(match, actorPlayerId, requestedTargetId, playerFormat) {
+  const sides = [match?.teamA, match?.teamB].filter(Boolean);
+  const actorSide = sides.find((side) => side.playerIds?.includes(actorPlayerId));
+  if (!actorSide) {
+    const error = new Error("You are not assigned to this match");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const requested = String(requestedTargetId || "").trim();
+  if (playerFormat) {
+    const targetId = requested || actorPlayerId;
+    if (!sides.some((side) => side.playerIds?.includes(targetId))) {
+      const error = new Error("Score target is not assigned to this match");
+      error.statusCode = 403;
+      throw error;
+    }
+    return { targetType: "player", targetId };
+  }
+
+  const targetId = requested || actorSide.teamId;
+  if (!sides.some((side) => side.teamId === targetId)) {
+    const error = new Error("Score target is not assigned to this match");
+    error.statusCode = 403;
+    throw error;
+  }
+  return { targetType: "match_side", targetId };
+}
+
 async function handleMatchPlayScore(event, body, tid) {
   const code = String(body.code || "").trim();
   const roundIndex = Number(body.roundIndex);
@@ -130,13 +159,10 @@ async function handleMatchPlayScore(event, body, tid) {
       error.statusCode = 404;
       throw error;
     }
-    const actorSide = [match.teamA, match.teamB].find((side) => side.playerIds.includes(actorPlayerId));
-    if (!actorSide) {
-      const error = new Error("You are not assigned to this match");
-      error.statusCode = 403;
-      throw error;
-    }
     const playerFormat = ["singles", "best_ball"].includes(round.format);
+    // Resolve once before mutating score buckets so an otherwise valid player code
+    // cannot write a match they are not scheduled to play.
+    resolveMatchPlayScoreTarget(match, actorPlayerId, "", playerFormat);
     current.scores = current.scores || { rounds: [] };
     current.scores.rounds = current.scores.rounds || [];
     current.scores.rounds[roundIndex] = current.scores.rounds[roundIndex] || { teams: {}, players: {}, groups: {}, matches: {} };
@@ -195,25 +221,12 @@ async function handleMatchPlayScore(event, body, tid) {
     };
     for (const entry of body.entries) {
       const requested = String(entry?.targetId || "").trim();
-      let targetType;
-      let targetId;
-      if (playerFormat) {
-        targetType = "player";
-        targetId = requested || actorPlayerId;
-        if (!actorSide.playerIds.includes(targetId)) {
-          const error = new Error("You can only enter scores for your side of this match");
-          error.statusCode = 403;
-          throw error;
-        }
-      } else {
-        targetType = "match_side";
-        targetId = actorSide.teamId;
-        if (requested && requested !== targetId) {
-          const error = new Error("You can only enter scores for your side of this match");
-          error.statusCode = 403;
-          throw error;
-        }
-      }
+      const { targetType, targetId } = resolveMatchPlayScoreTarget(
+        match,
+        actorPlayerId,
+        requested,
+        playerFormat
+      );
       if (mode === "hole") {
         const value = entry?.strokes === "" ? undefined : entry?.strokes === null ? null : Number(entry?.strokes);
         apply(targetType, targetId, holeIndex, value);

@@ -171,8 +171,15 @@ function applyBulkEntry(gross, holes) {
   }
 }
 
+function isMatchPlayTournament(tournamentJson) {
+  return String(tournamentJson?.tournament?.competitionType || tournamentJson?.competitionType || "").trim() === "team_match_play";
+}
+
 function applyPayloadToTournament(tournamentJson, payload) {
   if (!tournamentJson || typeof tournamentJson !== "object" || !payload) return tournamentJson;
+  if (isMatchPlayTournament(tournamentJson)) {
+    return tournamentJson;
+  }
   const roundIndex = Number(payload.roundIndex);
   if (!Number.isInteger(roundIndex) || roundIndex < 0) return tournamentJson;
   const rounds = tournamentJson?.tournament?.rounds || [];
@@ -233,17 +240,30 @@ function matchesFilter(record, filter = {}) {
   return true;
 }
 
+function submissionTargetIds(payload) {
+  return Array.from(
+    new Set(
+      (Array.isArray(payload?.entries) ? payload.entries : [])
+        .map((entry) => String(entry?.targetId || "").trim())
+        .filter(Boolean)
+    )
+  ).sort();
+}
+
 function submissionSignature({ tid, code, payload }) {
   const roundIndex = Number(payload?.roundIndex);
   const mode = String(payload?.mode || "").trim().toLowerCase() || (payload?.holeIndex != null ? "hole" : "bulk");
   const holeIndex = mode === "hole" ? Number(payload?.holeIndex) : "bulk";
-  return [
+  const matchId = String(payload?.matchId ?? payload?.matchPlayMatchId ?? "").trim();
+  return JSON.stringify([
     String(tid || "").trim(),
     String(code || "").trim().toUpperCase(),
     Number.isInteger(roundIndex) ? roundIndex : "",
+    matchId,
     mode,
     holeIndex,
-  ].join("|");
+    submissionTargetIds(payload),
+  ]);
 }
 
 async function getAllRecords(storeName) {
@@ -350,12 +370,16 @@ export async function flushPendingScoreSubmissions({ tid, code, sendScore }) {
   let syncedCount = 0;
   let conflictCount = 0;
   let failedCount = 0;
+  let requiresMatchPlayRefetch = false;
 
   for (const item of items) {
     try {
       await sendScore(cloneJson(item.payload));
       await deleteRecord(STORE_SCORE_QUEUE, item.id);
       syncedCount += 1;
+      if (String(item.payload?.matchId ?? item.payload?.matchPlayMatchId ?? "").trim()) {
+        requiresMatchPlayRefetch = true;
+      }
     } catch (error) {
       const nextRecord = {
         ...item,
@@ -375,10 +399,17 @@ export async function flushPendingScoreSubmissions({ tid, code, sendScore }) {
     }
   }
 
+  if (requiresMatchPlayRefetch) {
+    try {
+      await deleteRecord(STORE_JSON_CACHE, cacheRecordKey(`t:${String(tid || "").trim()}`));
+    } catch (_) {}
+  }
+
   return {
     syncedCount,
     conflictCount,
     failedCount,
+    requiresRefetch: requiresMatchPlayRefetch,
     ...(await getPendingScoreSummary({ tid, code })),
   };
 }
@@ -394,8 +425,21 @@ export async function applyPendingScoreSubmissionsToTournament(tournamentJson, {
   });
   if (!pending.length) return tournamentJson;
   const nextJson = cloneJson(tournamentJson);
+  const matchPlay = isMatchPlayTournament(nextJson);
   for (const record of pending) {
     applyPayloadToTournament(nextJson, record.payload);
   }
+  nextJson.__offline = {
+    ...(nextJson.__offline && typeof nextJson.__offline === "object" ? nextJson.__offline : {}),
+    pendingScoreSubmissions: pending.map((record) => ({
+      id: record.id,
+      roundIndex: Number(record.payload?.roundIndex),
+      matchId: String(record.payload?.matchId ?? record.payload?.matchPlayMatchId ?? "").trim(),
+      mode: String(record.payload?.mode || "").trim().toLowerCase() || (record.payload?.holeIndex != null ? "hole" : "bulk"),
+      holeIndex: record.payload?.holeIndex == null ? null : Number(record.payload.holeIndex),
+      targetIds: submissionTargetIds(record.payload),
+      projection: matchPlay ? "pending_refetch" : "projected",
+    })),
+  };
   return nextJson;
 }

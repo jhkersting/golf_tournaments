@@ -2313,6 +2313,65 @@ function matchPlayEntryNineHoleLabel(round, derivedRound) {
     : "Front nine";
 }
 
+function createEnterScoreQueueSync({ tid, code, refreshTournamentJson, renderSyncStatus }) {
+  let pendingSyncPromise = null;
+  return async function syncPendingScores({ quiet = false } = {}) {
+    if (pendingSyncPromise) return pendingSyncPromise;
+    pendingSyncPromise = (async () => {
+      const summary = await getPendingScoreSummary({ tid, code });
+      if (!summary.pendingCount || !navigator.onLine) {
+        await renderSyncStatus();
+        return summary;
+      }
+      if (!quiet) {
+        await renderSyncStatus(`Syncing ${summary.pendingCount} queued score update${summary.pendingCount === 1 ? "" : "s"}…`);
+      }
+      const result = await flushPendingScoreSubmissions({
+        tid,
+        code,
+        sendScore: (payload) =>
+          api(`/tournaments/${encodeURIComponent(tid)}/scores`, {
+            method: "POST",
+            body: payload,
+          }),
+      });
+      await refreshTournamentJson({ quietSync: true });
+      await renderSyncStatus();
+      return result;
+    })();
+    try {
+      return await pendingSyncPromise;
+    } finally {
+      pendingSyncPromise = null;
+    }
+  };
+}
+
+let enterScoreQueueListenersRegistered = false;
+function registerEnterScoreQueueListeners({ renderSyncStatus, syncPendingScores, periodicSync = false }) {
+  if (enterScoreQueueListenersRegistered) return;
+  enterScoreQueueListenersRegistered = true;
+  const periodicSyncTimer = periodicSync
+    ? setInterval(() => {
+      void syncPendingScores({ quiet: true });
+    }, 30_000)
+    : null;
+  window.addEventListener("online", () => {
+    void (async () => {
+      await renderSyncStatus();
+      await syncPendingScores({ quiet: true });
+    })();
+  });
+  window.addEventListener("offline", () => {
+    void renderSyncStatus();
+  });
+  window.addEventListener("pagehide", () => {
+    if (periodicSyncTimer != null) clearInterval(periodicSyncTimer);
+    stopEnterLocationTracking({ clearLocation: false });
+  });
+  void syncPendingScores({ quiet: true });
+}
+
 async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
   if (ticker) ticker.style.display = "none";
   if (pageBulkToggleButton) pageBulkToggleButton.hidden = true;
@@ -2333,13 +2392,25 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
   teamLine.textContent = `${enter?.team?.teamName || teams[myTeamId]?.teamName || myTeamId} · ${myStanding?.points || 0} points · ${tjson?.matchPlay?.winTarget || 0} needed to win`;
   const note = document.createElement("div");
   note.className = "small";
-  note.textContent = "Enter your own score in singles/best ball. Either partner may enter the shared side score in alternate shot or scramble.";
+  note.textContent = "Enter scores for both sides of your match. Singles and best ball use one scorecard per player; alternate shot and scramble use one shared scorecard per team.";
   summary.append(title, teamLine, note);
   forms.appendChild(summary);
 
   const savedRounds = Array.isArray(enter?.saved) ? enter.saved : [];
   const configRounds = Array.isArray(tjson?.tournament?.rounds) ? tjson.tournament.rounds : [];
   const derivedRounds = Array.isArray(tjson?.matchPlay?.rounds) ? tjson.matchPlay.rounds : [];
+  const usedAccessibleLabels = new Set();
+  const uniqueAccessibleLabel = (base) => {
+    const root = String(base || "Score").trim() || "Score";
+    let label = root;
+    let suffix = 2;
+    while (usedAccessibleLabels.has(label)) {
+      label = `${root} (${suffix})`;
+      suffix += 1;
+    }
+    usedAccessibleLabels.add(label);
+    return label;
+  };
 
   for (let roundIndex = 0; roundIndex < configRounds.length; roundIndex++) {
     const round = configRounds[roundIndex] || {};
@@ -2389,73 +2460,151 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
     syncStatusText();
 
     const activeHoleIndices = matchPlayEntryHoleIndices(round, derivedRound);
-    const saved = Array.isArray(savedRounds[roundIndex]?.gross)
-      ? savedRounds[roundIndex].gross.slice(0, 18)
-      : Array(18).fill(null);
-    while (saved.length < 18) saved.push(null);
-    const grid = document.createElement("div");
-    grid.className = "match-play-entry-grid";
-    const inputs = [];
-    for (const holeIndex of activeHoleIndices) {
-      const label = document.createElement("label");
-      label.className = "match-play-entry-hole";
-      const number = document.createElement("span");
-      number.textContent = `Hole ${holeIndex + 1}`;
-      const input = document.createElement("input");
-      input.type = "number";
-      input.inputMode = "numeric";
-      input.min = "1";
-      input.max = "20";
-      input.step = "1";
-      input.value = saved[holeIndex] == null ? "" : String(saved[holeIndex]);
-      input.setAttribute("aria-label", `Hole ${holeIndex + 1} score`);
-      label.append(number, input);
-      grid.appendChild(label);
-      inputs.push({ holeIndex, input });
+    const savedRound = savedRounds[roundIndex] || {};
+    const savedEntries = new Map(
+      (Array.isArray(savedRound.matchEntries) ? savedRound.matchEntries : [])
+        .map((entry) => [String(entry?.targetId || ""), entry])
+        .filter(([targetId]) => targetId)
+    );
+    const sharedSideFormat = ["alternate_shot", "scramble"].includes(String(round.format || ""));
+    const orderedSides = [actorSide, opponentSide].filter(Boolean);
+    const targets = orderedSides.flatMap((side) => {
+      const teamId = String(side?.teamId || "");
+      const teamName = teams[teamId]?.teamName || teamId || "Team";
+      const relation = side === actorSide ? "Your team" : "Opponent";
+      if (sharedSideFormat) {
+        const playerNames = (side?.playerIds || []).map((playerId) => players[playerId]?.name || playerId).join(" + ");
+        return [{
+          targetId: teamId,
+          targetType: "match_side",
+          teamId,
+          label: `${teamName} team score`,
+          detail: `${relation}${playerNames ? ` · ${playerNames}` : ""}`
+        }];
+      }
+      return (side?.playerIds || []).map((playerId) => ({
+        targetId: String(playerId),
+        targetType: "player",
+        teamId,
+        label: players[playerId]?.name || playerId,
+        detail: `${teamName} · ${relation}`
+      }));
+    }).filter((target) => target.targetId);
+    const inputGroups = [];
+    for (const target of targets) {
+      const savedEntry = savedEntries.get(target.targetId);
+      const legacyTargetId = sharedSideFormat
+        ? String(assignment.teamId || myTeamId || savedRound.teamId || "")
+        : myId;
+      const rawSaved = Array.isArray(savedEntry?.gross)
+        ? savedEntry.gross
+        : target.targetId === legacyTargetId && Array.isArray(savedRound.gross)
+          ? savedRound.gross
+          : [];
+      const saved = rawSaved.slice(0, 18);
+      while (saved.length < 18) saved.push(null);
+
+      const scorecard = document.createElement("section");
+      const scorecardTitle = document.createElement("h3");
+      scorecardTitle.style.margin = "4px 0 0";
+      scorecardTitle.textContent = target.label;
+      const scorecardDetail = document.createElement("div");
+      scorecardDetail.className = "small";
+      scorecardDetail.textContent = target.detail;
+      const grid = document.createElement("div");
+      grid.className = "match-play-entry-grid";
+      const inputs = [];
+      for (const holeIndex of activeHoleIndices) {
+        const label = document.createElement("label");
+        label.className = "match-play-entry-hole";
+        const number = document.createElement("span");
+        number.textContent = `Hole ${holeIndex + 1}`;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.inputMode = "numeric";
+        input.min = "1";
+        input.max = "20";
+        input.step = "1";
+        input.value = saved[holeIndex] == null ? "" : String(saved[holeIndex]);
+        input.setAttribute(
+          "aria-label",
+          uniqueAccessibleLabel(`${round.name || `Round ${roundIndex + 1}`}, ${target.detail}, ${target.label}, Hole ${holeIndex + 1} score`)
+        );
+        label.append(number, input);
+        grid.appendChild(label);
+        inputs.push({ holeIndex, input });
+      }
+      scorecard.append(scorecardTitle, scorecardDetail, grid);
+      card.appendChild(scorecard);
+      inputGroups.push({ ...target, inputs });
     }
-    card.appendChild(grid);
     const actions = document.createElement("div");
     actions.className = "actions";
     actions.style.marginTop = "12px";
     const save = document.createElement("button");
     save.type = "button";
-    save.textContent = "Save round scores";
+    save.textContent = "Save all match scores";
     const saveStatus = document.createElement("span");
     saveStatus.className = "small";
+    saveStatus.setAttribute("role", "status");
+    saveStatus.setAttribute("aria-live", "polite");
     actions.append(save, saveStatus);
     card.appendChild(actions);
 
+    let overwritePending = false;
+    for (const group of inputGroups) {
+      for (const { input } of group.inputs) {
+        input.addEventListener("input", () => {
+          if (!overwritePending) return;
+          overwritePending = false;
+          save.textContent = "Save all match scores";
+          saveStatus.textContent = "Scores changed; save again to check for conflicts.";
+        });
+      }
+    }
+
     save.addEventListener("click", async () => {
-      const holes = Array(18).fill(null);
-      for (const { holeIndex, input } of inputs) {
-        const raw = String(input.value || "").trim();
-        if (!raw) continue;
-        const value = Number(raw);
-        if (!Number.isInteger(value) || value < 1 || value > 20) {
-          saveStatus.textContent = `Hole ${holeIndex + 1} must be 1–20 or blank.`;
-          return;
+      const entries = [];
+      for (const group of inputGroups) {
+        const holes = Array(18).fill(null);
+        for (const { holeIndex, input } of group.inputs) {
+          const raw = String(input.value || "").trim();
+          if (!raw) continue;
+          const value = Number(raw);
+          if (!Number.isInteger(value) || value < 1 || value > 20) {
+            saveStatus.textContent = `${group.label}, Hole ${holeIndex + 1} must be 1–20 or blank.`;
+            return;
+          }
+          holes[holeIndex] = value;
         }
-        holes[holeIndex] = value;
+        entries.push({ targetId: group.targetId, holes });
       }
       const payload = {
         code,
         roundIndex,
         matchId: assignment.matchId,
         mode: "bulk",
-        entries: [{
-          targetId: ["alternate_shot", "scramble"].includes(String(round.format || ""))
-            ? assignment.teamId
-            : myId,
-          holes
-        }],
-        override: true
+        entries,
+        override: false
       };
+      const overwriteRequested = overwritePending;
+      if (overwriteRequested) payload.override = true;
       save.disabled = true;
-      saveStatus.textContent = "Saving…";
+      saveStatus.textContent = overwriteRequested ? "Overwriting…" : "Saving…";
       try {
         await api(`/tournaments/${encodeURIComponent(tid)}/scores`, { method: "POST", body: payload });
         await clearPendingScoreSubmissionsMatching({ tid, code, payload });
-        savedRounds[roundIndex] = { ...(savedRounds[roundIndex] || {}), gross: holes };
+        overwritePending = false;
+        save.textContent = "Save all match scores";
+        savedRounds[roundIndex] = {
+          ...(savedRounds[roundIndex] || {}),
+          matchEntries: inputGroups.map((group, index) => ({
+            targetId: group.targetId,
+            targetType: group.targetType,
+            teamId: group.teamId,
+            gross: entries[index].holes
+          }))
+        };
         const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
         derivedMatch = fresh?.matchPlay?.rounds?.[roundIndex]?.matches?.find((match) => match.matchId === assignment.matchId) || derivedMatch;
         syncStatusText();
@@ -2463,8 +2612,20 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code }) {
       } catch (error) {
         if (isNetworkFailure(error)) {
           await enqueuePendingScoreSubmission({ tid, code, payload });
-          saveStatus.textContent = "Saved on this device and queued to sync.";
+          saveStatus.textContent = overwriteRequested
+            ? "Overwrite saved on this device and queued to sync."
+            : "Saved on this device and queued to sync.";
+        } else if (Number(error?.status) === 409) {
+          overwritePending = true;
+          save.textContent = "Overwrite existing scores";
+          const conflictCount = Array.isArray(error?.data?.conflicts) ? error.data.conflicts.length : 0;
+          const conflictText = conflictCount
+            ? `${conflictCount} existing score${conflictCount === 1 ? "" : "s"} conflict${conflictCount === 1 ? "" : "s"}`
+            : "Existing scores conflict";
+          saveStatus.textContent = `${conflictText}. Review the fields, then choose “Overwrite existing scores” to retry.`;
         } else {
+          overwritePending = false;
+          save.textContent = "Save all match scores";
           saveStatus.textContent = error?.message || String(error);
         }
       } finally {
@@ -2573,6 +2734,25 @@ async function main() {
   $('body').show();
 
   if (isMatchPlayPayload(tjson)) {
+    const refreshMatchPlayTournamentJson = async () => {
+      const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
+      const nextJson = await applyPendingScoreSubmissionsToTournament(fresh, { tid, code });
+      for (const key of Object.keys(tjson)) delete tjson[key];
+      Object.assign(tjson, nextJson);
+      return tjson;
+    };
+    const syncMatchPlayStatus = async () => {};
+    const syncPendingScores = createEnterScoreQueueSync({
+      tid,
+      code,
+      refreshTournamentJson: refreshMatchPlayTournamentJson,
+      renderSyncStatus: syncMatchPlayStatus,
+    });
+    registerEnterScoreQueueListeners({
+      renderSyncStatus: syncMatchPlayStatus,
+      syncPendingScores,
+      periodicSync: true,
+    });
     await renderMatchPlayEntry({ enter, tjson, tid, code });
     return;
   }
@@ -2673,7 +2853,6 @@ async function main() {
   let tickerRoundIndex = defaultOpenRound;
   let activeRoundPaneIndex = defaultOpenRound;
   let refreshTournamentPromise = null;
-  let pendingSyncPromise = null;
   const syncStatusEl = document.getElementById("entry_sync_status");
   const roundTabs = el("div", { class: "enter-tabs enter-round-tabs" });
   const roundPanesHost = el("div", { class: "enter-round-panes enter-score-page-shell" });
@@ -2751,37 +2930,6 @@ async function main() {
 
     syncStatusEl.textContent = text;
     syncStatusEl.style.color = color;
-  }
-
-  async function syncPendingScores({ quiet = false } = {}) {
-    if (pendingSyncPromise) return pendingSyncPromise;
-    pendingSyncPromise = (async () => {
-      const summary = await getPendingScoreSummary({ tid, code });
-      if (!summary.pendingCount || !navigator.onLine) {
-        await renderSyncStatus();
-        return summary;
-      }
-      if (!quiet) {
-        await renderSyncStatus(`Syncing ${summary.pendingCount} queued score update${summary.pendingCount === 1 ? "" : "s"}…`);
-      }
-      const result = await flushPendingScoreSubmissions({
-        tid,
-        code,
-        sendScore: (payload) =>
-          api(`/tournaments/${encodeURIComponent(tid)}/scores`, {
-            method: "POST",
-            body: payload,
-          }),
-      });
-      await refreshTournamentJson({ quietSync: true });
-      await renderSyncStatus();
-      return result;
-    })();
-    try {
-      return await pendingSyncPromise;
-    } finally {
-      pendingSyncPromise = null;
-    }
   }
 
   function renderTeamCurrentScore() {
@@ -2896,6 +3044,13 @@ async function main() {
       refreshTournamentPromise = null;
     }
   }
+
+  const syncPendingScores = createEnterScoreQueueSync({
+    tid,
+    code,
+    refreshTournamentJson,
+    renderSyncStatus,
+  });
 
   for (let r = 0; r < rounds.length; r++) {
     const round = rounds[r] || {};
@@ -3851,20 +4006,7 @@ async function main() {
   }
 
   ensureChatPanel();
-
-  window.addEventListener("online", () => {
-    void (async () => {
-      await renderSyncStatus();
-      await syncPendingScores({ quiet: true });
-    })();
-  });
-  window.addEventListener("offline", () => {
-    void renderSyncStatus();
-  });
-  window.addEventListener("pagehide", () => {
-    stopEnterLocationTracking({ clearLocation: false });
-  });
-  void syncPendingScores({ quiet: true });
+  registerEnterScoreQueueListeners({ renderSyncStatus, syncPendingScores });
 }
 
 main().catch((e) => {

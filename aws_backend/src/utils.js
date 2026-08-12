@@ -1398,6 +1398,60 @@ export function materializePublicFromState(state){
   };
 }
 
+function matchPlaySavedHoles(raw) {
+  return Array.from({ length: 18 }, (_, index) => {
+    const value = Array.isArray(raw) ? raw[index] : null;
+    return value == null || value === 0 ? null : value;
+  });
+}
+
+export function materializeMatchPlaySavedRound(round, roundIndex, actorPlayerId, scores = { rounds: [] }) {
+  const scheduledMatch = (Array.isArray(round?.matches) ? round.matches : []).find((match) =>
+    match.teamA?.playerIds?.includes(actorPlayerId) || match.teamB?.playerIds?.includes(actorPlayerId)
+  );
+  const actorSide = scheduledMatch?.teamA?.playerIds?.includes(actorPlayerId)
+    ? scheduledMatch.teamA
+    : scheduledMatch?.teamB?.playerIds?.includes(actorPlayerId) ? scheduledMatch.teamB : null;
+  const sharedSideFormat = scheduledMatch && ["alternate_shot", "scramble"].includes(round?.format);
+  const matchSides = scheduledMatch
+    ? [scheduledMatch.teamA, scheduledMatch.teamB].filter((side) => side?.teamId)
+    : [];
+  const target = sharedSideFormat
+    ? "match_side"
+    : "player";
+  const roundScores = scores?.rounds?.[roundIndex] || {};
+  const actorGross = target === "match_side"
+    ? roundScores.matches?.[scheduledMatch?.matchId]?.sides?.[actorSide?.teamId]?.holes
+    : roundScores.players?.[actorPlayerId]?.holes;
+
+  const matchEntries = !scheduledMatch
+    ? []
+    : sharedSideFormat
+      ? matchSides.map((side) => ({
+        targetId: side.teamId,
+        targetType: "match_side",
+        teamId: side.teamId,
+        gross: matchPlaySavedHoles(roundScores.matches?.[scheduledMatch.matchId]?.sides?.[side.teamId]?.holes)
+      }))
+      : matchSides.flatMap((side) =>
+        (Array.isArray(side.playerIds) ? side.playerIds : []).filter(Boolean).map((playerId) => ({
+          targetId: playerId,
+          targetType: "player",
+          teamId: side.teamId,
+          gross: matchPlaySavedHoles(roundScores.players?.[playerId]?.holes)
+        }))
+      );
+
+  return {
+    roundIndex,
+    target,
+    matchId: scheduledMatch?.matchId || null,
+    teamId: actorSide?.teamId || null,
+    gross: matchPlaySavedHoles(actorGross),
+    matchEntries
+  };
+}
+
 export async function writePublicObjectsFromState(state){
   const pub = process.env.PUBLIC_BUCKET;
   const tid = state.tournament.tournamentId;
@@ -1433,28 +1487,7 @@ export async function writePublicObjectsFromState(state){
 
     const saved = rounds.map((round, rIdx) => {
       if (isTeamMatchPlay(state)) {
-        const scheduledMatch = round.matches?.find((match) =>
-          match.teamA?.playerIds?.includes(pid) || match.teamB?.playerIds?.includes(pid)
-        );
-        const sideTeamId = scheduledMatch?.teamA?.playerIds?.includes(pid)
-          ? scheduledMatch.teamA.teamId
-          : scheduledMatch?.teamB?.playerIds?.includes(pid) ? scheduledMatch.teamB.teamId : null;
-        const sideScores = sideTeamId && scheduledMatch
-          ? scores.rounds?.[rIdx]?.matches?.[scheduledMatch.matchId]?.sides?.[sideTeamId]?.holes
-          : null;
-        const target = scheduledMatch && ["alternate_shot", "scramble"].includes(round.format)
-          ? "match_side"
-          : "player";
-        const gross = target === "match_side"
-          ? (sideScores || Array(18).fill(null))
-          : (scores.rounds?.[rIdx]?.players?.[pid]?.holes || Array(18).fill(null));
-        return {
-          roundIndex: rIdx,
-          target,
-          matchId: scheduledMatch?.matchId || null,
-          teamId: sideTeamId,
-          gross: gross.map(v => (v === 0 ? null : v))
-        };
+        return materializeMatchPlaySavedRound(round, rIdx, pid, scores);
       }
       const isScramble = round.format === "scramble";
       const isTwoMan = isTwoManFormat(round?.format);
