@@ -2485,60 +2485,6 @@ function matchPlayEntryScoreEvents(previousTournament, nextTournament) {
   return events;
 }
 
-function renderMatchPlayEntryTicker(tjson, teams) {
-  if (!ticker || !tickerTrack || !tickerTitle) return;
-  const matchPlay = tjson?.matchPlay || {};
-  const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
-  const rounds = Array.isArray(matchPlay.rounds) ? matchPlay.rounds : [];
-  const teamItems = standings.slice(0, 2).map((standing) => {
-    const teamId = String(standing?.teamId || "");
-    const color = matchPlayEntryTeamColor(teamId, teams);
-    const record = `${Number(standing?.matchesWon || 0)}-${Number(standing?.matchesHalved || 0)}-${Number(standing?.matchesLost || 0)}`;
-    return el(
-      "span",
-      { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
-      `${matchPlayEntryTeamName(teamId, teams)} ${matchPlayEntryPoints(standing?.points)} pts (${record})`
-    );
-  });
-  const matchItems = [];
-  for (const round of rounds) {
-    for (const match of round?.matches || []) {
-      const teamAName = matchPlayEntryTeamName(match.teamA?.teamId, teams);
-      const teamBName = matchPlayEntryTeamName(match.teamB?.teamId, teams);
-      const status = matchPlayEntryMatchResult(match);
-      const color = matchPlayEntryTeamColor(match.winnerTeamId || match.leadTeamId || match.teamA?.teamId, teams);
-      matchItems.push(el(
-        "span",
-        { class: "enter-ticker-item team-accent", style: `--team-accent:${color};` },
-        `${teamAName} ${status} ${teamBName}`
-      ));
-    }
-  }
-  const sections = [];
-  if (teamItems.length) sections.push({ label: "Team points", items: teamItems });
-  if (matchItems.length) sections.push({ label: "Match play", items: matchItems });
-  if (!sections.length) {
-    stopTickerRotation();
-    ticker.style.display = "";
-    tickerTitle.textContent = "Match play";
-    tickerTrack.innerHTML = "";
-    tickerTrack.appendChild(el("div", { class: "enter-ticker-run" }, "No match scores yet"));
-    return;
-  }
-  ticker.style.display = "";
-  tickerSections = sections;
-  if (!tickerLoopRunning) {
-    tickerLoopRunning = true;
-    tickerSectionIndex = 0;
-    tickerCurrentX = 0;
-    setTickerSection(tickerSections[tickerSectionIndex], false);
-    tickerRafId = requestAnimationFrame(runTickerFrame);
-    return;
-  }
-  if (tickerSectionIndex >= tickerSections.length) tickerSectionIndex = 0;
-  setTickerSection(tickerSections[tickerSectionIndex], true);
-}
-
 function createEnterScoreQueueSync({ tid, code, refreshTournamentJson, renderSyncStatus }) {
   let pendingSyncPromise = null;
   return async function syncPendingScores({ quiet = false } = {}) {
@@ -2606,7 +2552,8 @@ async function renderMatchPlayEntry({
   refreshTournamentJson = null,
   getMatchPlayOdds = () => null
 }) {
-  if (ticker) ticker.style.display = "";
+  stopTickerRotation();
+  if (ticker) ticker.style.display = "none";
   if (pageBulkToggleButton) pageBulkToggleButton.hidden = true;
   forms.innerHTML = "";
   const players = Object.fromEntries((tjson?.players || []).map((player) => [player.playerId, player]));
@@ -2665,8 +2612,6 @@ async function renderMatchPlayEntry({
   note.textContent = "Choose the current hole, then enter scores for both sides of your match. Team colors identify each player or shared team score.";
   summary.append(title, teamLine, teamOverview, eventTieOdds, note);
   forms.appendChild(summary);
-  if (ticker) forms.appendChild(ticker);
-  renderMatchPlayEntryTicker(tjson, teams);
 
   const savedRounds = Array.isArray(enter?.saved) ? enter.saved : [];
   const configRounds = Array.isArray(tjson?.tournament?.rounds) ? tjson.tournament.rounds : [];
@@ -3157,7 +3102,6 @@ async function renderMatchPlayEntry({
   return {
     refresh() {
       renderTeamOverview();
-      renderMatchPlayEntryTicker(tjson, teams);
       for (const view of matchViews) view.refresh();
       syncRoundVisibility();
     }
