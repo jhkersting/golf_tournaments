@@ -229,14 +229,20 @@ function syncOddsValueButtons() {
 }
 
 function setBrandDotColor(color) {
+  setBrandDotColors(color, color);
+}
+
+function setBrandDotColors(fillColor, outlineColor) {
   if (!brandDot) return;
-  if (!color) {
+  if (!fillColor && !outlineColor) {
     brandDot.style.removeProperty("background");
     brandDot.style.removeProperty("box-shadow");
     return;
   }
-  brandDot.style.background = color;
-  brandDot.style.boxShadow = `0 0 0 6px color-mix(in srgb, ${color} 24%, transparent)`;
+  if (fillColor) brandDot.style.background = fillColor;
+  else brandDot.style.removeProperty("background");
+  if (outlineColor) brandDot.style.boxShadow = `0 0 0 6px color-mix(in srgb, ${outlineColor} 24%, transparent)`;
+  else brandDot.style.removeProperty("box-shadow");
 }
 
 function rebuildTeamColors() {
@@ -4632,6 +4638,19 @@ function renderMatchPlayScoreboard() {
   const colors = raceStandings.map((standing) => (
     teams[standing.teamId]?.color || standing.teamColor || colorForTeam(standing.teamId, standing.teamName)
   ));
+  const colorForMatchPlayTeam = (teamId) => {
+    const id = String(teamId || "");
+    const standingIndex = raceStandings.findIndex((standing) => String(standing?.teamId || "") === id);
+    return standingIndex >= 0 ? colors[standingIndex] : teams[id]?.color || colorForTeam(id);
+  };
+  const actualLeader = raceStandings[0];
+  const projectedLeader = (eventOdds?.teams || [])
+    .filter((row) => row?.teamId)
+    .sort((a, b) => Number(b?.winProbability || 0) - Number(a?.winProbability || 0))[0];
+  setBrandDotColors(
+    colorForMatchPlayTeam(actualLeader?.teamId),
+    colorForMatchPlayTeam(projectedLeader?.teamId)
+  );
 
   raceStandings.forEach((standing, index) => {
     const card = document.createElement("article");
