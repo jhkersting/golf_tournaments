@@ -576,6 +576,12 @@ button.draft-player small {
   display: grid;
   gap: 12px;
 }
+.match-play-entry-card[hidden] {
+  display: none;
+}
+.match-play-entry-rounds {
+  display: grid;
+}
 .match-play-entry-overview {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -625,6 +631,14 @@ button.draft-player small {
   font-size: .66rem;
   white-space: nowrap;
 }
+.match-play-entry-event-tie {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
 .match-play-entry-head {
   display: flex;
   align-items: flex-start;
@@ -637,6 +651,28 @@ button.draft-player small {
   border-radius: 999px;
   background: var(--link-bg);
   font-size: .82rem;
+}
+.match-play-entry-match-odds {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  font-weight: 700;
+}
+.match-play-entry-match-odds-own {
+  color: var(--own-team-accent, var(--text));
+}
+.match-play-entry-match-odds-halve {
+  text-align: center;
+}
+.match-play-entry-match-odds-opponent {
+  color: var(--opponent-team-accent, var(--text));
+  text-align: right;
 }
 .match-play-hole-editor {
   display: grid;

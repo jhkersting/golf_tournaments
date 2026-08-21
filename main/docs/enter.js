@@ -2344,6 +2344,84 @@ function matchPlayEntryPoints(value) {
   return Number.isInteger(points) ? String(points) : String(Number(points.toFixed(3)));
 }
 
+function matchPlayEntryPercent(value) {
+  const probability = Number(value);
+  if (!Number.isFinite(probability)) return "—";
+  if (probability <= 0) return "0%";
+  if (probability >= 100) return "100%";
+  if (probability < 1) return "<1%";
+  if (probability > 99) return ">99%";
+  return `${Math.round(probability)}%`;
+}
+
+function expandMatchPlayEntryOddsPayload(oddsJson) {
+  const direct = oddsJson?.score_data?.live_odds?.match_play
+    || oddsJson?.live_odds?.match_play
+    || oddsJson?.match_play;
+  if (direct) return direct;
+
+  const compact = Array.isArray(oddsJson?.o?.m) ? oddsJson.o.m : null;
+  const teamIds = Array.isArray(compact?.[0])
+    ? compact[0].map((teamId) => String(teamId || ""))
+    : [];
+  if (teamIds.length !== 2) return null;
+
+  const event = Array.isArray(compact?.[1]) ? compact[1] : [];
+  const rounds = Array.isArray(compact?.[2]) ? compact[2] : [];
+  return {
+    teamIds,
+    event: {
+      teams: [
+        { teamId: teamIds[0], winProbability: Number(event?.[0] || 0) },
+        { teamId: teamIds[1], winProbability: Number(event?.[2] || 0) }
+      ],
+      tieProbability: Number(event?.[1] || 0)
+    },
+    rounds: rounds.map((matches, roundIndex) => ({
+      roundIndex,
+      matches: (matches || []).map((match) => ({
+        matchId: String(match?.[0] || ""),
+        teamAId: String(match?.[1] || ""),
+        teamBId: String(match?.[2] || ""),
+        teamAWinProbability: Number(match?.[3] || 0),
+        halveProbability: Number(match?.[4] || 0),
+        teamBWinProbability: Number(match?.[5] || 0)
+      }))
+    }))
+  };
+}
+
+async function loadMatchPlayEntryOdds(tid) {
+  const oddsJson = await staticJson(
+    `/tournaments/${encodeURIComponent(tid)}.live_odds.json?v=${Date.now()}`,
+    { cacheKey: `tourn-odds:${tid}` }
+  );
+  return expandMatchPlayEntryOddsPayload(oddsJson);
+}
+
+function matchPlayEntryMatchOdds(matchPlayOdds, roundIndex, matchId) {
+  const round = matchPlayOdds?.rounds?.find((item) => Number(item?.roundIndex) === Number(roundIndex));
+  return round?.matches?.find((item) => String(item?.matchId || "") === String(matchId || "")) || null;
+}
+
+function matchPlayEntryActiveRoundIndex(tjson, enter) {
+  const rounds = Array.isArray(tjson?.tournament?.rounds) ? tjson.tournament.rounds : [];
+  const derivedRounds = Array.isArray(tjson?.matchPlay?.rounds) ? tjson.matchPlay.rounds : [];
+  const assignments = Array.isArray(enter?.player?.matchAssignments) ? enter.player.matchAssignments : [];
+  const assignedRounds = rounds.map((_, roundIndex) => {
+    const matchId = assignments[roundIndex]?.matchId;
+    if (!matchId) return null;
+    const match = derivedRounds[roundIndex]?.matches?.find((item) => item?.matchId === matchId) || null;
+    return { roundIndex, status: String(match?.status || "not_started").toLowerCase() };
+  }).filter(Boolean);
+
+  const liveRound = assignedRounds.find((round) => round.status === "live");
+  if (liveRound) return liveRound.roundIndex;
+  const nextRound = assignedRounds.find((round) => !["final", "closed"].includes(round.status));
+  if (nextRound) return nextRound.roundIndex;
+  return assignedRounds.at(-1)?.roundIndex ?? (rounds.length ? 0 : -1);
+}
+
 function matchPlayEntryMatchResult(match) {
   if (!match) return "Not started";
   if (match.result === "halved") return "Halved";
@@ -2520,7 +2598,14 @@ function registerEnterScoreQueueListeners({ renderSyncStatus, syncPendingScores,
   void syncPendingScores({ quiet: true });
 }
 
-async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournamentJson = null }) {
+async function renderMatchPlayEntry({
+  enter,
+  tjson,
+  tid,
+  code,
+  refreshTournamentJson = null,
+  getMatchPlayOdds = () => null
+}) {
   if (ticker) ticker.style.display = "";
   if (pageBulkToggleButton) pageBulkToggleButton.hidden = true;
   forms.innerHTML = "";
@@ -2538,9 +2623,15 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournament
   const teamLine = document.createElement("div");
   const teamOverview = document.createElement("div");
   teamOverview.className = "match-play-entry-overview";
+  const eventTieOdds = document.createElement("div");
+  eventTieOdds.className = "match-play-entry-event-tie small";
   const renderTeamOverview = () => {
     const matchPlay = tjson?.matchPlay || {};
     const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
+    const eventOdds = getMatchPlayOdds()?.event || null;
+    const eventOddsByTeam = new Map(
+      (eventOdds?.teams || []).map((row) => [String(row?.teamId || ""), row])
+    );
     const myStanding = standings.find((row) => row.teamId === myTeamId);
     teamLine.textContent = `${enter?.team?.teamName || teams[myTeamId]?.teamName || myTeamId} · ${matchPlayEntryPoints(myStanding?.points)} points · ${matchPlayEntryPoints(matchPlay.winTarget)} needed to win`;
     teamOverview.innerHTML = "";
@@ -2555,16 +2646,24 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournament
       points.textContent = matchPlayEntryPoints(standing?.points);
       const record = document.createElement("span");
       record.className = "small";
-      record.textContent = `${Number(standing?.matchesWon || 0)} won · ${Number(standing?.matchesHalved || 0)} halved · ${Number(standing?.matchesLost || 0)} lost`;
+      const winProbability = eventOddsByTeam.get(teamId)?.winProbability;
+      const winOddsLabel = Number.isFinite(Number(winProbability))
+        ? ` · ${matchPlayEntryPercent(winProbability)} win`
+        : "";
+      record.textContent = `${Number(standing?.matchesWon || 0)} won · ${Number(standing?.matchesHalved || 0)} halved · ${Number(standing?.matchesLost || 0)} lost${winOddsLabel}`;
       team.append(name, points, record);
       teamOverview.appendChild(team);
     }
+    eventTieOdds.textContent = Number.isFinite(Number(eventOdds?.tieProbability))
+      ? `${matchPlayEntryPercent(eventOdds.tieProbability)} event tie`
+      : "";
+    eventTieOdds.hidden = !eventTieOdds.textContent;
   };
   renderTeamOverview();
   const note = document.createElement("div");
   note.className = "small";
   note.textContent = "Choose the current hole, then enter scores for both sides of your match. Team colors identify each player or shared team score.";
-  summary.append(title, teamLine, teamOverview, note);
+  summary.append(title, teamLine, teamOverview, eventTieOdds, note);
   forms.appendChild(summary);
   if (ticker) forms.appendChild(ticker);
   renderMatchPlayEntryTicker(tjson, teams);
@@ -2573,6 +2672,11 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournament
   const configRounds = Array.isArray(tjson?.tournament?.rounds) ? tjson.tournament.rounds : [];
   const derivedRounds = Array.isArray(tjson?.matchPlay?.rounds) ? tjson.matchPlay.rounds : [];
   const matchViews = [];
+  const roundCards = [];
+  const roundList = document.createElement("div");
+  roundList.id = "match_play_entry_rounds";
+  roundList.className = "match-play-entry-rounds";
+  forms.appendChild(roundList);
   const usedAccessibleLabels = new Set();
   const uniqueAccessibleLabel = (base) => {
     const root = String(base || "Score").trim() || "Score";
@@ -2592,6 +2696,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournament
     const assignment = enter?.player?.matchAssignments?.[roundIndex] || null;
     const card = document.createElement("section");
     card.className = "card match-play-entry-card";
+    roundCards.push({ roundIndex, card });
     const heading = document.createElement("div");
     heading.className = "match-play-entry-head";
     const headingText = document.createElement("div");
@@ -2613,7 +2718,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournament
       empty.className = "small";
       empty.textContent = "You are not assigned to a match in this round.";
       card.appendChild(empty);
-      forms.appendChild(card);
+      roundList.appendChild(card);
       continue;
     }
 
@@ -2626,6 +2731,34 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournament
     opponent.className = "small";
     opponent.textContent = `vs. ${teams[opponentSide?.teamId]?.teamName || opponentSide?.teamId || "Opponent"}${opponentNames ? ` — ${opponentNames}` : ""}`;
     card.appendChild(opponent);
+    const matchOdds = document.createElement("div");
+    matchOdds.className = "match-play-entry-match-odds";
+    const ownWinOdds = document.createElement("span");
+    ownWinOdds.className = "match-play-entry-match-odds-own";
+    const halveOdds = document.createElement("span");
+    halveOdds.className = "match-play-entry-match-odds-halve";
+    const opponentWinOdds = document.createElement("span");
+    opponentWinOdds.className = "match-play-entry-match-odds-opponent";
+    matchOdds.append(ownWinOdds, halveOdds, opponentWinOdds);
+    card.appendChild(matchOdds);
+    const syncOddsText = () => {
+      const odds = matchPlayEntryMatchOdds(getMatchPlayOdds(), roundIndex, assignment.matchId);
+      if (!odds) {
+        matchOdds.hidden = true;
+        return;
+      }
+      const ownTeamId = String(actorSide?.teamId || myTeamId || "");
+      const ownIsTeamA = ownTeamId === String(odds.teamAId || "");
+      const ownProbability = ownIsTeamA ? odds.teamAWinProbability : odds.teamBWinProbability;
+      const opponentProbability = ownIsTeamA ? odds.teamBWinProbability : odds.teamAWinProbability;
+      ownWinOdds.textContent = `Your team ${matchPlayEntryPercent(ownProbability)}`;
+      halveOdds.textContent = `Halve ${matchPlayEntryPercent(odds.halveProbability)}`;
+      opponentWinOdds.textContent = `Opponent ${matchPlayEntryPercent(opponentProbability)}`;
+      matchOdds.style.setProperty("--own-team-accent", matchPlayEntryTeamColor(ownTeamId, teams));
+      matchOdds.style.setProperty("--opponent-team-accent", matchPlayEntryTeamColor(opponentSide?.teamId, teams));
+      matchOdds.hidden = false;
+    };
+    syncOddsText();
     const syncStatusText = () => {
       if (!derivedMatch) { matchStatus.textContent = "Not started"; return; }
       matchStatus.textContent = matchPlayEntryMatchDisplay(derivedMatch, teams);
@@ -2638,6 +2771,7 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournament
         const latest = tjson?.matchPlay?.rounds?.[roundIndex]?.matches?.find((match) => match.matchId === assignment.matchId);
         if (latest) derivedMatch = latest;
         syncStatusText();
+        syncOddsText();
       }
     });
 
@@ -2975,14 +3109,25 @@ async function renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournament
       });
     };
     renderCurrentHoleEditor();
-    forms.appendChild(card);
+    roundList.appendChild(card);
   }
+
+  const syncRoundVisibility = () => {
+    const activeRoundIndex = matchPlayEntryActiveRoundIndex(tjson, enter);
+    for (const { roundIndex, card } of roundCards) {
+      const isActive = roundIndex === activeRoundIndex;
+      card.classList.toggle("is-active-round", isActive);
+      card.hidden = !isActive;
+    }
+  };
+  syncRoundVisibility();
 
   return {
     refresh() {
       renderTeamOverview();
       renderMatchPlayEntryTicker(tjson, teams);
       for (const view of matchViews) view.refresh();
+      syncRoundVisibility();
     }
   };
 }
@@ -3087,9 +3232,25 @@ async function main() {
   if (isMatchPlayPayload(tjson)) {
     let matchPlayEntryView = null;
     let matchPlayRefreshPromise = null;
+    let matchPlayOddsRefreshPromise = null;
+    let matchPlayOdds = null;
+    const refreshMatchPlayOdds = async () => {
+      if (matchPlayOddsRefreshPromise) return matchPlayOddsRefreshPromise;
+      matchPlayOddsRefreshPromise = loadMatchPlayEntryOdds(tid).then((nextOdds) => {
+        if (nextOdds) matchPlayOdds = nextOdds;
+        matchPlayEntryView?.refresh();
+        return matchPlayOdds;
+      }).catch(() => matchPlayOdds);
+      try {
+        return await matchPlayOddsRefreshPromise;
+      } finally {
+        matchPlayOddsRefreshPromise = null;
+      }
+    };
     const refreshMatchPlayTournamentJson = async ({ quietSync = false } = {}) => {
       if (matchPlayRefreshPromise) return matchPlayRefreshPromise;
       matchPlayRefreshPromise = (async () => {
+        void refreshMatchPlayOdds();
         const previousTournament = tjson;
         const fresh = await staticJson(`/tournaments/${encodeURIComponent(tid)}.json?v=${Date.now()}`, { cacheKey: `t:${tid}` });
         const nextJson = await applyPendingScoreSubmissionsToTournament(fresh, { tid, code });
@@ -3122,8 +3283,16 @@ async function main() {
       void refreshMatchPlayTournamentJson({ quietSync: true });
     }, 10_000);
     window.addEventListener("pagehide", () => window.clearInterval(matchPlayRefreshTimer), { once: true });
-    matchPlayEntryView = await renderMatchPlayEntry({ enter, tjson, tid, code, refreshTournamentJson: refreshMatchPlayTournamentJson });
+    matchPlayEntryView = await renderMatchPlayEntry({
+      enter,
+      tjson,
+      tid,
+      code,
+      refreshTournamentJson: refreshMatchPlayTournamentJson,
+      getMatchPlayOdds: () => matchPlayOdds
+    });
     matchPlayEntryView?.refresh();
+    void refreshMatchPlayOdds();
     return;
   }
 
