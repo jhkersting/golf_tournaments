@@ -2607,10 +2607,7 @@ async function renderMatchPlayEntry({
     eventTieOdds.hidden = !eventTieOdds.textContent;
   };
   renderTeamOverview();
-  const note = document.createElement("div");
-  note.className = "small";
-  note.textContent = "Choose the current hole, then enter scores for both sides of your match. Team colors identify each player or shared team score.";
-  summary.append(title, teamLine, teamOverview, eventTieOdds, note);
+  summary.append(title, teamLine, teamOverview, eventTieOdds);
   forms.appendChild(summary);
 
   const savedRounds = Array.isArray(enter?.saved) ? enter.saved : [];
