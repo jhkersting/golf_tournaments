@@ -13,7 +13,7 @@ const PLAYERS = [
   { id: "w-parten", name: "W. Parten", handicap: 19 },
   { id: "b-holley", name: "B. Holley", handicap: 15 },
   { id: "j-collins", name: "J. Collins", handicap: 19 },
-  { id: "p-addington", name: "P. Addington", handicap: 13 },
+  { id: "p-addington", name: "P. Addington", handicap: 19 },
   { id: "j-jones", name: "J. Jones", handicap: 20 },
   { id: "n-burlbaw", name: "N. Burlbaw", handicap: 23 },
   { id: "f-kersting", name: "F. Kersting", handicap: 10 },
