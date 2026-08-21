@@ -121,6 +121,7 @@ let oddsSelectedHoleKey = "";
 let openInlineKey = null;
 let openInlineRow = null;
 let inlineReqToken = 0;
+let openMatchPlayScorecardKey = null;
 let sortState = { key: "score", dir: "asc" };
 const AUTO_REFRESH_MS = 30_000;
 let refreshTimerId = null;
@@ -4596,6 +4597,61 @@ function matchPlayMatchOdds(roundIndex, matchId) {
   return round?.matches?.find((item) => String(item?.matchId || "") === String(matchId || "")) || null;
 }
 
+function matchPlayRoundHoleIndices(round) {
+  if (Number(round?.holes) !== 9) return Array.from({ length: 18 }, (_, index) => index);
+  const start = String(round?.nineHoleSide || "").trim().toLowerCase() === "back" ? 9 : 0;
+  return Array.from({ length: 9 }, (_, index) => start + index);
+}
+
+function buildMatchPlayScorecard(round, match, players, teams) {
+  const holeIndices = matchPlayRoundHoleIndices(round);
+  const pars = getCoursePars(Number(round?.roundIndex));
+  const teamAId = String(match?.teamA?.teamId || "");
+  const teamBId = String(match?.teamB?.teamId || "");
+  const teamAScores = Array.isArray(match?.sideScores?.[teamAId]) ? match.sideScores[teamAId] : [];
+  const teamBScores = Array.isArray(match?.sideScores?.[teamBId]) ? match.sideScores[teamBId] : [];
+  const holeResults = Array.isArray(match?.holeResults) ? match.holeResults : [];
+  const sideLabel = (sideData) => {
+    const names = (sideData?.playerIds || []).map((playerId) => players[playerId]?.name || playerId).filter(Boolean);
+    return names.join(" / ") || teams[sideData?.teamId]?.teamName || sideData?.teamId || "Team";
+  };
+  const playedTotal = (scores) => {
+    const played = holeIndices.map((holeIndex) => Number(scores[holeIndex])).filter((value) => Number.isFinite(value) && value > 0);
+    return played.length ? played.reduce((sum, value) => sum + value, 0) : "";
+  };
+  const scoreCell = (scores, holeIndex, winnerTeamId, teamId) => {
+    const value = Number(scores[holeIndex]);
+    const isPlayed = Number.isFinite(value) && value > 0;
+    const winnerClass = winnerTeamId === teamId ? " is-hole-winner" : "";
+    return `<td class="mono${winnerClass}">${isPlayed ? value : "—"}</td>`;
+  };
+
+  const wrap = document.createElement("div");
+  wrap.className = "match-play-scorecard-wrap";
+  const table = document.createElement("table");
+  table.className = "table match-play-scorecard-table";
+  const headerCells = holeIndices.map((holeIndex) => `<th class="mono">${holeIndex + 1}</th>`).join("");
+  const parCells = holeIndices.map((holeIndex) => `<td class="mono">${Number(pars[holeIndex]) || "—"}</td>`).join("");
+  const teamACells = holeIndices.map((holeIndex) => scoreCell(teamAScores, holeIndex, holeResults[holeIndex], teamAId)).join("");
+  const teamBCells = holeIndices.map((holeIndex) => scoreCell(teamBScores, holeIndex, holeResults[holeIndex], teamBId)).join("");
+  const resultCells = holeIndices.map((holeIndex) => {
+    const result = holeResults[holeIndex];
+    const label = result === "halved" ? "AS" : result === teamAId ? "A" : result === teamBId ? "B" : "—";
+    const resultClass = result === teamAId ? " won-by-a" : result === teamBId ? " won-by-b" : result === "halved" ? " halved" : "";
+    return `<td class="mono match-play-hole-result${resultClass}">${label}</td>`;
+  }).join("");
+  table.innerHTML = `
+    <thead><tr><th class="left">Scorecard</th>${headerCells}<th>Total</th></tr></thead>
+    <tbody>
+      <tr class="match-play-scorecard-team-a"><td class="left"><b>${escapeHtml(sideLabel(match.teamA))}</b></td>${teamACells}<td class="mono"><b>${playedTotal(teamAScores)}</b></td></tr>
+      <tr class="match-play-scorecard-par"><td class="left">Par</td>${parCells}<td class="mono"><b>${holeIndices.reduce((sum, holeIndex) => sum + (Number(pars[holeIndex]) || 0), 0)}</b></td></tr>
+      <tr class="match-play-scorecard-result"><td class="left">Result</td>${resultCells}<td></td></tr>
+      <tr class="match-play-scorecard-team-b"><td class="left"><b>${escapeHtml(sideLabel(match.teamB))}</b></td>${teamBCells}<td class="mono"><b>${playedTotal(teamBScores)}</b></td></tr>
+    </tbody>`;
+  wrap.appendChild(table);
+  return wrap;
+}
+
 function renderMatchPlayScoreboard() {
   const matchPlay = TOURN?.matchPlay || {};
   const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
@@ -4751,6 +4807,14 @@ function renderMatchPlayScoreboard() {
     for (const match of round.matches || []) {
       const card = document.createElement("article");
       card.className = "match-play-match-card";
+      const scorecardKey = `${Number(round.roundIndex)}:${String(match.matchId || "")}`;
+      const scorecardId = `match_play_scorecard_${Number(round.roundIndex)}_${String(match.matchId || "match").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-controls", scorecardId);
+      card.setAttribute("aria-expanded", openMatchPlayScorecardKey === scorecardKey ? "true" : "false");
+      card.setAttribute("aria-label", "View match scorecard");
+      card.title = "View match scorecard";
       const teamAColor = teams[match.teamA?.teamId]?.color || colorForTeam(match.teamA?.teamId);
       const teamBColor = teams[match.teamB?.teamId]?.color || colorForTeam(match.teamB?.teamId);
       card.style.setProperty("--team-a-accent", teamAColor);
@@ -4823,7 +4887,31 @@ function renderMatchPlayScoreboard() {
         addProbability("Win", odds.teamBWinProbability, "match-play-match-probability-b");
         card.appendChild(probability);
       }
-      section.appendChild(card);
+      const scorecard = document.createElement("div");
+      scorecard.id = scorecardId;
+      scorecard.className = "match-play-scorecard";
+      scorecard.hidden = openMatchPlayScorecardKey !== scorecardKey;
+      scorecard.style.setProperty("--team-a-accent", teamAColor);
+      scorecard.style.setProperty("--team-b-accent", teamBColor);
+      scorecard.appendChild(buildMatchPlayScorecard(round, match, players, teams));
+      const toggleScorecard = () => {
+        const willOpen = scorecard.hidden;
+        for (const openScorecard of root.querySelectorAll(".match-play-scorecard:not([hidden])")) {
+          openScorecard.hidden = true;
+          const owner = root.querySelector(`[aria-controls="${openScorecard.id}"]`);
+          owner?.setAttribute("aria-expanded", "false");
+        }
+        scorecard.hidden = !willOpen;
+        card.setAttribute("aria-expanded", willOpen ? "true" : "false");
+        openMatchPlayScorecardKey = willOpen ? scorecardKey : null;
+      };
+      card.addEventListener("click", toggleScorecard);
+      card.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        toggleScorecard();
+      });
+      section.append(card, scorecard);
     }
     root.appendChild(section);
   }

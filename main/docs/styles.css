@@ -506,6 +506,75 @@ button.draft-player small {
   padding: 14px;
   border: 1px solid var(--border);
   background: var(--surface);
+  cursor: pointer;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.match-play-match-card:hover,
+.match-play-match-card:focus-visible {
+  border-color: var(--text);
+  outline: none;
+}
+.match-play-match-card[aria-expanded="true"] {
+  border-bottom-color: transparent;
+}
+.match-play-scorecard[hidden] {
+  display: none;
+}
+.match-play-scorecard {
+  margin-top: -10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-top: 0;
+  background: var(--surface);
+}
+.match-play-scorecard-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.match-play-scorecard-table {
+  width: 100%;
+  min-width: 720px;
+  margin: 0;
+}
+.match-play-scorecard-table th,
+.match-play-scorecard-table td {
+  padding: 5px 7px;
+  text-align: center;
+  white-space: nowrap;
+}
+.match-play-scorecard-table .left {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 150px;
+  max-width: 220px;
+  overflow: hidden;
+  background: var(--surface);
+  text-align: left;
+  text-overflow: ellipsis;
+}
+.match-play-scorecard-team-a .left {
+  border-left: 4px solid var(--team-a-accent, var(--border));
+}
+.match-play-scorecard-team-b .left {
+  border-left: 4px solid var(--team-b-accent, var(--border));
+}
+.match-play-scorecard-table .is-hole-winner {
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.match-play-scorecard-result td {
+  color: var(--muted);
+  font-size: .7rem;
+  font-weight: 700;
+}
+.match-play-scorecard-result .won-by-a {
+  color: var(--team-a-accent, var(--text));
+}
+.match-play-scorecard-result .won-by-b {
+  color: var(--team-b-accent, var(--text));
 }
 .match-play-match-card.is-leading-a {
   border-left: 5px solid var(--team-a-accent, var(--border));
