@@ -2594,10 +2594,10 @@ async function renderMatchPlayEntry({
       const record = document.createElement("span");
       record.className = "small";
       const winProbability = eventOddsByTeam.get(teamId)?.winProbability;
-      const winOddsLabel = Number.isFinite(Number(winProbability))
-        ? ` · ${matchPlayEntryPercent(winProbability)} win`
+      record.textContent = Number.isFinite(Number(winProbability))
+        ? `${matchPlayEntryPercent(winProbability)} win`
         : "";
-      record.textContent = `${Number(standing?.matchesWon || 0)} won · ${Number(standing?.matchesHalved || 0)} halved · ${Number(standing?.matchesLost || 0)} lost${winOddsLabel}`;
+      record.hidden = !record.textContent;
       team.append(name, points, record);
       teamOverview.appendChild(team);
     }
