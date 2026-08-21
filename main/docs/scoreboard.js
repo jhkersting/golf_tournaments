@@ -4786,6 +4786,13 @@ function renderMatchPlayScoreboard() {
       if (odds) {
         const probability = document.createElement("div");
         probability.className = "match-play-match-probability";
+        const probabilityValue = (value) => {
+          const numeric = Number(value);
+          return Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
+        };
+        probability.style.setProperty("--team-a-probability", `${probabilityValue(odds.teamAWinProbability)}%`);
+        probability.style.setProperty("--tie-probability", `${probabilityValue(odds.halveProbability)}%`);
+        probability.style.setProperty("--team-b-probability", `${probabilityValue(odds.teamBWinProbability)}%`);
         const addProbability = (label, value, className) => {
           const item = document.createElement("span");
           item.className = className;

@@ -552,15 +552,30 @@ button.draft-player small {
 }
 .match-play-match-probability {
   grid-column: 1 / -1;
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding-top: 10px;
-  border-top: 1px solid var(--border);
+  border-top: 2px solid var(--border);
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: .76rem;
   font-weight: 700;
+}
+.match-play-match-probability::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    to right,
+    var(--team-a-accent, var(--text)) 0 var(--team-a-probability, 0%),
+    var(--border) var(--team-a-probability, 0%) calc(var(--team-a-probability, 0%) + var(--tie-probability, 0%)),
+    var(--team-b-accent, var(--text)) calc(var(--team-a-probability, 0%) + var(--tie-probability, 0%)) 100%
+  );
 }
 .match-play-match-probability-a {
   color: var(--team-a-accent, var(--text));
