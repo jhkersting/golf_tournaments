@@ -1,6 +1,6 @@
 import { maxGrossByHoleForRound } from "./round_rules.js";
 
-const MODEL_VERSION = "live-odds-latency-v11";
+const MODEL_VERSION = "live-odds-latency-v12";
 const LATENCY_MODE = "latency_first";
 const HOLE_COUNT = 18;
 const PAR_SIGMA = { 3: 0.55, 4: 0.75, 5: 0.95 };
@@ -1573,16 +1573,8 @@ function evaluateRoundContext(context, unitStates) {
 }
 
 function chooseSimulationCount(remainingCells) {
-  if (!remainingCells || remainingCells <= 0) return 1;
   if (remainingCells <= 60) return 12000;
-  if (remainingCells <= 120) return 8000;
-  if (remainingCells <= 220) return 5000;
-  if (remainingCells <= 360) return 3000;
-  if (remainingCells <= 520) return 1800;
-  if (remainingCells <= 800) return 1000;
-  if (remainingCells <= 1200) return 650;
-  if (remainingCells <= 1800) return 400;
-  return 250;
+  return 10000;
 }
 
 function buildRoundContext(tournamentJson, roundIndex) {
@@ -2220,9 +2212,17 @@ function alternateShotDistribution(playerDistributions, par) {
   if (clean.length === 1) return clean[0];
   const firstOrder = alternateShotOrderDistribution(par, clean[0], clean[1]);
   const secondOrder = alternateShotOrderDistribution(par, clean[1], clean[0]);
+  const mixture = new Map();
+  for (const distribution of [firstOrder, secondOrder]) {
+    (distribution?.values || []).forEach((value, index) => {
+      const score = Number(value);
+      mixture.set(score, Number(mixture.get(score) || 0) + (Number(distribution?.weights?.[index] || 0) / 2));
+    });
+  }
+  const support = Array.from(mixture.keys()).sort((a, b) => a - b);
   return discreteDistributionStats(
-    [...(firstOrder?.values || []), ...(secondOrder?.values || [])],
-    [...(firstOrder?.weights || []).map((weight) => weight / 2), ...(secondOrder?.weights || []).map((weight) => weight / 2)]
+    support,
+    support.map((score) => Number(mixture.get(score) || 0))
   ) || firstOrder || secondOrder;
 }
 
@@ -2368,9 +2368,10 @@ function prepareMatchPlayDistributions(roundContexts) {
   }
 }
 
-function simulateMatchPlayMatch(context, match, rng) {
+function compileMatchPlaySimulation(context, match) {
   let lead = 0;
   let played = 0;
+  const unplayed = [];
   for (const holeIndex of context.activeHoleIndices) {
     const actualResult = match.actual?.holeResults?.[holeIndex];
     if (actualResult === match.teamA?.teamId) {
@@ -2382,16 +2383,30 @@ function simulateMatchPlayMatch(context, match, rng) {
     } else if (actualResult === "halved") {
       played += 1;
     } else {
-      const scoreA = sampleDiscrete(match.distributions.teamA[holeIndex]?.values || [4], match.distributions.teamA[holeIndex]?.weights || [1], rng);
-      const scoreB = sampleDiscrete(match.distributions.teamB[holeIndex]?.values || [4], match.distributions.teamB[holeIndex]?.weights || [1], rng);
-      if (scoreA < scoreB) lead += 1;
-      else if (scoreB < scoreA) lead -= 1;
-      played += 1;
+      unplayed.push({
+        a: match.distributions.teamA[holeIndex] || { values: [4], weights: [1] },
+        b: match.distributions.teamB[holeIndex] || { values: [4], weights: [1] }
+      });
     }
-    const holesRemaining = context.activeHoleIndices.length - played;
+  }
+  return { lead, played, unplayed, holeCount: context.activeHoleIndices.length };
+}
+
+function simulateMatchPlayMatch(compiled, rng) {
+  let lead = compiled.lead;
+  let played = compiled.played;
+  let holesRemaining = compiled.holeCount - played;
+  if (Math.abs(lead) > holesRemaining) return lead > 0 ? 0 : 2;
+  for (const hole of compiled.unplayed) {
+    const scoreA = sampleDiscrete(hole.a.values, hole.a.weights, rng);
+    const scoreB = sampleDiscrete(hole.b.values, hole.b.weights, rng);
+    if (scoreA < scoreB) lead += 1;
+    else if (scoreB < scoreA) lead -= 1;
+    played += 1;
+    holesRemaining = compiled.holeCount - played;
     if (Math.abs(lead) > holesRemaining) break;
   }
-  return lead > 0 ? "teamA" : lead < 0 ? "teamB" : "tie";
+  return lead > 0 ? 0 : lead < 0 ? 2 : 1;
 }
 
 function computeMatchPlayOdds(tournamentJson, { generatedAt, modelVersion }) {
@@ -2408,29 +2423,32 @@ function computeMatchPlayOdds(tournamentJson, { generatedAt, modelVersion }) {
     `${tournamentJson?.tournament?.tournamentId || ""}|${tournamentJson?.version || 0}|${tournamentJson?.updatedAt || ""}|${modelVersion}|match_play`
   );
   const matchCounts = roundContexts.map((context) => context.matches.map(() => [0, 0, 0]));
+  const simulationMatches = roundContexts.flatMap((context, roundIndex) => context.matches.map((match, matchIndex) => ({
+    match,
+    counts: matchCounts[roundIndex][matchIndex],
+    compiled: compileMatchPlaySimulation(context, match),
+    teamAIsFirst: String(match.teamA?.teamId || "") === teamIds[0]
+  })));
   const eventCounts = [0, 0, 0];
   const winTarget = Math.max(0, Number(tournamentJson?.matchPlay?.winTarget || tournamentJson?.tournament?.matchPlay?.winTarget || 0));
 
   for (let simulationIndex = 0; simulationIndex < simulationCount; simulationIndex++) {
-    const points = Object.fromEntries(teamIds.map((teamId) => [teamId, 0]));
-    for (let roundIndex = 0; roundIndex < roundContexts.length; roundIndex++) {
-      const context = roundContexts[roundIndex];
-      for (let matchIndex = 0; matchIndex < context.matches.length; matchIndex++) {
-        const match = context.matches[matchIndex];
-        const result = simulateMatchPlayMatch(context, match, rng);
-        const resultIndex = result === "teamA" ? 0 : result === "teamB" ? 2 : 1;
-        matchCounts[roundIndex][matchIndex][resultIndex] += 1;
-        if (result === "teamA") points[match.teamA.teamId] = Number(points[match.teamA.teamId] || 0) + match.points;
-        else if (result === "teamB") points[match.teamB.teamId] = Number(points[match.teamB.teamId] || 0) + match.points;
-        else {
-          points[match.teamA.teamId] = Number(points[match.teamA.teamId] || 0) + (match.points / 2);
-          points[match.teamB.teamId] = Number(points[match.teamB.teamId] || 0) + (match.points / 2);
-        }
+    let firstTeamPoints = 0;
+    let secondTeamPoints = 0;
+    for (const item of simulationMatches) {
+      const resultIndex = simulateMatchPlayMatch(item.compiled, rng);
+      item.counts[resultIndex] += 1;
+      if (resultIndex === 1) {
+        firstTeamPoints += item.match.points / 2;
+        secondTeamPoints += item.match.points / 2;
+      } else if ((resultIndex === 0) === item.teamAIsFirst) {
+        firstTeamPoints += item.match.points;
+      } else {
+        secondTeamPoints += item.match.points;
       }
     }
-    const winnerIndex = teamIds.findIndex((teamId) => Number(points[teamId] || 0) >= winTarget);
-    if (winnerIndex === 0) eventCounts[0] += 1;
-    else if (winnerIndex === 1) eventCounts[2] += 1;
+    if (firstTeamPoints >= winTarget) eventCounts[0] += 1;
+    else if (secondTeamPoints >= winTarget) eventCounts[2] += 1;
     else eventCounts[1] += 1;
   }
 

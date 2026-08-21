@@ -264,6 +264,11 @@ registerTest("computeLiveOdds is deterministic for a fixed materialized tourname
   assert.deepEqual(first, second);
 });
 
+registerTest("every odds refresh runs at least ten thousand simulations", () => {
+  const odds = computeLiveOdds(materializedFixture("singles", { includeFutureRound: true }), { generatedAt: FIXED_NOW });
+  assert.ok(Number(odds.simCount) >= 10000, `expected at least 10000 simulations, received ${odds.simCount}`);
+});
+
 for (const format of ["singles", "best_ball", "scramble", "alternate_shot"]) {
   registerTest(`team match play ${format} publishes handicap-driven three-way probabilities`, () => {
     const odds = computeLiveOdds(matchPlayFixture(format), { generatedAt: FIXED_NOW });
