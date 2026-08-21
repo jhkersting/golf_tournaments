@@ -197,11 +197,173 @@ function materializedFixture(format, { useHandicap = false, includeFutureRound =
   };
 }
 
+function matchPlayFixture(format, {
+  useHandicap = false,
+  handicaps = { A1: 2, A2: 4, B1: 18, B2: 20 },
+  completedTie = false
+} = {}) {
+  const sideSize = format === "singles" ? 1 : 2;
+  const playerIdsA = ["A1", "A2"].slice(0, sideSize);
+  const playerIdsB = ["B1", "B2"].slice(0, sideSize);
+  const round = {
+    name: "Round 1",
+    holes: 18,
+    format,
+    useHandicap,
+    courseIndex: 0,
+    matches: [{
+      matchId: "r1m1",
+      points: 1,
+      teamA: { teamId: "A", playerIds: playerIdsA },
+      teamB: { teamId: "B", playerIds: playerIdsB }
+    }]
+  };
+  const scores = { rounds: [{ players: {}, teams: {}, groups: {}, matches: {} }] };
+  if (completedTie) {
+    if (format === "alternate_shot" || format === "scramble") {
+      scores.rounds[0].matches.r1m1 = {
+        sides: {
+          A: { holes: grossArray(4) },
+          B: { holes: grossArray(4) }
+        }
+      };
+    } else {
+      for (const playerId of [...playerIdsA, ...playerIdsB]) {
+        scores.rounds[0].players[playerId] = { holes: grossArray(4) };
+      }
+    }
+  }
+  return materializePublicFromState({
+    tournament: {
+      tournamentId: `match-play-${format}`,
+      name: `Match Play ${format}`,
+      dates: "2026-03-15",
+      scoring: "stroke",
+      competitionType: "team_match_play",
+      matchPlay: { teamIds: ["A", "B"], pointsPerMatch: 1 }
+    },
+    rounds: [round],
+    courses: [{ name: "Fixture Course", pars: PARS.slice(), strokeIndex: STROKE_INDEX.slice() }],
+    teams: { A: { teamName: "Alpha" }, B: { teamName: "Beta" } },
+    players: {
+      A1: { name: "Alice", teamId: "A", handicap: handicaps.A1 },
+      A2: { name: "Avery", teamId: "A", handicap: handicaps.A2 },
+      B1: { name: "Blair", teamId: "B", handicap: handicaps.B1 },
+      B2: { name: "Bailey", teamId: "B", handicap: handicaps.B2 }
+    },
+    scores,
+    updatedAt: Date.parse(FIXED_NOW),
+    version: 5
+  });
+}
+
 registerTest("computeLiveOdds is deterministic for a fixed materialized tournament payload", () => {
   const tournamentJson = materializedFixture("singles");
   const first = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
   const second = computeLiveOdds(tournamentJson, { generatedAt: FIXED_NOW });
   assert.deepEqual(first, second);
+});
+
+for (const format of ["singles", "best_ball", "scramble", "alternate_shot"]) {
+  registerTest(`team match play ${format} publishes handicap-driven three-way probabilities`, () => {
+    const odds = computeLiveOdds(matchPlayFixture(format), { generatedAt: FIXED_NOW });
+    const match = odds.match_play?.rounds?.[0]?.matches?.[0];
+    assert.ok(match);
+    assert.equal(
+      Number(match.teamAWinProbability) + Number(match.halveProbability) + Number(match.teamBWinProbability),
+      100
+    );
+    assert.ok(
+      Number(match.teamAWinProbability) > Number(match.teamBWinProbability),
+      `expected lower-handicap side to be favored in ${format}: ${JSON.stringify(match)}`
+    );
+    const event = odds.match_play?.event;
+    assert.equal(
+      Number(event?.teams?.[0]?.winProbability) + Number(event?.tieProbability) + Number(event?.teams?.[1]?.winProbability),
+      100
+    );
+  });
+}
+
+registerTest("gross-only match play still uses player handicaps as model skill", () => {
+  const lowA = computeLiveOdds(matchPlayFixture("singles", {
+    useHandicap: false,
+    handicaps: { A1: 0, A2: 0, B1: 24, B2: 24 }
+  }), { generatedAt: FIXED_NOW });
+  const lowB = computeLiveOdds(matchPlayFixture("singles", {
+    useHandicap: false,
+    handicaps: { A1: 24, A2: 24, B1: 0, B2: 0 }
+  }), { generatedAt: FIXED_NOW });
+  assert.ok(
+    Number(lowA.match_play?.rounds?.[0]?.matches?.[0]?.teamAWinProbability) >
+      Number(lowB.match_play?.rounds?.[0]?.matches?.[0]?.teamAWinProbability)
+  );
+});
+
+registerTest("handicap best ball publishes a valid three-way forecast", () => {
+  const odds = computeLiveOdds(matchPlayFixture("best_ball", {
+    useHandicap: true,
+    handicaps: { A1: 2, A2: 9, B1: 18, B2: 25 }
+  }), { generatedAt: FIXED_NOW });
+  const match = odds.match_play?.rounds?.[0]?.matches?.[0];
+  assert.equal(
+    Number(match?.teamAWinProbability) + Number(match?.halveProbability) + Number(match?.teamBWinProbability),
+    100
+  );
+});
+
+registerTest("alternate-shot forecasts are invariant to the unspecified starting-player order", () => {
+  const original = matchPlayFixture("alternate_shot");
+  const reversed = deepClone(original);
+  for (const round of reversed.tournament.rounds || []) {
+    for (const match of round.matches || []) {
+      match.teamA.playerIds.reverse();
+      match.teamB.playerIds.reverse();
+    }
+  }
+  for (const round of reversed.matchPlay.rounds || []) {
+    for (const match of round.matches || []) {
+      match.teamA.playerIds.reverse();
+      match.teamB.playerIds.reverse();
+    }
+  }
+  const first = computeLiveOdds(original, { generatedAt: FIXED_NOW });
+  const second = computeLiveOdds(reversed, { generatedAt: FIXED_NOW });
+  assert.deepEqual(first.match_play, second.match_play);
+});
+
+registerTest("match-play scramble uses only the players assigned to that match", () => {
+  const baseline = matchPlayFixture("scramble");
+  const withUnassignedStars = deepClone(baseline);
+  withUnassignedStars.players.push(
+    { playerId: "A3", name: "Unassigned A", teamId: "A", handicap: 0 },
+    { playerId: "B3", name: "Unassigned B", teamId: "B", handicap: 0 }
+  );
+  const first = computeLiveOdds(baseline, { generatedAt: FIXED_NOW });
+  const second = computeLiveOdds(withUnassignedStars, { generatedAt: FIXED_NOW });
+  assert.deepEqual(first.match_play, second.match_play);
+});
+
+registerTest("completed halved matches and tied events settle exactly", () => {
+  const odds = computeLiveOdds(matchPlayFixture("alternate_shot", { completedTie: true }), { generatedAt: FIXED_NOW });
+  const match = odds.match_play?.rounds?.[0]?.matches?.[0];
+  assert.deepEqual(
+    [match?.teamAWinProbability, match?.halveProbability, match?.teamBWinProbability],
+    [0, 100, 0]
+  );
+  assert.deepEqual(
+    [odds.match_play?.event?.teams?.[0]?.winProbability, odds.match_play?.event?.tieProbability, odds.match_play?.event?.teams?.[1]?.winProbability],
+    [0, 100, 0]
+  );
+});
+
+registerTest("compact live odds preserves the match-play event and stable match ids", () => {
+  const odds = computeLiveOdds(matchPlayFixture("scramble"), { generatedAt: FIXED_NOW });
+  const compact = compactLiveOddsPayload(odds);
+  assert.deepEqual(compact?.m?.[0], ["A", "B"]);
+  assert.equal(compact?.m?.[2]?.[0]?.[0]?.[0], "r1m1");
+  assert.equal(compact.m[1].reduce((sum, value) => sum + Number(value || 0), 0), 100);
+  assert.equal(compact.m[2][0][0].slice(3).reduce((sum, value) => sum + Number(value || 0), 0), 100);
 });
 
 registerTest("materializePublicFromState preserves zero and negative net hole scores", () => {

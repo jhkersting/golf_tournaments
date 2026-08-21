@@ -100,6 +100,28 @@ function compactScopeRows(scope = {}, { includeHoleDetails = false } = {}) {
   ];
 }
 
+function compactMatchPlay(matchPlay) {
+  if (!matchPlay || !Array.isArray(matchPlay?.teamIds) || matchPlay.teamIds.length !== 2) return null;
+  const teamIds = matchPlay.teamIds.map((teamId) => String(teamId || ""));
+  const eventTeams = new Map((matchPlay?.event?.teams || []).map((row) => [String(row?.teamId || ""), row]));
+  return [
+    teamIds,
+    [
+      roundPercentInt(eventTeams.get(teamIds[0])?.winProbability),
+      roundPercentInt(matchPlay?.event?.tieProbability),
+      roundPercentInt(eventTeams.get(teamIds[1])?.winProbability)
+    ],
+    (matchPlay?.rounds || []).map((round) => (round?.matches || []).map((match) => ([
+      String(match?.matchId || ""),
+      String(match?.teamAId || ""),
+      String(match?.teamBId || ""),
+      roundPercentInt(match?.teamAWinProbability),
+      roundPercentInt(match?.halveProbability),
+      roundPercentInt(match?.teamBWinProbability)
+    ])))
+  ];
+}
+
 function cloneHistoryShape(history, roundCount) {
   const base = history && typeof history === "object" ? history : {};
   const scopes = Array.isArray(base?.a) ? base.a : [{}, {}, {}];
@@ -186,11 +208,13 @@ function appendScopeHistory(targetScopes, compactScope, snapshotIndex) {
 }
 
 export function compactLiveOddsPayload(liveOdds = {}) {
+  const matchPlay = compactMatchPlay(liveOdds?.match_play);
   return {
     s: Math.max(0, Math.round(Number(liveOdds?.simCount) || 0)),
     l: LATENCY_MODE_CODES[String(liveOdds?.latencyMode || "").trim()] ?? 0,
     r: (liveOdds?.rounds || []).map((roundScope) => compactScopeRows(roundScope, { includeHoleDetails: true })),
-    a: compactScopeRows(liveOdds?.all_rounds || {}, { includeHoleDetails: false })
+    a: compactScopeRows(liveOdds?.all_rounds || {}, { includeHoleDetails: false }),
+    ...(matchPlay ? { m: matchPlay } : {})
   };
 }
 

@@ -2,8 +2,11 @@ import {
   json,
   parseBody,
   requireAdmin,
+  requireEditCodeResetKey,
   uid,
   code4,
+  makeEditCode,
+  hashEditCode,
   normalizeHoles,
   getJson,
   putJson,
@@ -15,6 +18,11 @@ import {
 } from "./utils.js";
 import { normalizeCourseRecord, validateCourse } from "./course_data.js";
 import { normalizeRoundMaxHoleScore } from "./round_rules.js";
+import {
+  COMPETITION_TYPE,
+  normalizeMatchPlayConfiguration,
+  normalizeMatchPlayRounds
+} from "./match_play.js";
 
 function normalizeRoundFormat(format) {
   const raw = String(format || "")
@@ -293,7 +301,7 @@ function projectScoresForAdmin(scores, roundCount) {
   const out = { rounds: [] };
   for (let r = 0; r < roundCount; r++) {
     const sourceRound = sourceRounds[r] || {};
-    const outRound = { teams: {}, players: {}, groups: {} };
+    const outRound = { teams: {}, players: {}, groups: {}, matches: {} };
     for (const [teamId, entry] of Object.entries(sourceRound?.teams || {})) {
       outRound.teams[teamId] = { holes: safeHoleArray(entry?.holes || entry) };
     }
@@ -302,6 +310,12 @@ function projectScoresForAdmin(scores, roundCount) {
     }
     for (const [gid, entry] of Object.entries(sourceRound?.groups || {})) {
       outRound.groups[gid] = { holes: safeHoleArray(entry?.holes || entry) };
+    }
+    for (const [matchId, match] of Object.entries(sourceRound?.matches || {})) {
+      outRound.matches[matchId] = { sides: {} };
+      for (const [teamId, entry] of Object.entries(match?.sides || {})) {
+        outRound.matches[matchId].sides[teamId] = { holes: safeHoleArray(entry?.holes || entry) };
+      }
     }
     out.rounds.push(outRound);
   }
@@ -497,6 +511,7 @@ function cleanupScores(scores, validTeamIds, validPlayerIds, roundCount, validGr
     round.teams = round.teams || {};
     round.players = round.players || {};
     round.groups = round.groups || {};
+    round.matches = round.matches || {};
     const allowedGroupIds = validGroupIdsByRound?.[r] || new Set();
     for (const teamId of Object.keys(round.teams)) {
       if (!validTeamIds.has(teamId)) delete round.teams[teamId];
@@ -557,6 +572,8 @@ function toAdminPayload(state) {
       name: state?.tournament?.name || "",
       dates: state?.tournament?.dates || "",
       scoring: normalizeTournamentScoring(state?.tournament?.scoring),
+      competitionType: state?.tournament?.competitionType || "stroke_play",
+      ...(state?.tournament?.matchPlay ? { matchPlay: state.tournament.matchPlay } : {}),
       rounds
     },
     rounds,
@@ -565,11 +582,49 @@ function toAdminPayload(state) {
     scores: projectScoresForAdmin(state?.scores, roundCount),
     teams: teamRows,
     players: playerRows,
+    matchPlay: state?.tournament?.matchPlay || null,
     hasTwoManBestBall: isTwoManTournament(state?.rounds || []),
     requiresEditCode: !!state?.tournament?.editCodeHash,
     updatedAt: state?.updatedAt || 0,
     version: state?.version || 0
   };
+}
+
+function isResetCodeRoute(event) {
+  return [
+    event?.resource,
+    event?.path,
+    event?.requestContext?.resourcePath,
+    event?.requestContext?.http?.path
+  ].some((value) => String(value || "").replace(/\/+$/, "").endsWith("/admin/reset-code"));
+}
+
+async function resetTournamentEditCode(event, tid) {
+  requireEditCodeResetKey(event);
+  const now = Date.now();
+  let editCode = "";
+  const updated = await updateStateWithRetry(tid, (current) => {
+    if (!current) {
+      const err = new Error("tournament not found");
+      err.statusCode = 404;
+      throw err;
+    }
+    editCode = makeEditCode(8);
+    current.tournament = current.tournament || {};
+    current.tournament.editCodeHash = hashEditCode(editCode);
+    current.updatedAt = now;
+    current.version = Number(current.version || 0) + 1;
+    return current;
+  });
+
+  await appendEvent(tid, { type: "admin_edit_code_reset", tid, ts: now });
+  await writePublicObjectsFromState(updated);
+  return json(200, {
+    ok: true,
+    editCode,
+    updatedAt: updated.updatedAt,
+    version: updated.version
+  });
 }
 
 export async function handler(event) {
@@ -578,6 +633,10 @@ export async function handler(event) {
       .toUpperCase();
     const tid = String(event?.pathParameters?.tid || "").trim();
     if (!tid) return json(400, { error: "missing tid" });
+
+    if (method === "POST" && isResetCodeRoute(event)) {
+      return await resetTournamentEditCode(event, tid);
+    }
 
     if (method === "GET") {
       requireAdmin(event);
@@ -660,8 +719,19 @@ export async function handler(event) {
       current.tournament.name = name || current.tournament.name || "Tournament";
       current.tournament.dates = dates;
       current.tournament.scoring = scoring;
-
-      current.rounds = normalizeRoundsOrThrow(body?.rounds, current.rounds, current.courses.length);
+      const competitionType = String(
+        body?.tournament?.competitionType ?? body?.competitionType ?? current.tournament.competitionType ?? "stroke_play"
+      ).trim().toLowerCase() || "stroke_play";
+      if (competitionType !== "stroke_play" && competitionType !== COMPETITION_TYPE) {
+        const err = new Error(`Unsupported competitionType "${competitionType}".`);
+        err.statusCode = 400;
+        throw err;
+      }
+      current.tournament.competitionType = competitionType;
+      if (competitionType !== COMPETITION_TYPE) {
+        current.rounds = normalizeRoundsOrThrow(body?.rounds, current.rounds, current.courses.length);
+        delete current.tournament.matchPlay;
+      }
 
       const nextTeams = {};
       for (const teamId of Object.keys(current.teams || {})) {
@@ -676,6 +746,14 @@ export async function handler(event) {
 
       const resolver = createTeamResolver(nextTeams);
 
+      if (competitionType === COMPETITION_TYPE) {
+        const configuredIds = body?.matchPlay?.teamIds ?? current.tournament?.matchPlay?.teamIds;
+        for (const rawId of Array.isArray(configuredIds) ? configuredIds : []) {
+          const teamId = String(rawId?.teamId ?? rawId?.id ?? rawId ?? "").trim();
+          if (teamId && !nextTeams[teamId]) nextTeams[teamId] = { teamId, teamName: teamId };
+        }
+      }
+
       if (Array.isArray(body?.teams)) {
         for (const patch of body.teams) {
           if (!patch || patch.remove) continue;
@@ -684,7 +762,9 @@ export async function handler(event) {
       }
 
       const nextPlayers = {};
-      const roundCount = current.rounds.length;
+      const roundCount = competitionType === COMPETITION_TYPE
+        ? (Array.isArray(body?.rounds) ? body.rounds.length : current.rounds.length)
+        : current.rounds.length;
       const incomingPlayers = Array.isArray(body?.players) ? body.players : null;
       if (incomingPlayers) {
         for (const row of incomingPlayers) {
@@ -737,11 +817,53 @@ export async function handler(event) {
         options?.autoAssignTwoManGroups === true || body?.autoAssignTwoManGroups === true;
       if (autoGroups) applyAutoTwoManGroups(nextPlayers, current.rounds.length);
 
+      let matchPlayConfig = null;
+      if (competitionType === COMPETITION_TYPE) {
+        const configuredPoints = Number(
+          body?.matchPlay?.pointsPerMatch ?? body?.matchPlay?.matchPoints ?? current.tournament?.matchPlay?.pointsPerMatch
+        );
+        const previousPoints = Number(current.tournament?.matchPlay?.pointsPerMatch);
+        const rawRounds = body?.rounds !== undefined
+          ? body.rounds
+          : Number.isFinite(configuredPoints) && configuredPoints > 0 && configuredPoints !== previousPoints
+            ? current.rounds.map((round) => ({
+              ...round,
+              matches: (round.matches || []).map((match) =>
+                Number(match.points) === (Number.isFinite(previousPoints) && previousPoints > 0 ? previousPoints : 1)
+                  ? { ...match, points: undefined }
+                  : match
+              )
+            }))
+            : current.rounds;
+        const pointsPerMatch = Number(
+          body?.matchPlay?.pointsPerMatch ?? body?.matchPlay?.matchPoints ?? current.tournament?.matchPlay?.pointsPerMatch
+        );
+        current.rounds = normalizeMatchPlayRounds(
+          rawRounds,
+          current.rounds,
+          Number.isFinite(pointsPerMatch) && pointsPerMatch > 0 ? pointsPerMatch : 1
+        );
+        matchPlayConfig = normalizeMatchPlayConfiguration(
+          body?.matchPlay ?? current.tournament?.matchPlay,
+          current.rounds,
+          { teams: nextTeams, players: nextPlayers }
+        );
+        current.tournament.matchPlay = {
+          teamIds: matchPlayConfig.teamIds,
+          pointsPerMatch: matchPlayConfig.pointsPerMatch,
+          winTarget: matchPlayConfig.winTarget
+        };
+        for (const teamId of matchPlayConfig.teamIds) {
+          if (!nextTeams[teamId]) nextTeams[teamId] = { teamId, teamName: teamId };
+        }
+      }
+
       const validTeamIds = new Set();
       for (const playerId of Object.keys(nextPlayers)) {
         const teamId = nextPlayers[playerId]?.teamId;
         if (teamId) validTeamIds.add(teamId);
       }
+      for (const teamId of matchPlayConfig?.teamIds || []) validTeamIds.add(teamId);
 
       for (const teamId of Object.keys(nextTeams)) {
         if (!validTeamIds.has(teamId)) delete nextTeams[teamId];
@@ -756,6 +878,23 @@ export async function handler(event) {
         current.rounds.length,
         validGroupIdsByRound
       );
+      if (matchPlayConfig) {
+        const sourceRounds = current.scores.rounds || [];
+        current.scores.rounds = current.rounds.map((round, roundIndex) => {
+          const source = sourceRounds[roundIndex] || {};
+          const matches = {};
+          for (const match of round.matches) {
+            const prior = source.matches?.[match.matchId] || {};
+            matches[match.matchId] = {
+              sides: {
+                [match.teamA.teamId]: prior.sides?.[match.teamA.teamId] || { holes: Array(18).fill(null), meta: Array(18).fill(null) },
+                [match.teamB.teamId]: prior.sides?.[match.teamB.teamId] || { holes: Array(18).fill(null), meta: Array(18).fill(null) }
+              }
+            };
+          }
+          return { ...source, matches };
+        });
+      }
       if (body?.scores !== undefined) {
         current.scores = normalizeScoresForState(
           body.scores,
@@ -764,6 +903,24 @@ export async function handler(event) {
           validPlayerIds,
           validGroupIdsByRound
         );
+        if (matchPlayConfig) {
+          for (let roundIndex = 0; roundIndex < current.rounds.length; roundIndex++) {
+            const round = current.rounds[roundIndex];
+            const sourceMatches = body.scores?.rounds?.[roundIndex]?.matches || {};
+            const targetMatches = current.scores.rounds[roundIndex].matches = {};
+            for (const match of round.matches) {
+              const source = sourceMatches[match.matchId] || {};
+              const sides = {};
+              for (const teamId of [match.teamA.teamId, match.teamB.teamId]) {
+                const entry = source.sides?.[teamId];
+                sides[teamId] = entry
+                  ? { holes: normalizeScoreEntryHoles(entry), meta: Array(18).fill(null) }
+                  : { holes: Array(18).fill(null), meta: Array(18).fill(null) };
+              }
+              targetMatches[match.matchId] = { sides };
+            }
+          }
+        }
       }
 
       current.players = nextPlayers;

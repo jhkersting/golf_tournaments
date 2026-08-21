@@ -6,6 +6,10 @@ Parameters:
   AdminKey:
     Type: String
     Default: CHANGE_ME_ADMIN_KEY
+  EditCodeResetKey:
+    Type: String
+    Default: ''
+    NoEcho: true
   VapidSubject:
     Type: String
     Default: mailto:admin@example.com
@@ -34,6 +38,8 @@ Globals:
       Variables:
         ADMIN_KEY:
           Ref: AdminKey
+        EDIT_CODE_RESET_KEY:
+          Ref: EditCodeResetKey
         VAPID_SUBJECT:
           Ref: VapidSubject
         VAPID_PUBLIC_KEY:
@@ -49,7 +55,7 @@ Globals:
   Api:
     Cors:
       AllowMethods: '''GET,POST,OPTIONS'''
-      AllowHeaders: '''Content-Type,x-admin-key'''
+      AllowHeaders: '''Content-Type,x-admin-key,x-edit-code-reset-key'''
       AllowOrigin: '''*'''
     MinimumCompressionSize: 512
 Resources:
@@ -57,6 +63,10 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: prod
+      Cors:
+        AllowMethods: '''GET,POST,OPTIONS'''
+        AllowHeaders: '''Content-Type,x-admin-key,x-edit-code-reset-key'''
+        AllowOrigin: '''*'''
   EventsBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -173,6 +183,13 @@ Resources:
             RestApiId:
               Ref: GolfApi
             Path: /tournaments/{tid}/admin
+            Method: post
+        ResetTournamentEditCode:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /tournaments/{tid}/admin/reset-code
             Method: post
     Metadata:
       SamResourceId: TournamentAdminFunction
@@ -350,6 +367,35 @@ Resources:
             Method: post
     Metadata:
       SamResourceId: CoursesFunction
+  DraftFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: draft.handler
+      CodeUri: DraftFunction
+      Policies:
+      - S3ReadPolicy:
+          BucketName:
+            Ref: StateBucketName
+      - S3WritePolicy:
+          BucketName:
+            Ref: StateBucketName
+      Events:
+        GetDraft:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /draft
+            Method: get
+        PostDraft:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: GolfApi
+            Path: /draft
+            Method: post
+    Metadata:
+      SamResourceId: DraftFunction
 Outputs:
   ApiBaseUrl:
     Description: API base URL

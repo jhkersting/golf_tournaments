@@ -1,6 +1,11 @@
-import { json, parseBody, requireAdmin, uid, makeEditCode, hashEditCode, normalizeTournamentScoring, updateStateWithRetry, writePublicObjectsFromState } from "./utils.js";
+import { json, parseBody, requireAdmin, uid, code4, makeEditCode, hashEditCode, normalizeTournamentScoring, updateStateWithRetry, writePublicObjectsFromState } from "./utils.js";
 import { normalizeCourseRecord, validateCourse } from "./course_data.js";
 import { normalizeRoundMaxHoleScore } from "./round_rules.js";
+import {
+  COMPETITION_TYPE,
+  normalizeMatchPlayConfiguration,
+  normalizeMatchPlayRounds
+} from "./match_play.js";
 
 function defaultCourse(){
   return {
@@ -80,17 +85,33 @@ export async function handler(event){
     const scoring = normalizeTournamentScoring(body?.tournament?.scoring ?? body?.scoring);
     const rounds = Array.isArray(body.rounds) ? body.rounds : [];
     const courses = normalizeCoursesFromBody(body);
+    const competitionType = String(body?.tournament?.competitionType ?? body?.competitionType ?? "")
+      .trim().toLowerCase() || "stroke_play";
+
+    if (competitionType !== "stroke_play" && competitionType !== COMPETITION_TYPE) {
+      const err = new Error(`Unsupported competitionType "${competitionType}".`);
+      err.statusCode = 400;
+      throw err;
+    }
 
     // Normalize rounds. If no weights are provided, default all rounds to equal weight.
-    const baseRounds = rounds.map(r => ({
-      name: String(r?.name || "Round").trim(),
-      format: normalizeRoundFormat(r?.format),
-      weight: normalizeRoundWeight(r?.weight),
-      useHandicap: !!r?.useHandicap,
-      maxHoleScore: normalizeRoundMaxHoleScore(r?.maxHoleScore),
-      courseIndex: normalizeRoundCourseIndex(r?.courseIndex, courses.length),
-      teamAggregation: normalizeAgg(r?.teamAggregation)
-    }));
+    const baseRounds = competitionType === COMPETITION_TYPE
+      ? normalizeMatchPlayRounds(
+        rounds,
+        [],
+        Number(body?.matchPlay?.pointsPerMatch ?? body?.matchPlay?.matchPoints) > 0
+          ? Number(body.matchPlay.pointsPerMatch ?? body.matchPlay.matchPoints)
+          : 1
+      )
+      : rounds.map(r => ({
+        name: String(r?.name || "Round").trim(),
+        format: normalizeRoundFormat(r?.format),
+        weight: normalizeRoundWeight(r?.weight),
+        useHandicap: !!r?.useHandicap,
+        maxHoleScore: normalizeRoundMaxHoleScore(r?.maxHoleScore),
+        courseIndex: normalizeRoundCourseIndex(r?.courseIndex, courses.length),
+        teamAggregation: normalizeAgg(r?.teamAggregation)
+      }));
     const allMissingWeight = baseRounds.length > 0 && baseRounds.every(r => r.weight == null);
     const normRounds = baseRounds.map(r => ({
       ...r,
@@ -100,22 +121,91 @@ export async function handler(event){
     const tid = uid("t");
     const editCode = makeEditCode(8);
 
+    const initialTeams = {};
+    for (const item of Array.isArray(body?.teams) ? body.teams : []) {
+      const teamId = String(item?.teamId ?? item?.id ?? "").trim();
+      if (!teamId) continue;
+      initialTeams[teamId] = {
+        teamId,
+        teamName: String(item?.teamName ?? item?.name ?? teamId).trim() || teamId,
+        ...(item?.color ? { color: String(item.color).trim() } : {})
+      };
+    }
+    let matchPlaySeed = competitionType === COMPETITION_TYPE
+      ? normalizeMatchPlayConfiguration(body?.matchPlay, baseRounds, { teams: {} })
+      : null;
+    for (const teamId of matchPlaySeed?.teamIds || []) {
+      if (!initialTeams[teamId]) initialTeams[teamId] = { teamId, teamName: teamId };
+    }
+
+    const initialPlayers = {};
+    const initialCodeIndex = {};
+    for (const item of Array.isArray(body?.players) ? body.players : []) {
+      const name = String(item?.name || "").trim();
+      const teamId = String(item?.teamId || "").trim();
+      if (!name || !teamId) continue;
+      const playerId = String(item?.playerId || uid("p")).trim();
+      let code = String(item?.code || "").trim().toUpperCase().replace(/\s+/g, "");
+      if (!code) code = code4();
+      if (initialCodeIndex[code]) {
+        const err = new Error(`Duplicate code "${code}"`);
+        err.statusCode = 400;
+        throw err;
+      }
+      initialCodeIndex[code] = playerId;
+      initialPlayers[playerId] = {
+        playerId,
+        name,
+        teamId,
+        handicap: Number.isFinite(Number(item?.handicap)) ? Number(item.handicap) : 0,
+        code,
+        groups: [],
+        group: null,
+        teeTimes: [],
+        teeTime: null
+      };
+      if (!initialTeams[teamId]) initialTeams[teamId] = { teamId, teamName: teamId };
+    }
+    if (competitionType === COMPETITION_TYPE) {
+      matchPlaySeed = normalizeMatchPlayConfiguration(matchPlaySeed, baseRounds, {
+        teams: initialTeams,
+        players: initialPlayers
+      });
+    }
+
     const state = {
       tournament: {
         tournamentId: tid,
         name,
         dates,
         scoring,
+        competitionType,
+        ...(matchPlaySeed ? {
+          matchPlay: {
+            teamIds: matchPlaySeed.teamIds,
+            pointsPerMatch: matchPlaySeed.pointsPerMatch,
+            winTarget: matchPlaySeed.winTarget
+          }
+        } : {}),
         createdAt: Date.now(),
         editCodeHash: hashEditCode(editCode)
       },
       rounds: normRounds,
       course: courses[0],
       courses,
-      teams: {},
-      players: {},
-      codeIndex: {},
-      scores: { rounds: normRounds.map(()=>({ teams:{}, players:{}, groups:{} })) },
+      teams: initialTeams,
+      players: initialPlayers,
+      codeIndex: initialCodeIndex,
+      scores: { rounds: competitionType === COMPETITION_TYPE
+        ? normRounds.map((round) => ({
+          teams: {}, players: {}, groups: {}, matches: Object.fromEntries((round.matches || []).map((match) => [match.matchId, {
+            sides: {
+              [match.teamA.teamId]: { holes: Array(18).fill(null), meta: Array(18).fill(null) },
+              [match.teamB.teamId]: { holes: Array(18).fill(null), meta: Array(18).fill(null) }
+            }
+          }]))
+        }))
+        : normRounds.map(()=>({ teams:{}, players:{}, groups:{} })) },
       updatedAt: Date.now(),
       version: 1
     };

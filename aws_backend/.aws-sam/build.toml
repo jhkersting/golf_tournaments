@@ -7,6 +7,6 @@ architecture = "x86_64"
 handler = "tournaments_create.handler"
 manifest_hash = "360658ee25da65b4e44287dcd8975a3e"
 packagetype = "Zip"
-functions = ["CreateTournamentFunction", "ImportPlayersFunction", "TournamentAdminFunction", "PostScoresFunction", "PushNotificationsFunction", "OddsMaterializeFunction", "EnterGetFunction", "CoursesFunction"]
+functions = ["CreateTournamentFunction", "ImportPlayersFunction", "TournamentAdminFunction", "PostScoresFunction", "PushNotificationsFunction", "OddsMaterializeFunction", "EnterGetFunction", "CoursesFunction", "DraftFunction"]
 
 [layer_build_definitions]

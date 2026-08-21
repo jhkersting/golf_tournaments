@@ -5,6 +5,7 @@ import { computeLiveOdds } from "./live_odds.js";
 import { appendCompactLiveOddsHistory, compactLiveOddsPayload } from "./live_odds_compact.js";
 import { normalizeCourseRecord } from "./course_data.js";
 import { normalizeRoundMaxHoleScore } from "./round_rules.js";
+import { COMPETITION_TYPE, isTeamMatchPlay, materializeMatchPlay } from "./match_play.js";
 
 export const s3 = new S3Client({});
 
@@ -14,7 +15,7 @@ export function json(statusCode, body, extraHeaders={}){
     headers: {
       "Content-Type":"application/json",
       "Access-Control-Allow-Origin":"*",
-      "Access-Control-Allow-Headers":"Content-Type,x-admin-key",
+      "Access-Control-Allow-Headers":"Content-Type,x-admin-key,x-edit-code-reset-key",
       "Access-Control-Allow-Methods":"GET,POST,OPTIONS",
       ...extraHeaders
     },
@@ -37,6 +38,29 @@ export function requireAdmin(event){
   if (!want) return; // allow if unset
   const got = event?.headers?.["x-admin-key"] || event?.headers?.["X-Admin-Key"] || event?.headers?.["X-ADMIN-KEY"];
   if (!got || got !== want){
+    const err = new Error("Unauthorized");
+    err.statusCode = 401;
+    throw err;
+  }
+}
+
+export function requireEditCodeResetKey(event){
+  const expected = String(process.env.EDIT_CODE_RESET_KEY || "");
+  if (!expected) {
+    const err = new Error("Edit-code reset is not configured");
+    err.statusCode = 503;
+    throw err;
+  }
+  const headers = event?.headers || {};
+  const provided = String(
+    headers["x-edit-code-reset-key"]
+      || headers["X-Edit-Code-Reset-Key"]
+      || headers["X-EDIT-CODE-RESET-KEY"]
+      || ""
+  );
+  const providedBytes = Buffer.from(provided);
+  const expectedBytes = Buffer.from(expected);
+  if (!provided || providedBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(providedBytes, expectedBytes)) {
     const err = new Error("Unauthorized");
     err.statusCode = 401;
     throw err;
@@ -632,8 +656,83 @@ export async function appendEvent(tid, payload){
   await putJson(bucket, key, payload, { gzip:false, cacheControl:"no-store" });
 }
 
+function materializeMatchPlayPublicFromState(state) {
+  const tournament = state?.tournament || {};
+  const courses = normalizeCoursesFromState(state);
+  const rounds = Array.isArray(state?.rounds) ? state.rounds : [];
+  const derived = materializeMatchPlay({
+    tournament,
+    rounds,
+    teams: state?.teams || {},
+    players: state?.players || {},
+    scores: state?.scores || { rounds: [] },
+    courses
+  });
+  const teams = Object.keys(state?.teams || {}).map((teamId) => ({
+    teamId,
+    teamName: state.teams[teamId]?.teamName || teamId,
+    ...(state.teams[teamId]?.color ? { color: state.teams[teamId].color } : {})
+  }));
+  const players = Object.keys(state?.players || {}).map((playerId) => {
+    const player = state.players[playerId] || {};
+    return {
+      playerId,
+      name: player.name || "",
+      teamId: player.teamId || "",
+      handicap: Number(player.handicap || 0)
+    };
+  });
+  const standings = derived.standings.map((row) => ({ ...row, teamColor: state.teams?.[row.teamId]?.color || null }));
+  return {
+    tournament: {
+      tournamentId: tournament.tournamentId,
+      name: tournament.name || "",
+      dates: tournament.dates || "",
+      scoring: normalizeTournamentScoring(tournament.scoring),
+      competitionType: COMPETITION_TYPE,
+      matchPlay: {
+        teamIds: derived.teamIds,
+        pointsPerMatch: derived.pointsPerMatch,
+        scheduledPoints: derived.scheduledPoints,
+        winTarget: derived.winTarget
+      },
+      rounds
+    },
+    competitionType: COMPETITION_TYPE,
+    matchPlay: { ...derived, standings },
+    course: courses[0] || defaultCourseObject(),
+    courses,
+    teams,
+    players,
+    updatedAt: state.updatedAt,
+    version: state.version,
+    score_data: {
+      rounds: derived.rounds.map((round) => ({
+        roundIndex: round.roundIndex,
+        format: round.format,
+        holes: round.holes,
+        useHandicap: round.useHandicap,
+        matches: Object.fromEntries(round.matches.map((match) => [match.matchId, match]))
+      })),
+      leaderboard_all: {
+        teams: standings.map((row) => ({
+          teamId: row.teamId,
+          teamName: row.teamName,
+          ...(row.teamColor ? { color: row.teamColor } : {}),
+          points: row.points,
+          matchesWon: row.matchesWon,
+          matchesHalved: row.matchesHalved,
+          matchesLost: row.matchesLost
+        })),
+        players: []
+      }
+    }
+  };
+}
+
 export function materializePublicFromState(state){
   // Build a single tournament JSON with score_data and leaderboards.
+  if (isTeamMatchPlay(state)) return materializeMatchPlayPublicFromState(state);
   const t = state.tournament;
   const scoring = normalizeTournamentScoring(t?.scoring);
   const courses = normalizeCoursesFromState(state);
@@ -1322,6 +1421,60 @@ export function materializePublicFromState(state){
   };
 }
 
+function matchPlaySavedHoles(raw) {
+  return Array.from({ length: 18 }, (_, index) => {
+    const value = Array.isArray(raw) ? raw[index] : null;
+    return value == null || value === 0 ? null : value;
+  });
+}
+
+export function materializeMatchPlaySavedRound(round, roundIndex, actorPlayerId, scores = { rounds: [] }) {
+  const scheduledMatch = (Array.isArray(round?.matches) ? round.matches : []).find((match) =>
+    match.teamA?.playerIds?.includes(actorPlayerId) || match.teamB?.playerIds?.includes(actorPlayerId)
+  );
+  const actorSide = scheduledMatch?.teamA?.playerIds?.includes(actorPlayerId)
+    ? scheduledMatch.teamA
+    : scheduledMatch?.teamB?.playerIds?.includes(actorPlayerId) ? scheduledMatch.teamB : null;
+  const sharedSideFormat = scheduledMatch && ["alternate_shot", "scramble"].includes(round?.format);
+  const matchSides = scheduledMatch
+    ? [scheduledMatch.teamA, scheduledMatch.teamB].filter((side) => side?.teamId)
+    : [];
+  const target = sharedSideFormat
+    ? "match_side"
+    : "player";
+  const roundScores = scores?.rounds?.[roundIndex] || {};
+  const actorGross = target === "match_side"
+    ? roundScores.matches?.[scheduledMatch?.matchId]?.sides?.[actorSide?.teamId]?.holes
+    : roundScores.players?.[actorPlayerId]?.holes;
+
+  const matchEntries = !scheduledMatch
+    ? []
+    : sharedSideFormat
+      ? matchSides.map((side) => ({
+        targetId: side.teamId,
+        targetType: "match_side",
+        teamId: side.teamId,
+        gross: matchPlaySavedHoles(roundScores.matches?.[scheduledMatch.matchId]?.sides?.[side.teamId]?.holes)
+      }))
+      : matchSides.flatMap((side) =>
+        (Array.isArray(side.playerIds) ? side.playerIds : []).filter(Boolean).map((playerId) => ({
+          targetId: playerId,
+          targetType: "player",
+          teamId: side.teamId,
+          gross: matchPlaySavedHoles(roundScores.players?.[playerId]?.holes)
+        }))
+      );
+
+  return {
+    roundIndex,
+    target,
+    matchId: scheduledMatch?.matchId || null,
+    teamId: actorSide?.teamId || null,
+    gross: matchPlaySavedHoles(actorGross),
+    matchEntries
+  };
+}
+
 export async function writePublicObjectsFromState(state){
   const pub = process.env.PUBLIC_BUCKET;
   const tid = state.tournament.tournamentId;
@@ -1356,6 +1509,9 @@ export async function writePublicObjectsFromState(state){
     }
 
     const saved = rounds.map((round, rIdx) => {
+      if (isTeamMatchPlay(state)) {
+        return materializeMatchPlaySavedRound(round, rIdx, pid, scores);
+      }
       const isScramble = round.format === "scramble";
       const isTwoMan = isTwoManFormat(round?.format);
       const target = isScramble ? "team" : isTwoMan ? "group" : "player";
@@ -1380,8 +1536,11 @@ export async function writePublicObjectsFromState(state){
       tournament: {
         name: state.tournament.name,
         dates: state.tournament.dates,
-        scoring: normalizeTournamentScoring(state?.tournament?.scoring)
+        scoring: normalizeTournamentScoring(state?.tournament?.scoring),
+        competitionType: state?.tournament?.competitionType || "stroke_play",
+        ...(state?.tournament?.matchPlay ? { matchPlay: state.tournament.matchPlay } : {})
       },
+      ...(isTeamMatchPlay(state) ? { matchPlay: tournamentJson.matchPlay } : {}),
       rounds,
       course,
       courses,
@@ -1392,7 +1551,17 @@ export async function writePublicObjectsFromState(state){
         groups: Array.from({ length: rounds.length }, (_, r) => groupValueForRound(p, r) || null),
         group: p.group || null,
         teeTimes,
-        teeTime: teeTimes.find((v) => !!v) || p.teeTime || null
+        teeTime: teeTimes.find((v) => !!v) || p.teeTime || null,
+        ...(isTeamMatchPlay(state) ? {
+          matchAssignments: rounds.map((round) => {
+            const match = round.matches?.find((item) =>
+              item.teamA?.playerIds?.includes(pid) || item.teamB?.playerIds?.includes(pid)
+            );
+            if (!match) return null;
+            const side = match.teamA.playerIds.includes(pid) ? match.teamA : match.teamB;
+            return { matchId: match.matchId, teamId: side.teamId, format: round.format };
+          })
+        } : {})
       },
       team: { teamId: team.teamId, teamName: team.teamName, group: p.group || null },
       saved

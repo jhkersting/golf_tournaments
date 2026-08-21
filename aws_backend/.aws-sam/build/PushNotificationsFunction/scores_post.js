@@ -1,5 +1,6 @@
-import { json, parseBody, normalizeHoles, updateStateWithRetry, appendEvent, writePublicObjectsFromState } from "./utils.js";
+import { json, parseBody, normalizeHoles, getJson, updateStateWithRetry, appendEvent, writePublicObjectsFromState } from "./utils.js";
 import { notifyScoreSubscribers } from "./push_notifications.js";
+import { isTeamMatchPlay, matchPlayHoleIndices } from "./match_play.js";
 
 function asInt(v){
   const n = Number(v);
@@ -60,12 +61,213 @@ function normalizeTwoManFormat(format){
   return "";
 }
 
+function matchWriteHoles(raw, activeHoleIndices) {
+  if (!Array.isArray(raw) || raw.length !== 18) {
+    const error = new Error("holes must be an array of length 18");
+    error.statusCode = 400;
+    throw error;
+  }
+  const active = new Set(activeHoleIndices);
+  return raw.map((value, index) => {
+    if (!active.has(index) || value == null || (typeof value === "string" && value.trim() === "")) return null;
+    const number = Number(value);
+    if (!Number.isFinite(number) || Math.round(number) < 1 || Math.round(number) > 20) {
+      const error = new Error("hole scores must be numbers between 1 and 20 or blank");
+      error.statusCode = 400;
+      throw error;
+    }
+    return Math.round(number);
+  });
+}
+
+export function resolveMatchPlayScoreTarget(match, actorPlayerId, requestedTargetId, playerFormat) {
+  const sides = [match?.teamA, match?.teamB].filter(Boolean);
+  const actorSide = sides.find((side) => side.playerIds?.includes(actorPlayerId));
+  if (!actorSide) {
+    const error = new Error("You are not assigned to this match");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const requested = String(requestedTargetId || "").trim();
+  if (playerFormat) {
+    const targetId = requested || actorPlayerId;
+    if (!sides.some((side) => side.playerIds?.includes(targetId))) {
+      const error = new Error("Score target is not assigned to this match");
+      error.statusCode = 403;
+      throw error;
+    }
+    return { targetType: "player", targetId };
+  }
+
+  const targetId = requested || actorSide.teamId;
+  if (!sides.some((side) => side.teamId === targetId)) {
+    const error = new Error("Score target is not assigned to this match");
+    error.statusCode = 403;
+    throw error;
+  }
+  return { targetType: "match_side", targetId };
+}
+
+async function handleMatchPlayScore(event, body, tid) {
+  const code = String(body.code || "").trim();
+  const roundIndex = Number(body.roundIndex);
+  const matchId = String(body.matchId ?? body.matchPlayMatchId ?? "").trim();
+  const override = !!body.override;
+  const mode = body.mode || ((body.holeIndex !== undefined && body.holeIndex !== null) ? "hole" : "bulk");
+  const holeIndex = body.holeIndex !== undefined && body.holeIndex !== null ? Number(body.holeIndex) : null;
+  if (!code) return json(400, { error: "missing code" });
+  if (!matchId) return json(400, { error: "missing matchId" });
+  if (!Number.isInteger(roundIndex) || roundIndex < 0) return json(400, { error: "invalid roundIndex" });
+  if (mode === "hole" && (!Number.isInteger(holeIndex) || holeIndex < 0 || holeIndex > 17)) {
+    return json(400, { error: "invalid holeIndex" });
+  }
+  if (!Array.isArray(body.entries) || !body.entries.length) return json(400, { error: "missing entries" });
+
+  const now = Date.now();
+  let actorPlayerId = null;
+  let changedScores = [];
+  const nextState = await updateStateWithRetry(tid, (current) => {
+    if (!current || !isTeamMatchPlay(current)) {
+      const error = new Error("match-play tournament not found");
+      error.statusCode = 404;
+      throw error;
+    }
+    const round = current.rounds?.[roundIndex];
+    if (!round) {
+      const error = new Error("roundIndex out of range");
+      error.statusCode = 400;
+      throw error;
+    }
+    const match = round.matches?.find((item) => item.matchId === matchId);
+    if (!match) {
+      const error = new Error("invalid matchId");
+      error.statusCode = 404;
+      throw error;
+    }
+    const activeHoleIndices = matchPlayHoleIndices(round);
+    const activeHoleSet = new Set(activeHoleIndices);
+    if (mode === "hole" && !activeHoleSet.has(holeIndex)) {
+      const error = new Error("holeIndex is not active for this match-play round");
+      error.statusCode = 400;
+      throw error;
+    }
+    actorPlayerId = current.codeIndex?.[code];
+    const actor = current.players?.[actorPlayerId];
+    if (!actor) {
+      const error = new Error("invalid code");
+      error.statusCode = 404;
+      throw error;
+    }
+    const playerFormat = ["singles", "best_ball"].includes(round.format);
+    // Resolve once before mutating score buckets so an otherwise valid player code
+    // cannot write a match they are not scheduled to play.
+    resolveMatchPlayScoreTarget(match, actorPlayerId, "", playerFormat);
+    current.scores = current.scores || { rounds: [] };
+    current.scores.rounds = current.scores.rounds || [];
+    current.scores.rounds[roundIndex] = current.scores.rounds[roundIndex] || { teams: {}, players: {}, groups: {}, matches: {} };
+    const bucket = current.scores.rounds[roundIndex];
+    bucket.matches = bucket.matches || {};
+    bucket.players = bucket.players || {};
+    const matchScores = bucket.matches[matchId] = bucket.matches[matchId] || { sides: {} };
+    matchScores.sides = matchScores.sides || {};
+    for (const side of [match.teamA, match.teamB]) {
+      matchScores.sides[side.teamId] = matchScores.sides[side.teamId] || { holes: Array(18).fill(null), meta: Array(18).fill(null) };
+    }
+    const conflicts = [];
+    const changed = new Map();
+    const getEntry = (targetType, targetId) => {
+      if (targetType === "player") {
+        const entry = bucket.players[targetId] || {};
+        return { holes: (entry.holes || Array(18).fill(null)).slice(0, 18).concat(Array(18).fill(null)).slice(0, 18), meta: (entry.meta || Array(18).fill(null)).slice(0, 18).concat(Array(18).fill(null)).slice(0, 18) };
+      }
+      const entry = matchScores.sides[targetId] || {};
+      return { holes: (entry.holes || Array(18).fill(null)).slice(0, 18).concat(Array(18).fill(null)).slice(0, 18), meta: (entry.meta || Array(18).fill(null)).slice(0, 18).concat(Array(18).fill(null)).slice(0, 18) };
+    };
+    const putEntry = (targetType, targetId, entry) => {
+      if (targetType === "player") bucket.players[targetId] = entry;
+      else matchScores.sides[targetId] = entry;
+    };
+    const apply = (targetType, targetId, index, value) => {
+      if (!activeHoleSet.has(index) || value === undefined) return;
+      const entry = getEntry(targetType, targetId);
+      const existing = entry.holes[index];
+      const metadata = entry.meta[index];
+      if (value === null) {
+        if (existing != null && !override) {
+          conflicts.push({ targetType, targetId, holeIndex: index, existing, attempted: null, lastBy: metadata?.by || null, lastTs: metadata?.ts || null });
+          return;
+        }
+        entry.holes[index] = null;
+      } else {
+        const number = Number(value);
+        if (!Number.isFinite(number) || number < 1 || number > 20) {
+          const error = new Error("invalid strokes");
+          error.statusCode = 400;
+          throw error;
+        }
+        if (existing != null && number !== Number(existing) && !override) {
+          conflicts.push({ targetType, targetId, holeIndex: index, existing, attempted: number, lastBy: metadata?.by || null, lastTs: metadata?.ts || null });
+          return;
+        }
+        if (existing === number) return;
+        entry.holes[index] = Math.round(number);
+      }
+      entry.meta[index] = { by: actorPlayerId, ts: now };
+      putEntry(targetType, targetId, entry);
+      const key = `${targetType}::${targetId}::${index}`;
+      if (value === null) changed.delete(key);
+      else changed.set(key, { targetType, targetId, holeIndex: index });
+    };
+    for (const entry of body.entries) {
+      const requested = String(entry?.targetId || "").trim();
+      const { targetType, targetId } = resolveMatchPlayScoreTarget(
+        match,
+        actorPlayerId,
+        requested,
+        playerFormat
+      );
+      if (mode === "hole") {
+        const value = entry?.strokes === "" ? undefined : entry?.strokes === null ? null : Number(entry?.strokes);
+        apply(targetType, targetId, holeIndex, value);
+      } else {
+        const holes = matchWriteHoles(entry?.holes, activeHoleIndices);
+        for (const index of activeHoleIndices) apply(targetType, targetId, index, holes[index]);
+        for (const clearIndex of Array.isArray(entry?.clearHoles) ? entry.clearHoles : []) {
+          const index = Number(clearIndex);
+          if (Number.isInteger(index) && activeHoleSet.has(index)) apply(targetType, targetId, index, null);
+        }
+      }
+    }
+    if (conflicts.length) {
+      const error = new Error("conflict");
+      error.statusCode = 409;
+      error.conflicts = conflicts;
+      throw error;
+    }
+    changedScores = [...changed.values()];
+    current.updatedAt = now;
+    current.version = Number(current.version || 0) + 1;
+    return current;
+  });
+  await appendEvent(tid, { type: "scores", tid, actorPlayerId, code, roundIndex, matchId, mode, holeIndex, override, entries: body.entries, ts: now });
+  await writePublicObjectsFromState(nextState);
+  try {
+    await notifyScoreSubscribers(tid, nextState, { actorPlayerId, code, roundIndex, matchId, mode, holeIndex, changedScores });
+  } catch (error) {
+    console.warn("Push notification dispatch failed:", error?.message || error);
+  }
+  return json(200, { ok: true, version: nextState.version, updatedAt: nextState.updatedAt });
+}
+
 export async function handler(event){
   try{
     const tid = event.pathParameters?.tid;
     if (!tid) return json(400, { error: "missing tid" });
 
     const body = await parseBody(event);
+    const { json: stateProbe } = await getJson(process.env.STATE_BUCKET, `state/${tid}.json`);
+    if (isTeamMatchPlay(stateProbe)) return handleMatchPlayScore(event, body, tid);
     const code = String(body.code || "").trim();
     const roundIndex = Number(body.roundIndex);
     const override = !!body.override;
