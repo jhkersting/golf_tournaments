@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="theme.js" defer></script>
+  <script src="nav.js" defer></script>
+  <script type="module" src="draft.js"></script>
+  <meta name="theme-color" content="#184635" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Golf Tournament" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Team Draft</title>
+</head>
+
+<body class="draft-page" style="display: block;">
+  <header>
+    <div class="nav">
+      <div class="brand"><span class="dot"></span> Golf Tournaments</div>
+      <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu"
+        aria-expanded="false">☰</button>
+      <div class="actions">
+        <a href="./index.html">Home</a>
+        <a href="./edit.html" data-edit-link>Edit Tournament</a>
+        <a href="./enter.html">Enter Scores</a>
+        <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
+        <a href="./hole-map.html">Hole Map</a>
+        <a href="./draft.html" aria-current="page">Draft</a>
+        <p type="button" class="theme-toggle" data-theme-toggle></p>
+      </div>
+    </div>
+  </header>
+
+  <main class="container draft-shell" id="draft_board">
+    <section class="draft-heading">
+      <div>
+        <h1>Team Draft</h1>
+        <p><span id="draft_role"></span> Jake picks first.</p>
+      </div>
+      <div class="draft-tools">
+        <button type="button" class="secondary" id="draft_login_toggle">Captain Login</button>
+        <button type="button" class="secondary" id="draft_undo" hidden>Undo</button>
+        <button type="button" class="secondary" id="draft_reset" hidden>Reset</button>
+        <button type="button" class="secondary" id="draft_logout" hidden>Exit</button>
+      </div>
+    </section>
+
+    <p class="draft-sync small" id="draft_sync" role="status"></p>
+
+    <form class="card draft-login draft-login-panel" id="draft_login_form" hidden>
+      <div>
+        <h2>Captain Login</h2>
+        <p>Enter your code to make draft picks.</p>
+      </div>
+      <label for="draft_code">Captain code</label>
+      <input id="draft_code" name="code" type="password" autocomplete="one-time-code" required />
+      <button type="submit">Unlock Draft</button>
+      <p class="small draft-login-status" id="draft_login_status" role="status"></p>
+    </form>
+
+    <div class="match-play-points-grid draft-teams">
+      <section class="match-play-team-score draft-team draft-team-jack" aria-labelledby="jack_team_name">
+        <div class="draft-team-head">
+          <div>
+            <span class="draft-team-label">Jack's team</span>
+            <h2 id="jack_team_name">J. Kersting</h2>
+          </div>
+          <span class="draft-team-count" id="jack_count"></span>
+        </div>
+        <ol class="draft-team-list" id="jack_team"></ol>
+        <div class="draft-team-total">Team handicap <strong id="jack_total">0</strong></div>
+      </section>
+
+      <section class="match-play-team-score draft-team draft-team-jake" aria-labelledby="jake_team_name">
+        <div class="draft-team-head">
+          <div>
+            <span class="draft-team-label">Jake's team</span>
+            <h2 id="jake_team_name">J. Christensen</h2>
+          </div>
+          <span class="draft-team-count" id="jake_count"></span>
+        </div>
+        <ol class="draft-team-list" id="jake_team"></ol>
+        <div class="draft-team-total">Team handicap <strong id="jake_total">0</strong></div>
+      </section>
+    </div>
+
+    <section class="draft-turn match-play-target" id="draft_turn" aria-live="polite"></section>
+
+    <section class="draft-pool card" aria-labelledby="draft_pool_heading">
+      <div class="draft-pool-head">
+        <h2 id="draft_pool_heading">Available players</h2>
+        <span id="draft_remaining"></span>
+      </div>
+      <div class="draft-player-list" id="draft_players"></div>
+      <p class="draft-complete" id="draft_complete" hidden>Draft complete.</p>
+    </section>
+  </main>
+</body>
+
+</html>

@@ -311,6 +311,30 @@ Resources:
             Path: /courses
             Method: post
 
+  DraftFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: draft.handler
+      CodeUri: src/
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref StateBucketName
+        - S3WritePolicy:
+            BucketName: !Ref StateBucketName
+      Events:
+        GetDraft:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GolfApi
+            Path: /draft
+            Method: get
+        PostDraft:
+          Type: Api
+          Properties:
+            RestApiId: !Ref GolfApi
+            Path: /draft
+            Method: post
+
 Outputs:
   ApiBaseUrl:
     Description: API base URL

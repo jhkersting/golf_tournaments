@@ -31,6 +31,11 @@ Parameters:
 - GET  `/courses` (list saved courses)
 - GET  `/courses/{courseId}` (get one saved course)
 - POST `/courses` (admin, create/update a saved course)
+- GET  `/draft` (public live draft state)
+- POST `/draft` (captain-code-authenticated pick, undo, reset, and login actions)
+
+## Team draft
+The fixed Jack/Jake draft stores its shared state at `drafts/kersting-2026.json` in `STATE_BUCKET`. Anyone can read the board through `GET /draft`. Captain codes are submitted only to `POST /draft`; Jack's code has admin access for either team's picks plus undo/reset, while Jake's code can draft only when Jake is on the clock.
 
 ## Push notifications
 Set these environment variables when deploying:
