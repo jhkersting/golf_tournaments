@@ -2673,10 +2673,17 @@ async function renderMatchPlayEntry({
   const derivedRounds = Array.isArray(tjson?.matchPlay?.rounds) ? tjson.matchPlay.rounds : [];
   const matchViews = [];
   const roundCards = [];
+  let selectedRoundIndex = null;
+  const roundPicker = document.createElement("label");
+  roundPicker.className = "match-play-entry-round-picker";
+  roundPicker.textContent = "Round";
+  const roundSelect = document.createElement("select");
+  roundSelect.setAttribute("aria-label", "Score entry round");
+  roundPicker.appendChild(roundSelect);
   const roundList = document.createElement("div");
   roundList.id = "match_play_entry_rounds";
   roundList.className = "match-play-entry-rounds";
-  forms.appendChild(roundList);
+  forms.append(roundPicker, roundList);
   const usedAccessibleLabels = new Set();
   const uniqueAccessibleLabel = (base) => {
     const root = String(base || "Score").trim() || "Score";
@@ -2697,6 +2704,12 @@ async function renderMatchPlayEntry({
     const card = document.createElement("section");
     card.className = "card match-play-entry-card";
     roundCards.push({ roundIndex, card });
+    if (assignment?.matchId) {
+      const option = document.createElement("option");
+      option.value = String(roundIndex);
+      option.textContent = round.name || `Round ${roundIndex + 1}`;
+      roundSelect.appendChild(option);
+    }
     const heading = document.createElement("div");
     heading.className = "match-play-entry-head";
     const headingText = document.createElement("div");
@@ -3114,12 +3127,31 @@ async function renderMatchPlayEntry({
 
   const syncRoundVisibility = () => {
     const activeRoundIndex = matchPlayEntryActiveRoundIndex(tjson, enter);
+    const selectableRounds = new Set(
+      Array.from(roundSelect.options).map((option) => Number(option.value))
+    );
+    if (selectedRoundIndex == null || !selectableRounds.has(selectedRoundIndex)) {
+      selectedRoundIndex = selectableRounds.has(activeRoundIndex)
+        ? activeRoundIndex
+        : (selectableRounds.values().next().value ?? activeRoundIndex);
+    }
+    for (const option of roundSelect.options) {
+      const roundIndex = Number(option.value);
+      const roundName = configRounds[roundIndex]?.name || `Round ${roundIndex + 1}`;
+      option.textContent = roundIndex === activeRoundIndex ? `${roundName} (active)` : roundName;
+    }
+    roundSelect.value = String(selectedRoundIndex);
+    roundPicker.hidden = roundSelect.options.length <= 1;
     for (const { roundIndex, card } of roundCards) {
       const isActive = roundIndex === activeRoundIndex;
       card.classList.toggle("is-active-round", isActive);
-      card.hidden = !isActive;
+      card.hidden = roundIndex !== selectedRoundIndex;
     }
   };
+  roundSelect.addEventListener("change", () => {
+    selectedRoundIndex = Number(roundSelect.value);
+    syncRoundVisibility();
+  });
   syncRoundVisibility();
 
   return {

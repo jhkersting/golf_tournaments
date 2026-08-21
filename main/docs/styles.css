@@ -114,7 +114,7 @@
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .06em;
-  text-transform: uppercase;
+
 }
 
 .draft-turn strong {
@@ -176,7 +176,7 @@
   font-size: 11px;
   font-weight: 800;
   letter-spacing: .08em;
-  text-transform: uppercase;
+
 }
 
 .draft-team-head h2,
@@ -245,7 +245,7 @@
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
+
   margin-top: auto;
 }
 
@@ -548,7 +548,7 @@ button.draft-player small {
   color: var(--muted);
   font-size: .78rem;
   font-family: var(--font-mono);
-  text-transform: uppercase;
+
 }
 .match-play-match-probability {
   grid-column: 1 / -1;
@@ -596,6 +596,23 @@ button.draft-player small {
 }
 .match-play-entry-rounds {
   display: grid;
+}
+.match-play-entry-round-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  font-weight: 700;
+
+}
+.match-play-entry-round-picker select {
+  min-width: 0;
+  margin: 0;
 }
 .match-play-entry-overview {
   display: grid;
@@ -702,7 +719,7 @@ button.draft-player small {
   font-size: .75rem;
   font-weight: 700;
   letter-spacing: .04em;
-  text-transform: uppercase;
+
   color: var(--muted);
 }
 .match-play-current-hole-rows {
@@ -964,7 +981,7 @@ header {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+
   position: relative;
 }
 
@@ -1090,7 +1107,7 @@ header {
 
 .enter-chat-kicker {
   letter-spacing: 0.08em;
-  text-transform: uppercase;
+
 }
 
 .enter-chat-summary {
@@ -1564,7 +1581,7 @@ body.hole-map-scoreboard-open {
   align-items: flex-end;
   gap: 16px;
   flex-wrap: wrap;
- 
+
 }
 
 .scoreboard-control-group {
@@ -1664,7 +1681,7 @@ body.hole-map-scoreboard-open {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  text-transform: uppercase;
+
   text-decoration: none;
   padding: 8px 12px;
   white-space: nowrap;
@@ -1785,7 +1802,7 @@ button {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  text-transform: uppercase;
+
   padding: 10px 16px;
   cursor: pointer;
   transition:
@@ -1828,7 +1845,7 @@ hr {
 .muted {
   color: var(--muted);
   font-size: 12px;
-  font-family: var(--font-sans);
+  font-family: var(--font-mono);
   line-height: 1.55;
 }
 
@@ -1932,7 +1949,7 @@ hr {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
+
   color: var(--muted);
 }
 
@@ -1988,7 +2005,7 @@ hr {
   font-weight: 600;
   font-size: 11px;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+
 }
 
 .rank-col,
@@ -2529,7 +2546,7 @@ hr {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
+
   color: var(--muted);
   background: color-mix(in srgb, var(--surface) 86%, var(--bg));
   padding: 8px 10px 8px 0;
@@ -3166,7 +3183,7 @@ pre {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  text-transform: uppercase;
+
 }
 
 .toggle button.active {
@@ -3262,7 +3279,7 @@ th.dots {
   }
 
   .card {
-    padding: 40px 5px;
+    padding: 20px 5px;
   }
 }
 
@@ -3433,7 +3450,7 @@ th.dots {
   }
 
   .card {
-    padding: 40px 0px;
+    padding: 20px 0px;
     box-shadow: none;
   }
 
@@ -4064,7 +4081,7 @@ body.hole-map-page {
   font-weight: 700;
   letter-spacing: 0.1em;
   line-height: 1;
-  text-transform: uppercase;
+
   opacity: 0.88;
 }
 
@@ -4329,7 +4346,7 @@ body.hole-map-page {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.10em;
-  text-transform: uppercase;
+
   margin-bottom: 2px;
 }
 
@@ -4354,7 +4371,7 @@ body.hole-map-page {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.10em;
-  text-transform: uppercase;
+
   margin-bottom: 4px;
 }
 
