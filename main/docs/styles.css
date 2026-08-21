@@ -534,8 +534,18 @@ button.draft-player small {
 }
 .match-play-scorecard-table {
   width: 100%;
-  min-width: 720px;
+  min-width: var(--match-play-scorecard-min-width, 558px);
+  table-layout: fixed;
   margin: 0;
+}
+.match-play-scorecard-name-col {
+  width: 150px;
+}
+.match-play-scorecard-hole-col {
+  width: 40px;
+}
+.match-play-scorecard-total-col {
+  width: 48px;
 }
 .match-play-scorecard-table th,
 .match-play-scorecard-table td {
@@ -547,12 +557,16 @@ button.draft-player small {
   position: sticky;
   left: 0;
   z-index: 1;
+  width: 150px;
   min-width: 150px;
-  max-width: 220px;
+  max-width: 150px;
   overflow: hidden;
   background: var(--surface);
   text-align: left;
   text-overflow: ellipsis;
+}
+.match-play-scorecard-table tbody .left {
+  white-space: normal;
 }
 .match-play-scorecard-team-a .left {
   border-left: 4px solid var(--team-a-accent, var(--border));
@@ -562,8 +576,13 @@ button.draft-player small {
 }
 .match-play-scorecard-table .is-hole-winner {
   font-weight: 800;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  text-decoration: none;
+}
+.match-play-scorecard-team-a .is-hole-winner {
+  background: color-mix(in srgb, var(--team-a-accent, var(--surface)) 14%, var(--surface) 86%);
+}
+.match-play-scorecard-team-b .is-hole-winner {
+  background: color-mix(in srgb, var(--team-b-accent, var(--surface)) 14%, var(--surface) 86%);
 }
 .match-play-scorecard-result td {
   color: var(--muted);

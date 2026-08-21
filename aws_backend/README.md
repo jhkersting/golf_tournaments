@@ -32,10 +32,12 @@ Parameters:
 - GET  `/courses/{courseId}` (get one saved course)
 - POST `/courses` (admin, create/update a saved course)
 - GET  `/draft` (public live draft state)
-- POST `/draft` (captain-code-authenticated pick, undo, reset, and login actions)
+- POST `/draft` (captain-code-authenticated team and matchup draft actions)
 
 ## Team draft
-The fixed Jack/Jake draft stores its shared state at `drafts/kersting-2026.json` in `STATE_BUCKET`. Anyone can read the board through `GET /draft`. Captain codes are submitted only to `POST /draft`; Jack's code has admin access for either team's picks plus undo/reset, while Jake's code can draft only when Jake is on the clock.
+The fixed Jack/Jake draft stores its shared state at `drafts/kersting-2026.json` in `STATE_BUCKET`. Anyone can read the board through `GET /draft`. Captain codes are submitted only to `POST /draft`; Jack's code has admin access for either team's selections plus undo/reset, while Jake's code can act only when Jake is on the clock.
+
+The team draft keeps its Jake-first alternating order. The matchup draft uses a Jake-first snake that runs continuously across Sherrill pairs, Anchored scramble pairs, and Anchored singles without restarting at a stage boundary. Every state mutation stores a fresh 10,000-plus-run match-play simulation covering all 15 points. Incomplete team and matchup slots are projected from handicap-weighted remaining players; locked matchups use the selected players exactly.
 
 ## Push notifications
 Set these environment variables when deploying:

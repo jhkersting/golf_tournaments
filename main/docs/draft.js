@@ -19,12 +19,12 @@ const PLAYERS = [
   { id: "f-kersting", name: "F. Kersting", handicap: 10 },
   { id: "h-coop", name: "H. Coop", handicap: 15 }
 ];
-const TEAMS = ["jake", "jack"];
 const playerById = new Map(PLAYERS.map((player) => [player.id, player]));
 
 let code = "";
 let role = "";
 let picks = [];
+let odds = null;
 let pollTimer = 0;
 let requestPending = false;
 
@@ -49,13 +49,17 @@ async function draftRequest({ method = "GET", body = null } = {}) {
   return payload;
 }
 
+function draftTeamAt(index) {
+  return ["jake", "jack"][Math.max(0, Number(index) || 0) % 2];
+}
+
 function currentTeam() {
-  return TEAMS[picks.length % TEAMS.length];
+  return draftTeamAt(picks.length);
 }
 
 function picksFor(team) {
   return picks
-    .filter((_, index) => TEAMS[index % TEAMS.length] === team)
+    .filter((_, index) => draftTeamAt(index) === team)
     .map((id) => playerById.get(id))
     .filter(Boolean);
 }
@@ -86,7 +90,7 @@ function renderTeam(team) {
   const list = document.getElementById(`${team}_team`);
   list.replaceChildren(makePlayerRow(captain));
   picks.forEach((id, index) => {
-    if (TEAMS[index % TEAMS.length] !== team) return;
+    if (draftTeamAt(index) !== team) return;
     const player = playerById.get(id);
     if (player) list.append(makePlayerRow(player, index + 1));
   });
@@ -143,11 +147,29 @@ function renderTurn() {
   turn.innerHTML = `<span>Pick ${picks.length + 1}</span><strong>${captain} is on the clock</strong><em>${instruction}</em>`;
 }
 
+function renderEventOdds() {
+  const event = odds?.event;
+  const root = document.getElementById("draft_event_odds");
+  if (!event) {
+    root.innerHTML = '<div class="small">Calculating event odds…</div>';
+    document.getElementById("draft_odds_meta").textContent = "Match-play simulation";
+    return;
+  }
+  root.innerHTML = `
+    <div class="draft-event-odd draft-event-odd-jake"><span>Jake</span><strong>${event.jakeWinProbability}%</strong></div>
+    <div class="draft-event-odd draft-event-odd-tie"><span>Tie</span><strong>${event.tieProbability}%</strong></div>
+    <div class="draft-event-odd draft-event-odd-jack"><span>Jack</span><strong>${event.jackWinProbability}%</strong></div>
+  `;
+  document.getElementById("draft_odds_meta").textContent = `${Number(odds.simCount || 0).toLocaleString()} simulations`;
+}
+
 function render() {
   renderTeam("jack");
   renderTeam("jake");
   renderTurn();
+  renderEventOdds();
   renderPool();
+  document.getElementById("draft_matches_link").hidden = picks.length !== PLAYERS.length;
   const isAdmin = role === "jack";
   document.getElementById("draft_undo").hidden = !isAdmin;
   document.getElementById("draft_reset").hidden = !isAdmin;
@@ -167,6 +189,7 @@ async function refreshDraft({ quiet = false } = {}) {
   try {
     const state = await draftRequest();
     picks = normalizePicks(state.picks);
+    odds = state.odds || null;
     render();
     if (!quiet) setSync("Live draft connected");
   } catch (error) {
@@ -182,6 +205,7 @@ async function submitAction(action, playerId = "") {
   try {
     const state = await draftRequest({ method: "POST", body: { code, action, playerId } });
     picks = normalizePicks(state.picks);
+    odds = state.odds || null;
     setSync("Draft updated");
   } catch (error) {
     setSync(error.message, true);
@@ -217,6 +241,7 @@ async function authenticate(candidateCode) {
     code = normalized;
     role = state.role;
     picks = normalizePicks(state.picks);
+    odds = state.odds || null;
     sessionStorage.setItem(DRAFT_SESSION_KEY, code);
     showBoard();
     setSync("Live draft connected");

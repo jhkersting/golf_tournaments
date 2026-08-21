@@ -1,0 +1,93 @@
+.draft-event-odds {
+  margin: 0;
+  padding: 16px;
+}
+
+.draft-event-odds-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.draft-event-odds-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.draft-event-odds-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.draft-event-odd {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-strong);
+}
+
+.draft-event-odd:last-child {
+  text-align: right;
+}
+
+.draft-event-odd span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.draft-event-odd strong {
+  font-family: var(--font-mono);
+  font-size: 25px;
+  line-height: 1.1;
+}
+
+.draft-event-odd-jake strong {
+  color: #bf5700;
+}
+
+.draft-event-odd-jack strong {
+  color: #9e1b32;
+}
+
+.draft-event-odd-tie {
+  align-content: center;
+  padding-inline: 10px;
+  text-align: center;
+}
+
+.draft-event-odd-tie strong {
+  font-size: 17px;
+}
+
+.draft-matches-link[hidden] {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .draft-event-odds {
+    padding: 14px 12px;
+  }
+
+  .draft-event-odd {
+    padding: 10px 8px;
+  }
+
+  .draft-event-odd strong {
+    font-size: 21px;
+  }
+
+  .draft-event-odd-tie strong {
+    font-size: 15px;
+  }
+}

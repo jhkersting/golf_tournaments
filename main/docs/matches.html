@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="theme.js" defer></script>
+  <script src="nav.js" defer></script>
+  <script type="module" src="matches.js"></script>
+  <meta name="theme-color" content="#184635" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Golf Tournament" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="matches.css" />
+  <title>Match Draft</title>
+</head>
+
+<body class="matches-page" style="display:block;">
+  <header>
+    <div class="nav">
+      <div class="brand"><span class="dot"></span> Golf Tournaments</div>
+      <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
+      <div class="actions">
+        <a href="./index.html">Home</a>
+        <a href="./enter.html">Enter Scores</a>
+        <a href="./scoreboard.html" data-scoreboard-link>Scoreboard</a>
+        <a href="./hole-map.html">Hole Map</a>
+        <a href="./draft.html">Draft</a>
+        <a href="./matches.html" aria-current="page">Matches</a>
+        <p type="button" class="theme-toggle" data-theme-toggle></p>
+      </div>
+    </div>
+  </header>
+
+  <main class="container matches-shell">
+    <section class="matches-heading">
+      <div>
+        <span class="matches-kicker">15 points · First to 8</span>
+        <h1>Match Draft</h1>
+        <p id="matches_role">Public live view.</p>
+      </div>
+      <div class="matches-tools">
+        <button type="button" class="secondary" id="matches_login_toggle">Captain Login</button>
+        <button type="button" class="secondary" id="matches_undo" hidden>Undo</button>
+        <button type="button" class="secondary" id="matches_reset" hidden>Reset</button>
+        <button type="button" class="secondary" id="matches_logout" hidden>Exit</button>
+      </div>
+    </section>
+
+    <p class="matches-sync small" id="matches_sync" role="status"></p>
+
+    <form class="card matches-login" id="matches_login_form" hidden>
+      <div>
+        <h2>Captain Login</h2>
+        <p>Use the same captain code as the team draft.</p>
+      </div>
+      <label for="matches_code">Captain code</label>
+      <input id="matches_code" name="code" type="password" autocomplete="one-time-code" required />
+      <button type="submit">Unlock Matches</button>
+      <p class="small matches-login-status" id="matches_login_status" role="status"></p>
+    </form>
+
+    <section class="card matches-locked" id="matches_locked" hidden>
+      <span class="matches-kicker">Matchups open after the team draft</span>
+      <h2>Teams are still being selected.</h2>
+      <p>The live event projection will update on the draft page after every pick.</p>
+      <a class="main-action-link" href="./draft.html">View Team Draft</a>
+    </section>
+
+    <div id="matches_board" hidden>
+      <section class="matches-event card" aria-labelledby="matches_event_title">
+        <div class="matches-section-head">
+          <div>
+            <span class="matches-kicker">Live simulation</span>
+            <h2 id="matches_event_title">Event odds</h2>
+          </div>
+          <span class="small" id="matches_odds_meta">Calculating…</span>
+        </div>
+        <div class="matches-event-grid" id="matches_event_odds" aria-live="polite"></div>
+        <div class="matches-event-track" id="matches_event_track" aria-hidden="true"></div>
+        <p class="small matches-projection-note">Unpicked match slots use the handicap-weighted players remaining on each team.</p>
+      </section>
+
+      <section class="matches-turn" id="matches_turn" aria-live="polite"></section>
+
+      <section class="card matches-picker" id="matches_picker">
+        <div class="matches-section-head">
+          <div>
+            <span class="matches-kicker" id="matches_stage_venue"></span>
+            <h2 id="matches_stage_title"></h2>
+          </div>
+          <span class="matches-stage-progress" id="matches_stage_progress"></span>
+        </div>
+        <p class="matches-stage-detail" id="matches_stage_detail"></p>
+        <div class="matches-snake-note">One continuous snake: Jake · Jack · Jack · Jake. It does not restart between rounds.</div>
+        <div class="matches-player-grid" id="matches_players"></div>
+        <button type="button" class="matches-lock-button" id="matches_lock" disabled>Lock selection</button>
+        <p class="small matches-picker-help" id="matches_picker_help"></p>
+      </section>
+
+      <section class="matches-schedule" aria-labelledby="matches_schedule_title">
+        <div class="matches-schedule-head">
+          <div>
+            <span class="matches-kicker">Four nine-hole sessions</span>
+            <h2 id="matches_schedule_title">Projected matches</h2>
+          </div>
+          <span class="small">Odds update after every pick</span>
+        </div>
+        <div id="matches_rounds"></div>
+      </section>
+    </div>
+  </main>
+</body>
+
+</html>

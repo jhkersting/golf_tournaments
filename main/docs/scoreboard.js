@@ -4634,18 +4634,30 @@ function buildMatchPlayScorecard(round, match, players, teams) {
   const parCells = holeIndices.map((holeIndex) => `<td class="mono">${Number(pars[holeIndex]) || "—"}</td>`).join("");
   const teamACells = holeIndices.map((holeIndex) => scoreCell(teamAScores, holeIndex, holeResults[holeIndex], teamAId)).join("");
   const teamBCells = holeIndices.map((holeIndex) => scoreCell(teamBScores, holeIndex, holeResults[holeIndex], teamBId)).join("");
-  const resultCells = holeIndices.map((holeIndex) => {
+  let runningMatch = 0;
+  const runningMatchCells = holeIndices.map((holeIndex) => {
     const result = holeResults[holeIndex];
-    const label = result === "halved" ? "AS" : result === teamAId ? "A" : result === teamBId ? "B" : "—";
-    const resultClass = result === teamAId ? " won-by-a" : result === teamBId ? " won-by-b" : result === "halved" ? " halved" : "";
+    if (result !== "halved" && result !== teamAId && result !== teamBId) {
+      return `<td class="mono match-play-hole-result">—</td>`;
+    }
+    if (result === teamAId) runningMatch += 1;
+    if (result === teamBId) runningMatch -= 1;
+    const label = runningMatch > 0 ? `↑${runningMatch}` : runningMatch < 0 ? `↓${Math.abs(runningMatch)}` : "AS";
+    const resultClass = runningMatch > 0 ? " won-by-a" : runningMatch < 0 ? " won-by-b" : " halved";
     return `<td class="mono match-play-hole-result${resultClass}">${label}</td>`;
   }).join("");
+  table.style.setProperty("--match-play-scorecard-min-width", `${198 + (holeIndices.length * 40)}px`);
   table.innerHTML = `
+    <colgroup>
+      <col class="match-play-scorecard-name-col">
+      ${holeIndices.map(() => `<col class="match-play-scorecard-hole-col">`).join("")}
+      <col class="match-play-scorecard-total-col">
+    </colgroup>
     <thead><tr><th class="left">Scorecard</th>${headerCells}<th>Total</th></tr></thead>
     <tbody>
-      <tr class="match-play-scorecard-team-a"><td class="left"><b>${escapeHtml(sideLabel(match.teamA))}</b></td>${teamACells}<td class="mono"><b>${playedTotal(teamAScores)}</b></td></tr>
       <tr class="match-play-scorecard-par"><td class="left">Par</td>${parCells}<td class="mono"><b>${holeIndices.reduce((sum, holeIndex) => sum + (Number(pars[holeIndex]) || 0), 0)}</b></td></tr>
-      <tr class="match-play-scorecard-result"><td class="left">Result</td>${resultCells}<td></td></tr>
+      <tr class="match-play-scorecard-team-a"><td class="left"><b>${escapeHtml(sideLabel(match.teamA))}</b></td>${teamACells}<td class="mono"><b>${playedTotal(teamAScores)}</b></td></tr>
+      <tr class="match-play-scorecard-result"><td class="left">Match</td>${runningMatchCells}<td></td></tr>
       <tr class="match-play-scorecard-team-b"><td class="left"><b>${escapeHtml(sideLabel(match.teamB))}</b></td>${teamBCells}<td class="mono"><b>${playedTotal(teamBScores)}</b></td></tr>
     </tbody>`;
   wrap.appendChild(table);
