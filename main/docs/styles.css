@@ -437,6 +437,17 @@ button.draft-player small {
   font-weight: 700;
   white-space: nowrap;
 }
+.match-play-team-probability {
+  display: block;
+  margin-top: 5px;
+  color: var(--team-accent, var(--muted));
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  font-weight: 700;
+}
+.match-play-race-team-b .match-play-team-probability {
+  text-align: right;
+}
 .match-play-race-track {
   position: relative;
   height: 18px;
@@ -459,6 +470,13 @@ button.draft-player small {
 }
 .match-play-race-segment-live {
   opacity: .34;
+}
+.match-play-event-tie {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  font-weight: 700;
+  text-align: center;
 }
 .match-play-target {
   color: var(--muted);
@@ -531,6 +549,28 @@ button.draft-player small {
   font-size: .78rem;
   font-family: var(--font-mono);
   text-transform: uppercase;
+}
+.match-play-match-probability {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: .76rem;
+  font-weight: 700;
+}
+.match-play-match-probability-a {
+  color: var(--team-a-accent, var(--text));
+}
+.match-play-match-probability-tie {
+  text-align: center;
+}
+.match-play-match-probability-b {
+  color: var(--team-b-accent, var(--text));
+  text-align: right;
 }
 .match-play-entry-card {
   display: grid;

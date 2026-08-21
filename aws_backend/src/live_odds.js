@@ -1,6 +1,6 @@
 import { maxGrossByHoleForRound } from "./round_rules.js";
 
-const MODEL_VERSION = "live-odds-latency-v10";
+const MODEL_VERSION = "live-odds-latency-v11";
 const LATENCY_MODE = "latency_first";
 const HOLE_COUNT = 18;
 const PAR_SIGMA = { 3: 0.55, 4: 0.75, 5: 0.95 };
@@ -355,22 +355,22 @@ function minScoreDistribution(distributions) {
   if (!Number.isFinite(supportMin) || !Number.isFinite(supportMax) || supportMin > supportMax) return clean[0];
 
   const survivalByDistribution = clean.map((distribution) => {
-    const pmf = Array(supportMax + 2).fill(0);
+    const pmf = new Map();
     distribution.values.forEach((value, idx) => {
-      const score = clamp(Math.round(Number(value) || 0), 0, supportMax + 1);
-      pmf[score] += Number(distribution.weights[idx] || 0);
+      const score = Math.round(Number(value) || 0);
+      pmf.set(score, Number(pmf.get(score) || 0) + Number(distribution.weights[idx] || 0));
     });
-    for (let score = supportMax; score >= 0; score--) {
-      pmf[score] += Number(pmf[score + 1] || 0);
-    }
-    return pmf;
+    return (score) => Array.from(pmf.entries()).reduce(
+      (sum, [candidate, probability]) => sum + (candidate >= score ? Number(probability || 0) : 0),
+      0
+    );
   });
 
   const values = [];
   const weights = [];
   for (let score = supportMin; score <= supportMax; score++) {
-    const survivalHere = survivalByDistribution.reduce((product, survival) => product * Number(survival[score] || 0), 1);
-    const survivalNext = survivalByDistribution.reduce((product, survival) => product * Number(survival[score + 1] || 0), 1);
+    const survivalHere = survivalByDistribution.reduce((product, survival) => product * survival(score), 1);
+    const survivalNext = survivalByDistribution.reduce((product, survival) => product * survival(score + 1), 1);
     const probability = Math.max(0, survivalHere - survivalNext);
     if (probability <= 0) continue;
     values.push(score);
@@ -2157,10 +2157,322 @@ function scoreDirectionForTournament(tournamentJson) {
   return normalizeTournamentScoring(tournamentJson?.tournament?.scoring) === "stableford" ? "high" : "low";
 }
 
+function isTeamMatchPlayOddsTournament(tournamentJson) {
+  return String(tournamentJson?.tournament?.competitionType || tournamentJson?.competitionType || "") === "team_match_play";
+}
+
+function matchPlayActiveHoleIndices(round = {}) {
+  if (Number(round?.holes) === 9) {
+    const start = String(round?.nineHoleSide || "").trim().toLowerCase() === "back" ? 9 : 0;
+    return Array.from({ length: 9 }, (_, index) => start + index);
+  }
+  return Array.from({ length: HOLE_COUNT }, (_, index) => index);
+}
+
+function shiftedScoreDistribution(distribution, shift) {
+  const scoreShift = Math.max(0, Math.round(Number(shift) || 0));
+  if (!scoreShift) return distribution;
+  return discreteDistributionStats(
+    (distribution?.values || []).map((value) => Number(value) - scoreShift),
+    distribution?.weights || []
+  ) || distribution;
+}
+
+function alternateShotOrderDistribution(par, firstParams, secondParams) {
+  const safePar = clamp(Math.round(Number(par) || 4), 3, 5);
+  const cap = holeUpperBound(safePar);
+  const finish = Array(cap + 1).fill(0);
+  let states = Array(safePar).fill(0);
+  states[0] = 1;
+
+  for (let stroke = 1; stroke <= cap; stroke++) {
+    const params = stroke % 2 === 1 ? firstParams : secondParams;
+    const normalized = normalizeHardyParams(params?.p, params?.q);
+    const transitions = [
+      { advance: 2, probability: normalized.p },
+      { advance: 1, probability: Math.max(0, 1 - normalized.p - normalized.q) },
+      { advance: 0, probability: normalized.q }
+    ].filter((item) => item.probability > 0);
+    const nextStates = Array(safePar).fill(0);
+    for (let progress = 0; progress < safePar; progress++) {
+      const stateProbability = Number(states[progress] || 0);
+      if (stateProbability <= 0) continue;
+      for (const transition of transitions) {
+        const nextProgress = progress + transition.advance;
+        const nextProbability = stateProbability * transition.probability;
+        if (nextProgress >= safePar) finish[stroke] += nextProbability;
+        else nextStates[nextProgress] += nextProbability;
+      }
+    }
+    if (stroke === cap) finish[stroke] += nextStates.reduce((sum, value) => sum + Number(value || 0), 0);
+    else states = nextStates;
+  }
+
+  return discreteDistributionStats(
+    Array.from({ length: cap }, (_, index) => index + 1),
+    finish.slice(1)
+  );
+}
+
+function alternateShotDistribution(playerDistributions, par) {
+  const clean = (playerDistributions || []).filter((distribution) => distribution?.p != null && distribution?.q != null);
+  if (!clean.length) return null;
+  if (clean.length === 1) return clean[0];
+  const firstOrder = alternateShotOrderDistribution(par, clean[0], clean[1]);
+  const secondOrder = alternateShotOrderDistribution(par, clean[1], clean[0]);
+  return discreteDistributionStats(
+    [...(firstOrder?.values || []), ...(secondOrder?.values || [])],
+    [...(firstOrder?.weights || []).map((weight) => weight / 2), ...(secondOrder?.weights || []).map((weight) => weight / 2)]
+  ) || firstOrder || secondOrder;
+}
+
+function integerPercentTriplet(counts, total) {
+  const denominator = Math.max(1, Number(total) || 1);
+  const raw = (counts || []).map((count) => (Math.max(0, Number(count) || 0) / denominator) * 100);
+  const whole = raw.map((value) => Math.floor(value));
+  let remaining = 100 - whole.reduce((sum, value) => sum + value, 0);
+  const order = raw.map((value, index) => ({ index, remainder: value - whole[index] }))
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+  for (let index = 0; index < remaining; index++) whole[order[index % order.length].index] += 1;
+  return whole;
+}
+
+function matchPlayHandicapShots(handicap, strokeIndex) {
+  const value = Math.max(0, Math.floor(Number(handicap) || 0));
+  const base = Math.floor(value / HOLE_COUNT);
+  const remainder = value % HOLE_COUNT;
+  return Array.from({ length: HOLE_COUNT }, (_, holeIndex) => (
+    base + (Number(strokeIndex?.[holeIndex] ?? holeIndex + 1) <= remainder ? 1 : 0)
+  ));
+}
+
+function matchPlaySideDistribution(context, side, holeIndex, extraShift = null) {
+  const holeBaseline = context.holeBaselines[holeIndex];
+  const playerDistributions = (side?.playerIds || []).map((playerId) => {
+    const player = context.playerById.get(String(playerId)) || { handicap: 0 };
+    const skillShift = context.playerSkillShifts.get(String(playerId));
+    return buildHoleDistribution(holeBaseline, skillShift?.get(holeBaseline.par), extraShift);
+  });
+  if (!playerDistributions.length) {
+    return buildHoleDistribution(holeBaseline, { pShift: 0, qShift: 0 }, extraShift);
+  }
+  if (context.format === "alternate_shot") return alternateShotDistribution(playerDistributions, holeBaseline.par);
+  if (context.format === "scramble") return minScoreDistribution(playerDistributions);
+
+  const scoringDistributions = context.useHandicap
+    ? playerDistributions.map((distribution, playerIndex) => {
+        const playerId = String(side.playerIds[playerIndex] || "");
+        const player = context.playerById.get(playerId) || { handicap: 0 };
+        const shots = matchPlayHandicapShots(player.handicap, context.course?.strokeIndex);
+        return shiftedScoreDistribution(distribution, shots[holeIndex]);
+      })
+    : playerDistributions;
+  return context.format === "best_ball" ? minScoreDistribution(scoringDistributions) : scoringDistributions[0];
+}
+
+function buildMatchPlayRoundContexts(tournamentJson) {
+  const configuredRounds = tournamentJson?.tournament?.rounds || [];
+  const derivedRounds = tournamentJson?.matchPlay?.rounds || [];
+  const playerById = new Map((tournamentJson?.players || []).map((player) => [String(player?.playerId || ""), player]));
+
+  return configuredRounds.map((configuredRound, roundIndex) => {
+    const derivedRound = derivedRounds[roundIndex] || {};
+    const course = courseForRoundIndex(tournamentJson, roundIndex);
+    const courseDifficulty = buildCourseDifficultyModel(course);
+    const holeBaselines = buildHoleBaselines(course, courseDifficulty);
+    const playerSkillShifts = new Map();
+    for (const [playerId, player] of playerById.entries()) {
+      playerSkillShifts.set(playerId, skillShiftByPar(course, holeBaselines, courseDifficulty, Number(player?.handicap || 0)));
+    }
+    const context = {
+      roundIndex,
+      format: String(configuredRound?.format || derivedRound?.format || "singles").trim().toLowerCase(),
+      useHandicap: !!configuredRound?.useHandicap,
+      course,
+      holeBaselines,
+      playerById,
+      playerSkillShifts,
+      activeHoleIndices: matchPlayActiveHoleIndices(configuredRound),
+      matches: []
+    };
+    const derivedById = new Map((derivedRound?.matches || []).map((match) => [String(match?.matchId || ""), match]));
+    context.matches = (configuredRound?.matches || []).map((match) => {
+      const actual = derivedById.get(String(match?.matchId || "")) || {};
+      return {
+        matchId: String(match?.matchId || actual?.matchId || ""),
+        points: Math.max(0, Number(match?.points ?? actual?.pointsAvailable ?? 1) || 0),
+        teamA: match?.teamA || actual?.teamA || {},
+        teamB: match?.teamB || actual?.teamB || {},
+        actual
+      };
+    });
+    return context;
+  });
+}
+
+function prepareMatchPlayDistributions(roundContexts) {
+  const liveActual = Array(HOLE_COUNT).fill(0);
+  const liveExpected = Array(HOLE_COUNT).fill(0);
+  const liveCounts = Array(HOLE_COUNT).fill(0);
+
+  for (const context of roundContexts) {
+    for (const match of context.matches) {
+      match.baseDistributions = { teamA: [], teamB: [] };
+      match.formResiduals = { teamA: [], teamB: [] };
+      for (const [sideKey, side] of [["teamA", match.teamA], ["teamB", match.teamB]]) {
+        for (const holeIndex of context.activeHoleIndices) {
+          const distribution = matchPlaySideDistribution(context, side, holeIndex);
+          match.baseDistributions[sideKey][holeIndex] = distribution;
+          const actualScore = Number(match.actual?.sideScores?.[side?.teamId]?.[holeIndex]);
+          if (!Number.isFinite(actualScore) || actualScore <= 0 || !Number.isFinite(distribution?.mean)) continue;
+          const residual = actualScore - distribution.mean;
+          match.formResiduals[sideKey].push(residual);
+          liveActual[holeIndex] += actualScore;
+          liveExpected[holeIndex] += distribution.mean;
+          liveCounts[holeIndex] += 1;
+        }
+      }
+    }
+  }
+
+  const liveHoleShifts = Array.from({ length: HOLE_COUNT }, (_, holeIndex) => {
+    const count = liveCounts[holeIndex];
+    if (!count) return { pShift: 0, qShift: 0 };
+    const residual = (liveActual[holeIndex] - liveExpected[holeIndex]) / count;
+    const adjusted = residual * (count / (count + LIVE_HOLE_SHRINKAGE)) * LIVE_HOLE_EFFECT_MULTIPLIER;
+    return hardyShiftFromStrokeDelta(adjusted, LIVE_SHIFT_SCALES);
+  });
+
+  for (const context of roundContexts) {
+    for (const match of context.matches) {
+      match.distributions = { teamA: [], teamB: [] };
+      for (const [sideKey, side] of [["teamA", match.teamA], ["teamB", match.teamB]]) {
+        const residuals = match.formResiduals[sideKey];
+        const rawForm = residuals.length ? residuals.reduce((sum, value) => sum + value, 0) / residuals.length : 0;
+        const adjustedForm = clamp(
+          rawForm * (residuals.length / (residuals.length + FORM_SHRINKAGE)) * FORM_EFFECT_MULTIPLIER,
+          -FORM_EFFECT_CAP,
+          FORM_EFFECT_CAP
+        );
+        const formShift = hardyShiftFromStrokeDelta(adjustedForm, FORM_SHIFT_SCALES);
+        for (const holeIndex of context.activeHoleIndices) {
+          match.distributions[sideKey][holeIndex] = matchPlaySideDistribution(
+            context,
+            side,
+            holeIndex,
+            mergeHardyShifts(liveHoleShifts[holeIndex], formShift)
+          );
+        }
+      }
+    }
+  }
+}
+
+function simulateMatchPlayMatch(context, match, rng) {
+  let lead = 0;
+  let played = 0;
+  for (const holeIndex of context.activeHoleIndices) {
+    const actualResult = match.actual?.holeResults?.[holeIndex];
+    if (actualResult === match.teamA?.teamId) {
+      lead += 1;
+      played += 1;
+    } else if (actualResult === match.teamB?.teamId) {
+      lead -= 1;
+      played += 1;
+    } else if (actualResult === "halved") {
+      played += 1;
+    } else {
+      const scoreA = sampleDiscrete(match.distributions.teamA[holeIndex]?.values || [4], match.distributions.teamA[holeIndex]?.weights || [1], rng);
+      const scoreB = sampleDiscrete(match.distributions.teamB[holeIndex]?.values || [4], match.distributions.teamB[holeIndex]?.weights || [1], rng);
+      if (scoreA < scoreB) lead += 1;
+      else if (scoreB < scoreA) lead -= 1;
+      played += 1;
+    }
+    const holesRemaining = context.activeHoleIndices.length - played;
+    if (Math.abs(lead) > holesRemaining) break;
+  }
+  return lead > 0 ? "teamA" : lead < 0 ? "teamB" : "tie";
+}
+
+function computeMatchPlayOdds(tournamentJson, { generatedAt, modelVersion }) {
+  const teamIds = (tournamentJson?.matchPlay?.teamIds || tournamentJson?.tournament?.matchPlay?.teamIds || [])
+    .map((teamId) => String(teamId || ""));
+  const roundContexts = buildMatchPlayRoundContexts(tournamentJson);
+  prepareMatchPlayDistributions(roundContexts);
+  const remainingMatchHoles = roundContexts.reduce((total, context) => total + context.matches.reduce(
+    (matchTotal, match) => matchTotal + Math.max(0, context.activeHoleIndices.length - Number(match?.actual?.thru || 0)),
+    0
+  ), 0);
+  const simulationCount = chooseSimulationCount(remainingMatchHoles * 2);
+  const rng = createSeededRng(
+    `${tournamentJson?.tournament?.tournamentId || ""}|${tournamentJson?.version || 0}|${tournamentJson?.updatedAt || ""}|${modelVersion}|match_play`
+  );
+  const matchCounts = roundContexts.map((context) => context.matches.map(() => [0, 0, 0]));
+  const eventCounts = [0, 0, 0];
+  const winTarget = Math.max(0, Number(tournamentJson?.matchPlay?.winTarget || tournamentJson?.tournament?.matchPlay?.winTarget || 0));
+
+  for (let simulationIndex = 0; simulationIndex < simulationCount; simulationIndex++) {
+    const points = Object.fromEntries(teamIds.map((teamId) => [teamId, 0]));
+    for (let roundIndex = 0; roundIndex < roundContexts.length; roundIndex++) {
+      const context = roundContexts[roundIndex];
+      for (let matchIndex = 0; matchIndex < context.matches.length; matchIndex++) {
+        const match = context.matches[matchIndex];
+        const result = simulateMatchPlayMatch(context, match, rng);
+        const resultIndex = result === "teamA" ? 0 : result === "teamB" ? 2 : 1;
+        matchCounts[roundIndex][matchIndex][resultIndex] += 1;
+        if (result === "teamA") points[match.teamA.teamId] = Number(points[match.teamA.teamId] || 0) + match.points;
+        else if (result === "teamB") points[match.teamB.teamId] = Number(points[match.teamB.teamId] || 0) + match.points;
+        else {
+          points[match.teamA.teamId] = Number(points[match.teamA.teamId] || 0) + (match.points / 2);
+          points[match.teamB.teamId] = Number(points[match.teamB.teamId] || 0) + (match.points / 2);
+        }
+      }
+    }
+    const winnerIndex = teamIds.findIndex((teamId) => Number(points[teamId] || 0) >= winTarget);
+    if (winnerIndex === 0) eventCounts[0] += 1;
+    else if (winnerIndex === 1) eventCounts[2] += 1;
+    else eventCounts[1] += 1;
+  }
+
+  const eventPercentages = integerPercentTriplet(eventCounts, simulationCount);
+  return {
+    generatedAt,
+    modelVersion,
+    simCount: simulationCount,
+    latencyMode: LATENCY_MODE,
+    rounds: roundContexts.map((context) => ({ roundIndex: context.roundIndex, teams: [], players: [], groups: [] })),
+    all_rounds: { teams: [], players: [], groups: [] },
+    match_play: {
+      teamIds,
+      event: {
+        teams: teamIds.map((teamId, index) => ({ teamId, winProbability: eventPercentages[index === 0 ? 0 : 2] })),
+        tieProbability: eventPercentages[1]
+      },
+      rounds: roundContexts.map((context, roundIndex) => ({
+        roundIndex: context.roundIndex,
+        matches: context.matches.map((match, matchIndex) => {
+          const percentages = integerPercentTriplet(matchCounts[roundIndex][matchIndex], simulationCount);
+          return {
+            matchId: match.matchId,
+            teamAId: String(match.teamA?.teamId || ""),
+            teamBId: String(match.teamB?.teamId || ""),
+            teamAWinProbability: percentages[0],
+            halveProbability: percentages[1],
+            teamBWinProbability: percentages[2]
+          };
+        })
+      }))
+    }
+  };
+}
+
 export function computeLiveOdds(tournamentJson, {
   generatedAt = new Date().toISOString(),
   modelVersion = MODEL_VERSION
 } = {}) {
+  if (isTeamMatchPlayOddsTournament(tournamentJson)) {
+    return computeMatchPlayOdds(tournamentJson, { generatedAt, modelVersion });
+  }
   const rounds = tournamentJson?.tournament?.rounds || [];
   const roundContexts = rounds.map((_, roundIndex) => buildRoundContext(tournamentJson, roundIndex));
   const roundWeights = normalizeRoundWeights(rounds);

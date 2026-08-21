@@ -537,6 +537,10 @@ function expandCompactLiveOddsPayload(oddsJson, tournamentJson) {
   const playerNames = playerNameLookupFromTournament(tournamentJson);
   const rounds = Array.isArray(compact?.r) ? compact.r : [];
   const allRounds = Array.isArray(compact?.a) ? compact.a : [[], [], []];
+  const compactMatchPlay = Array.isArray(compact?.m) ? compact.m : null;
+  const matchPlayTeamIds = Array.isArray(compactMatchPlay?.[0]) ? compactMatchPlay[0].map((teamId) => String(teamId || "")) : [];
+  const matchPlayEvent = Array.isArray(compactMatchPlay?.[1]) ? compactMatchPlay[1] : [];
+  const matchPlayRounds = Array.isArray(compactMatchPlay?.[2]) ? compactMatchPlay[2] : [];
 
   return {
     generatedAt: oddsJson?.u || null,
@@ -553,6 +557,29 @@ function expandCompactLiveOddsPayload(oddsJson, tournamentJson) {
       players: expandCompactOddsRows(allRounds?.[1], "player", tournamentJson, "all", teamNames, playerNames),
       groups: expandCompactOddsRows(allRounds?.[2], "group", tournamentJson, "all", teamNames, playerNames)
     },
+    ...(matchPlayTeamIds.length === 2 ? {
+      match_play: {
+        teamIds: matchPlayTeamIds,
+        event: {
+          teams: [
+            { teamId: matchPlayTeamIds[0], winProbability: Number(matchPlayEvent?.[0] || 0) },
+            { teamId: matchPlayTeamIds[1], winProbability: Number(matchPlayEvent?.[2] || 0) }
+          ],
+          tieProbability: Number(matchPlayEvent?.[1] || 0)
+        },
+        rounds: matchPlayRounds.map((matches, roundIndex) => ({
+          roundIndex,
+          matches: (matches || []).map((match) => ({
+            matchId: String(match?.[0] || ""),
+            teamAId: String(match?.[1] || ""),
+            teamBId: String(match?.[2] || ""),
+            teamAWinProbability: Number(match?.[3] || 0),
+            halveProbability: Number(match?.[4] || 0),
+            teamBWinProbability: Number(match?.[5] || 0)
+          }))
+        }))
+      }
+    } : {}),
     compactTimeline: oddsJson?.h || null
   };
 }
@@ -4554,6 +4581,15 @@ function matchPlayLiveProjection(matchPlay, teamIds) {
   return projected;
 }
 
+function matchPlayOddsData() {
+  return TOURN?.score_data?.live_odds?.match_play || null;
+}
+
+function matchPlayMatchOdds(roundIndex, matchId) {
+  const round = matchPlayOddsData()?.rounds?.find((item) => Number(item?.roundIndex) === Number(roundIndex));
+  return round?.matches?.find((item) => String(item?.matchId || "") === String(matchId || "")) || null;
+}
+
 function renderMatchPlayScoreboard() {
   const matchPlay = TOURN?.matchPlay || {};
   const standings = Array.isArray(matchPlay.standings) ? matchPlay.standings : [];
@@ -4591,6 +4627,8 @@ function renderMatchPlayScoreboard() {
   const raceStandings = standings.slice(0, 2);
   const teamIds = raceStandings.map((standing) => standing.teamId);
   const liveProjection = matchPlayLiveProjection(matchPlay, teamIds);
+  const eventOdds = matchPlayOddsData()?.event || null;
+  const eventOddsByTeam = new Map((eventOdds?.teams || []).map((row) => [String(row?.teamId || ""), row]));
   const colors = raceStandings.map((standing) => (
     teams[standing.teamId]?.color || standing.teamColor || colorForTeam(standing.teamId, standing.teamName)
   ));
@@ -4613,7 +4651,14 @@ function renderMatchPlayScoreboard() {
     active.textContent = activePoints > 0 ? `(${formatMatchPlayPoints(activePoints)})` : "";
     active.hidden = activePoints <= 0;
     scoreLine.append(score, active);
-    card.append(name, scoreLine);
+    const probability = document.createElement("span");
+    probability.className = "match-play-team-probability";
+    const winProbability = eventOddsByTeam.get(String(standing.teamId))?.winProbability;
+    probability.textContent = Number.isFinite(Number(winProbability))
+      ? `${formatPercent(winProbability, { exactExtremes: true })} win`
+      : "";
+    probability.hidden = !probability.textContent;
+    card.append(name, scoreLine, probability);
     raceTeams.appendChild(card);
   });
   race.appendChild(raceTeams);
@@ -4647,6 +4692,13 @@ function renderMatchPlayScoreboard() {
     addSegment("match-play-race-segment-b match-play-race-segment-earned", colors[1], teamB.points, 0);
     addSegment("match-play-race-segment-b match-play-race-segment-live", colors[1], liveProjection[teamB.teamId], teamB.points);
     race.appendChild(track);
+  }
+
+  if (eventOdds && Number.isFinite(Number(eventOdds.tieProbability))) {
+    const tieProbability = document.createElement("div");
+    tieProbability.className = "match-play-event-tie";
+    tieProbability.textContent = `${formatPercent(eventOdds.tieProbability, { exactExtremes: true })} event tie`;
+    race.appendChild(tieProbability);
   }
 
   const target = document.createElement("div");
@@ -4730,6 +4782,21 @@ function renderMatchPlayScoreboard() {
       detail.hidden = !detail.textContent;
       center.append(state, detail);
       card.append(side(match.teamA, "a"), center, side(match.teamB, "b"));
+      const odds = matchPlayMatchOdds(round.roundIndex, match.matchId);
+      if (odds) {
+        const probability = document.createElement("div");
+        probability.className = "match-play-match-probability";
+        const addProbability = (label, value, className) => {
+          const item = document.createElement("span");
+          item.className = className;
+          item.textContent = `${label} ${formatPercent(value, { exactExtremes: true })}`;
+          probability.appendChild(item);
+        };
+        addProbability("Win", odds.teamAWinProbability, "match-play-match-probability-a");
+        addProbability("Halve", odds.halveProbability, "match-play-match-probability-tie");
+        addProbability("Win", odds.teamBWinProbability, "match-play-match-probability-b");
+        card.appendChild(probability);
+      }
       section.appendChild(card);
     }
     root.appendChild(section);
