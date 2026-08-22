@@ -19,7 +19,7 @@ export const DRAFT_PLAYERS = [
 ];
 
 export const DRAFT_PLAYER_IDS = new Set(DRAFT_PLAYERS.map((player) => player.playerId));
-export const DRAFT_ODDS_PROJECTION_VERSION = "draft-picks-75-25-anchored-half-v3";
+export const DRAFT_ODDS_PROJECTION_VERSION = "draft-picks-75-25-anchored-half-v4";
 export const ANCHORED_MODEL_HANDICAP_MULTIPLIER = 1 / 2;
 export const LINEUP_STAGES = [
   { stageId: "sherrillPairs", label: "Sherrill pairs", groupSize: 2, selections: 6 },
@@ -197,30 +197,6 @@ function roundMatches(roundIndex, groups, points = 1) {
   }));
 }
 
-function anchoredModelGroups(groups, playersById) {
-  const modelPlayers = new Map();
-  const adjusted = { jake: [], jack: [] };
-  for (const teamId of ["jake", "jack"]) {
-    adjusted[teamId] = groups[teamId].map((group) => group.map((playerId) => {
-      const player = playersById.get(playerId);
-      if (!player) return playerId;
-      const modelPlayerId = `anchored-model-${playerId}`;
-      if (!modelPlayers.has(modelPlayerId)) {
-        modelPlayers.set(modelPlayerId, {
-          ...player,
-          playerId: modelPlayerId,
-          handicap: Math.round(Number(player.handicap || 0) * ANCHORED_MODEL_HANDICAP_MULTIPLIER * 100) / 100,
-          displayPlayerId: player.playerId,
-          displayHandicap: Number(player.handicap || 0),
-          anchoredModelAdjustment: true
-        });
-      }
-      return modelPlayerId;
-    }));
-  }
-  return { groups: adjusted, players: Array.from(modelPlayers.values()) };
-}
-
 function selectCourses(catalogInput) {
   const courses = catalogInput?.courses || catalogInput || {};
   const values = Array.isArray(courses) ? courses : Object.values(courses);
@@ -243,16 +219,11 @@ export function buildDraftEventTournament(state, courseCatalog = {}) {
   for (const player of [...sherrill.players, ...anchoredPairs.players, ...anchoredSingles.players]) {
     playersById.set(player.playerId, player);
   }
-  const anchoredPairModel = anchoredModelGroups(anchoredPairs.groups, playersById);
-  const anchoredSinglesModel = anchoredModelGroups(anchoredSingles.groups, playersById);
-  for (const player of [...anchoredPairModel.players, ...anchoredSinglesModel.players]) {
-    playersById.set(player.playerId, player);
-  }
   const rounds = [
     { name: "Sherrill Front Scramble", holes: 9, nineHoleSide: "front", format: "scramble", useHandicap: false, courseIndex: 0, matches: roundMatches(0, sherrill.groups) },
     { name: "Sherrill Back Alternate Shot", holes: 9, nineHoleSide: "back", format: "alternate_shot", useHandicap: false, courseIndex: 0, matches: roundMatches(1, sherrill.groups) },
-    { name: "Anchored Front Scramble", holes: 9, nineHoleSide: "front", format: "scramble", useHandicap: false, courseIndex: 1, matches: roundMatches(2, anchoredPairModel.groups) },
-    { name: "Anchored Back Singles", holes: 9, nineHoleSide: "back", format: "singles", useHandicap: false, courseIndex: 1, matches: roundMatches(3, anchoredSinglesModel.groups) }
+    { name: "Anchored Front Scramble", holes: 9, nineHoleSide: "front", format: "scramble", useHandicap: false, modelHandicapMultiplier: ANCHORED_MODEL_HANDICAP_MULTIPLIER, courseIndex: 1, matches: roundMatches(2, anchoredPairs.groups) },
+    { name: "Anchored Back Singles", holes: 9, nineHoleSide: "back", format: "singles", useHandicap: false, modelHandicapMultiplier: ANCHORED_MODEL_HANDICAP_MULTIPLIER, courseIndex: 1, matches: roundMatches(3, anchoredSingles.groups) }
   ];
   return {
     version: Number(state?.version || 0),

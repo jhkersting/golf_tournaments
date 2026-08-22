@@ -8,6 +8,7 @@ const HOLE_SIGMA_MULTIPLIER = 1.35;
 const STROKE_Z_MEAN = 9.5;
 const STROKE_Z_STD = 5.188127472091127;
 const BASELINE_REFERENCE_HANDICAP = 10;
+const ANCHORED_NATIONAL_HANDICAP_MULTIPLIER = 0.5;
 const BASELINE_HANDICAP_ANCHORS = [0, 5, 10, 15, 20];
 const LIVE_HOLE_SHRINKAGE = 8;
 const LIVE_HOLE_EFFECT_MULTIPLIER = 0.5;
@@ -2280,9 +2281,12 @@ function buildMatchPlayRoundContexts(tournamentJson) {
     const course = courseForRoundIndex(tournamentJson, roundIndex);
     const courseDifficulty = buildCourseDifficultyModel(course);
     const holeBaselines = buildHoleBaselines(course, courseDifficulty);
-    const modelHandicapMultiplier = Number.isFinite(Number(configuredRound?.modelHandicapMultiplier))
-      ? Math.max(0.01, Math.min(2, Number(configuredRound.modelHandicapMultiplier)))
-      : 1;
+    const isAnchoredNational = /\banchored\s+national\b/i.test(String(course?.name || ""));
+    const modelHandicapMultiplier = isAnchoredNational
+      ? ANCHORED_NATIONAL_HANDICAP_MULTIPLIER
+      : Number.isFinite(Number(configuredRound?.modelHandicapMultiplier))
+        ? Math.max(0.01, Math.min(2, Number(configuredRound.modelHandicapMultiplier)))
+        : 1;
     const playerSkillShifts = new Map();
     for (const [playerId, player] of playerById.entries()) {
       playerSkillShifts.set(playerId, skillShiftByPar(

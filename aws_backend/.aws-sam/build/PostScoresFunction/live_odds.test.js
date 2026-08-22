@@ -319,6 +319,20 @@ registerTest("match-play live odds apply the round-specific model handicap multi
   assert.deepEqual(halvedByRound.match_play, alreadyHalved.match_play);
 });
 
+registerTest("Anchored National always applies the half-handicap model adjustment", () => {
+  const anchored = matchPlayFixture("singles", {
+    handicaps: { A1: 4, A2: 8, B1: 20, B2: 24 },
+    modelHandicapMultiplier: 1
+  });
+  anchored.courses[0].name = "Anchored National Golf Club";
+  const anchoredOdds = computeLiveOdds(anchored, { generatedAt: FIXED_NOW });
+  const explicitHalfOdds = computeLiveOdds(matchPlayFixture("singles", {
+    handicaps: { A1: 4, A2: 8, B1: 20, B2: 24 },
+    modelHandicapMultiplier: 0.5
+  }), { generatedAt: FIXED_NOW });
+  assert.deepEqual(anchoredOdds.match_play, explicitHalfOdds.match_play);
+});
+
 registerTest("handicap best ball publishes a valid three-way forecast", () => {
   const odds = computeLiveOdds(matchPlayFixture("best_ball", {
     useHandicap: true,

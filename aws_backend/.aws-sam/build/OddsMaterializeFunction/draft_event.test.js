@@ -96,13 +96,15 @@ test("Anchored alone uses model handicaps cut in half", () => {
   const anchoredPlayer = tournament.players.find((player) => player.playerId === anchoredPlayerId);
 
   assert.ok(!sherrillPlayerId.startsWith("anchored-model-"));
-  assert.ok(anchoredPlayerId.startsWith("anchored-model-"));
-  assert.equal(anchoredPlayer.handicap, Math.round(anchoredPlayer.displayHandicap * ANCHORED_MODEL_HANDICAP_MULTIPLIER * 100) / 100);
-  assert.equal(sherrillPlayer.handicap, sherrillPlayer.displayHandicap ?? sherrillPlayer.handicap);
+  assert.ok(!anchoredPlayerId.startsWith("anchored-model-"));
+  assert.equal(anchoredPlayer.playerId, anchoredPlayerId);
+  assert.equal(tournament.tournament.rounds[0].modelHandicapMultiplier, undefined);
+  assert.equal(tournament.tournament.rounds[2].modelHandicapMultiplier, ANCHORED_MODEL_HANDICAP_MULTIPLIER);
+  assert.equal(tournament.tournament.rounds[3].modelHandicapMultiplier, ANCHORED_MODEL_HANDICAP_MULTIPLIER);
 
   const odds = computeDraftEventOdds(completeState);
   const displayedAnchored = odds.rounds[2].matches[0].jakePlayers[0];
-  assert.equal(displayedAnchored.handicap, anchoredPlayer.displayHandicap);
+  assert.equal(displayedAnchored.handicap, anchoredPlayer.handicap);
   assert.equal(odds.courseAdjustments.anchoredNationalHandicapMultiplier, ANCHORED_MODEL_HANDICAP_MULTIPLIER);
 });
 
