@@ -1881,7 +1881,8 @@ textarea::placeholder {
   color: color-mix(in srgb, var(--muted) 80%, transparent);
 }
 
-button {
+button,
+a.captain-page-link {
   min-height: 44px;
   border: 1px solid var(--brand);
   border-radius: 0px;
@@ -1900,22 +1901,34 @@ button {
     border-color 120ms ease;
 }
 
-button:hover {
+button:hover,
+a.captain-page-link:hover {
   background: var(--brand-hover);
   border-color: var(--brand-hover);
 }
 
-button:active {
+button:active,
+a.captain-page-link:active {
   transform: translateY(1px);
 }
 
-button.secondary {
+a.captain-page-link {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+button.secondary,
+a.captain-page-link {
   background: transparent;
   border-color: var(--border-strong);
   color: var(--text);
 }
 
-button.secondary:hover {
+button.secondary:hover,
+a.captain-page-link:hover {
   background: var(--link-bg);
 }
 

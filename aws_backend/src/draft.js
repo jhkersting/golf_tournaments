@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { json, parseBody, getJson, putJson } from "./utils.js";
 import {
   DRAFT_PLAYER_IDS,
+  DRAFT_ODDS_PROJECTION_VERSION,
   LINEUP_STAGES,
   activeLineupStage,
   computeDraftEventOdds,
@@ -203,7 +204,10 @@ async function readDraftWithOdds(courseCatalog) {
   const bucket = process.env.STATE_BUCKET;
   const { json: current, etag } = await getJson(bucket, DRAFT_KEY);
   const state = normalizeDraftState(current);
-  if (Number(state?.odds?.version) === state.version) return state;
+  if (
+    Number(state?.odds?.version) === state.version
+    && state?.odds?.projectionVersion === DRAFT_ODDS_PROJECTION_VERSION
+  ) return state;
   state.odds = computeDraftEventOdds(state, courseCatalog);
   try {
     await putJson(bucket, DRAFT_KEY, state, { ifMatch: etag, cacheControl: "no-store" });

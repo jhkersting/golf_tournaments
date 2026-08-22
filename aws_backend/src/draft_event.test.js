@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { buildDraftEventTournament, computeDraftEventOdds, emptyLineups, lineupPickIndex, snakeTeamAt } from "./draft_event.js";
+import {
+  ANCHORED_MODEL_HANDICAP_MULTIPLIER,
+  DRAFT_ODDS_PROJECTION_VERSION,
+  buildDraftEventTournament,
+  computeDraftEventOdds,
+  emptyLineups,
+  lineupPickIndex,
+  projectDraftPickHandicaps,
+  snakeTeamAt
+} from "./draft_event.js";
 
 let nodeTest = null;
 try {
@@ -56,13 +65,45 @@ test("the matchup snake does not restart at stage boundaries", () => {
 
 test("unpicked matches expose handicap-weighted projected slots", () => {
   const partial = computeDraftEventOdds({ picks: ["d-davidson"], lineups: emptyLineups(), version: 1 });
-  assert.equal(partial.projectionMethod, "handicap-weighted remaining players");
+  assert.equal(partial.projectionVersion, DRAFT_ODDS_PROJECTION_VERSION);
+  assert.match(partial.projectionMethod, /next-best handicap 75%/);
   assert.ok(partial.rounds.flatMap((round) => round.matches).some((match) => match.provisional));
   const projected = partial.rounds.flatMap((round) => round.matches)
     .flatMap((match) => [...match.jakePlayers, ...match.jackPlayers])
     .filter((player) => player.projected);
   assert.ok(projected.length);
   assert.ok(projected.every((player) => Number.isFinite(player.handicap)));
+});
+
+test("future team-draft picks use 75 percent best and 25 percent second-best handicap", () => {
+  assert.deepEqual(projectDraftPickHandicaps([
+    { playerId: "best", handicap: 0 },
+    { playerId: "second", handicap: 10 },
+    { playerId: "third", handicap: 20 }
+  ]), [2.5, 10.63, 16.88]);
+
+  const tournament = buildDraftEventTournament({ picks: ["f-kersting"], lineups: emptyLineups() });
+  const nextPick = tournament.players.find((player) => player.playerId === "projected-draft-1");
+  assert.equal(nextPick.teamId, "jack");
+  assert.equal(nextPick.handicap, 3.75);
+});
+
+test("Anchored alone uses model handicaps cut in half", () => {
+  const tournament = buildDraftEventTournament(completeState);
+  const sherrillPlayerId = tournament.tournament.rounds[0].matches[0].teamA.playerIds[0];
+  const anchoredPlayerId = tournament.tournament.rounds[2].matches[0].teamA.playerIds[0];
+  const sherrillPlayer = tournament.players.find((player) => player.playerId === sherrillPlayerId);
+  const anchoredPlayer = tournament.players.find((player) => player.playerId === anchoredPlayerId);
+
+  assert.ok(!sherrillPlayerId.startsWith("anchored-model-"));
+  assert.ok(anchoredPlayerId.startsWith("anchored-model-"));
+  assert.equal(anchoredPlayer.handicap, Math.round(anchoredPlayer.displayHandicap * ANCHORED_MODEL_HANDICAP_MULTIPLIER * 100) / 100);
+  assert.equal(sherrillPlayer.handicap, sherrillPlayer.displayHandicap ?? sherrillPlayer.handicap);
+
+  const odds = computeDraftEventOdds(completeState);
+  const displayedAnchored = odds.rounds[2].matches[0].jakePlayers[0];
+  assert.equal(displayedAnchored.handicap, anchoredPlayer.displayHandicap);
+  assert.equal(odds.courseAdjustments.anchoredNationalHandicapMultiplier, ANCHORED_MODEL_HANDICAP_MULTIPLIER);
 });
 
 if (!nodeTest) {

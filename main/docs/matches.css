@@ -378,7 +378,8 @@
     justify-content: flex-start;
   }
 
-  .matches-tools button {
+  .matches-tools button,
+  .matches-tools .captain-page-link {
     min-height: 38px;
     padding: 7px 10px;
   }
