@@ -4676,8 +4676,8 @@ function buildMatchPlayProbabilityTimeline({ title, points, teamAColor, teamBCol
       ${areaBetween(() => 0, (point) => point.teamA, "is-team-a")}
       ${areaBetween((point) => point.teamA, (point) => point.teamA + point.tie, "is-tie")}
       ${areaBetween((point) => point.teamA + point.tie, () => 100, "is-team-b")}
-      <path d="${boundaryPath((point) => point.teamA)}" class="match-play-probability-boundary" />
-      <path d="${boundaryPath((point) => point.teamA + point.tie)}" class="match-play-probability-boundary" />
+      <path d="${boundaryPath((point) => point.teamA)}" class="match-play-probability-boundary" fill="none" />
+      <path d="${boundaryPath((point) => point.teamA + point.tie)}" class="match-play-probability-boundary" fill="none" />
       ${tickMarkup}
     </svg>`;
   return figure;
