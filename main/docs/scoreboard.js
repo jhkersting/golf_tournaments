@@ -590,7 +590,9 @@ function expandCompactLiveOddsPayload(oddsJson, tournamentJson) {
             teamBProjectedScores: (match?.[6]?.[1] || []).map((item) => ({
               holeIndex: Number(item?.[0]),
               projectedScore: Number(item?.[1]) / 10
-            }))
+            })),
+            thru: Math.max(0, Number(match?.[7]) || 0),
+            holes: Math.max(1, Number(match?.[8]) || 18)
           }))
         }))
       }
@@ -4611,54 +4613,53 @@ function matchPlayRoundHoleIndices(round) {
   return Array.from({ length: 9 }, (_, index) => start + index);
 }
 
-function matchPlayStepPath(points, xFor, yFor) {
-  if (!points.length) return "";
-  let path = `M ${xFor(points[0]).toFixed(2)} ${yFor(points[0]).toFixed(2)}`;
-  for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1];
-    const point = points[index];
-    path += ` H ${xFor(point).toFixed(2)} V ${yFor(point).toFixed(2)}`;
-  }
-  return path;
-}
-
-function buildMatchPlayTimeline({ title, points, color, valueLabel, ticks = [] }) {
+function buildMatchPlayProbabilityTimeline({ title, points, teamAColor, teamBColor, ticks = [] }) {
   const width = 640;
-  const height = 210;
-  const plot = { left: 42, right: 14, top: 18, bottom: 34 };
+  const height = 380;
+  const plot = { left: 16, right: 16, top: 18, bottom: 34 };
   const plotWidth = width - plot.left - plot.right;
-  const plotHeight = height - plot.top - plot.bottom;
-  const values = points.map((point) => Number(point.value) || 0);
-  const minValue = Math.min(0, ...values);
-  const maxValue = Math.max(0, ...values);
-  const range = Math.max(2, maxValue - minValue);
-  const padding = Math.max(1, Math.ceil(range * 0.12));
-  const yMin = minValue - padding;
-  const yMax = maxValue + padding;
-  const xFor = (point) => plot.left + Math.max(0, Math.min(1, point.completed)) * plotWidth;
-  const yFor = (point) => plot.top + ((yMax - point.value) / (yMax - yMin)) * plotHeight;
-  const zeroY = yFor({ value: 0 });
-  const linePath = matchPlayStepPath(points, xFor, yFor);
-  const areaPath = linePath
-    ? `${linePath} V ${zeroY.toFixed(2)} H ${xFor(points[0]).toFixed(2)} Z`
-    : "";
+  const plotBottom = height - plot.bottom;
+  const xFor = (point) => plot.left + Math.max(0, Math.min(1, Number(point.completed) || 0)) * plotWidth;
+  const yFor = (value) => plot.top + ((100 - Math.max(0, Math.min(100, Number(value) || 0))) / 100) * (plotBottom - plot.top);
+  const normalized = (points.length ? points : [{ completed: 0, teamA: 0, tie: 100, teamB: 0 }]).map((point) => {
+    const teamA = Math.max(0, Number(point.teamA) || 0);
+    const tie = Math.max(0, Number(point.tie) || 0);
+    const teamB = Math.max(0, Number(point.teamB) || 0);
+    const total = Math.max(1, teamA + tie + teamB);
+    return { completed: point.completed, teamA: teamA / total * 100, tie: tie / total * 100, teamB: teamB / total * 100 };
+  });
+  const areaBetween = (lowerFor, upperFor, className) => {
+    const first = normalized[0];
+    let path = `M ${xFor(first).toFixed(2)} ${yFor(upperFor(first)).toFixed(2)}`;
+    for (let index = 1; index < normalized.length; index += 1) {
+      const point = normalized[index];
+      path += ` H ${xFor(point).toFixed(2)} V ${yFor(upperFor(point)).toFixed(2)}`;
+    }
+    const last = normalized[normalized.length - 1];
+    path += ` L ${xFor(last).toFixed(2)} ${yFor(lowerFor(last)).toFixed(2)}`;
+    for (let index = normalized.length - 2; index >= 0; index -= 1) {
+      const point = normalized[index];
+      path += ` H ${xFor(point).toFixed(2)} V ${yFor(lowerFor(point)).toFixed(2)}`;
+    }
+    return `<path d="${path} Z" class="match-play-probability-area ${className}" />`;
+  };
   const tickMarkup = ticks.map((tick) => {
     const x = plot.left + Math.max(0, Math.min(1, tick.completed)) * plotWidth;
-    return `<line x1="${x}" y1="${plot.top}" x2="${x}" y2="${height - plot.bottom}" class="match-play-timeline-grid" />
+    return `<line x1="${x}" y1="${plot.top}" x2="${x}" y2="${plotBottom}" class="match-play-timeline-grid" />
       <text x="${x}" y="${height - 10}" text-anchor="${tick.anchor || "middle"}">${escapeHtml(tick.label)}</text>`;
   }).join("");
-  const end = points[points.length - 1];
-  const accessiblePoints = points.slice(1).map((point) => `${Math.round(point.completed * 100)}%: ${valueLabel(point.value)}`).join(", ");
+  const end = normalized[normalized.length - 1];
   const figure = document.createElement("figure");
-  figure.className = "match-play-timeline";
-  figure.style.setProperty("--timeline-accent", color);
+  figure.className = "match-play-timeline match-play-probability-timeline";
+  figure.style.setProperty("--timeline-team-a", teamAColor);
+  figure.style.setProperty("--timeline-team-b", teamBColor);
   figure.innerHTML = `
-    <figcaption><strong>${escapeHtml(title)}</strong><span>${end ? escapeHtml(valueLabel(end.value)) : "—"}</span></figcaption>
-    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${title}. ${accessiblePoints || "No holes completed"}`)}">
+    <figcaption><strong>${escapeHtml(title)}</strong><span>${Math.round(end.teamA)} · ${Math.round(end.tie)} · ${Math.round(end.teamB)}</span></figcaption>
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${title}: ${Math.round(end.teamA)} percent, ${Math.round(end.tie)} percent tie, ${Math.round(end.teamB)} percent`)}">
+      ${areaBetween(() => 0, (point) => point.teamA, "is-team-a")}
+      ${areaBetween((point) => point.teamA, (point) => point.teamA + point.tie, "is-tie")}
+      ${areaBetween((point) => point.teamA + point.tie, () => 100, "is-team-b")}
       ${tickMarkup}
-      <line x1="${plot.left}" y1="${zeroY}" x2="${width - plot.right}" y2="${zeroY}" class="match-play-timeline-zero" />
-      ${areaPath ? `<path d="${areaPath}" class="match-play-timeline-area" />` : ""}
-      ${linePath ? `<path d="${linePath}" class="match-play-timeline-line" />` : ""}
     </svg>`;
   return figure;
 }
@@ -4735,20 +4736,21 @@ function buildMatchPlayScorecard(round, match, players, teams, odds = null) {
 
   const panel = document.createElement("div");
   panel.className = "match-play-timeline-panel";
-  let matchLead = 0;
-  const matchPoints = [{ completed: 0, value: 0 }];
-  holeIndices.forEach((holeIndex, position) => {
-    const result = holeResults[holeIndex];
-    if (result !== "halved" && result !== teamAId && result !== teamBId) return;
-    if (result === teamAId) matchLead += 1;
-    if (result === teamBId) matchLead -= 1;
-    matchPoints.push({ completed: (position + 1) / holeIndices.length, value: matchLead });
-  });
-  panel.appendChild(buildMatchPlayTimeline({
+  const historyPoints = TOURN?.score_data?.live_odds?.compactTimeline?.m?.r?.[Number(round?.roundIndex)]?.[String(match?.matchId || "")];
+  const currentOdds = odds || {};
+  const matchPoints = Array.isArray(historyPoints) && historyPoints.length
+    ? historyPoints.map((point) => ({ completed: point[1], teamA: point[2], tie: point[3], teamB: point[4] }))
+    : [{
+      completed: Math.max(0, Number(match?.thru) || Number(currentOdds?.thru) || 0) / Math.max(1, holeIndices.length),
+      teamA: Number(currentOdds?.teamAWinProbability) || 0,
+      tie: Number(currentOdds?.halveProbability) || 0,
+      teamB: Number(currentOdds?.teamBWinProbability) || 0
+    }];
+  panel.appendChild(buildMatchPlayProbabilityTimeline({
     title: "Match timeline",
     points: matchPoints,
-    color: matchLead < 0 ? (teams[teamBId]?.color || colorForTeam(teamBId)) : (teams[teamAId]?.color || colorForTeam(teamAId)),
-    valueLabel: (value) => value === 0 ? "All square" : `${value > 0 ? teamALabel : teamBLabel} ${Math.abs(value)} up`,
+    teamAColor: teams[teamAId]?.color || colorForTeam(teamAId),
+    teamBColor: teams[teamBId]?.color || colorForTeam(teamBId),
     ticks: holeIndices.map((holeIndex, position) => ({
       completed: (position + 1) / holeIndices.length,
       label: String(holeIndex + 1),
@@ -4900,38 +4902,39 @@ function renderMatchPlayScoreboard() {
   const rounds = Array.isArray(matchPlay.rounds) ? matchPlay.rounds : [];
   if (raceStandings.length === 2) {
     const [teamA, teamB] = raceStandings;
-    const scheduledMatches = rounds.flatMap((round) => round.matches || []);
-    let matchesBeforeRound = 0;
     const roundTicks = rounds.map((round, index) => {
       const tick = {
-        completed: matchesBeforeRound / Math.max(1, scheduledMatches.length),
+        completed: index / Math.max(1, rounds.length),
         label: `Round ${index + 1}`,
         anchor: index === 0 ? "start" : "middle"
       };
-      matchesBeforeRound += (round.matches || []).length;
       return tick;
     });
-    let eventLead = 0;
-    const eventPoints = [{ completed: 0, value: 0 }];
-    scheduledMatches.forEach((match, index) => {
-      const isComplete = match.status === "final" || match.status === "closed";
-      if (!isComplete) return;
-      const points = Math.max(0, Number(match.pointsAvailable) || 1);
-      const winnerId = match.winnerTeamId || (match.result !== "halved" ? match.result : null);
-      if (winnerId === teamA.teamId) eventLead += points;
-      else if (winnerId === teamB.teamId) eventLead -= points;
-      eventPoints.push({ completed: (index + 1) / Math.max(1, scheduledMatches.length), value: eventLead });
-    });
+    const eventHistory = TOURN?.score_data?.live_odds?.compactTimeline?.m?.e;
+    const currentEventProgress = rounds.length ? rounds.reduce((roundTotal, round) => {
+      const matches = round.matches || [];
+      if (!matches.length) return roundTotal;
+      const roundProgress = matches.reduce((sum, match) => (
+        sum + Math.min(1, Math.max(0, Number(match?.thru) || 0) / Math.max(1, Number(round?.holes) || 18))
+      ), 0) / matches.length;
+      return roundTotal + (roundProgress / rounds.length);
+    }, 0) : 0;
+    const eventPoints = Array.isArray(eventHistory) && eventHistory.length
+      ? eventHistory.map((point) => ({ completed: point[1], teamA: point[2], tie: point[3], teamB: point[4] }))
+      : [{
+        completed: currentEventProgress,
+        teamA: Number(eventOddsByTeam.get(String(teamA.teamId))?.winProbability) || 0,
+        tie: Number(eventOdds?.tieProbability) || 0,
+        teamB: Number(eventOddsByTeam.get(String(teamB.teamId))?.winProbability) || 0
+      }];
     const eventTimeline = document.createElement("section");
     eventTimeline.className = "match-play-event-timeline";
-    eventTimeline.appendChild(buildMatchPlayTimeline({
+    eventTimeline.appendChild(buildMatchPlayProbabilityTimeline({
       title: "Team event timeline",
       points: eventPoints,
-      color: eventLead < 0 ? colors[1] : colors[0],
+      teamAColor: colors[0],
+      teamBColor: colors[1],
       ticks: roundTicks,
-      valueLabel: (value) => value === 0
-        ? "Event tied"
-        : `${value > 0 ? teamA.teamName : teamB.teamName} leads by ${formatMatchPlayPoints(Math.abs(value))}`
     }));
     root.appendChild(eventTimeline);
   }

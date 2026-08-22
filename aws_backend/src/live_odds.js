@@ -2497,6 +2497,8 @@ function computeMatchPlayOdds(tournamentJson, { generatedAt, modelVersion }) {
             teamAWinProbability: percentages[0],
             halveProbability: percentages[1],
             teamBWinProbability: percentages[2],
+            thru: Math.max(0, Number(match?.actual?.thru) || 0),
+            holes: context.activeHoleIndices.length,
             teamAProjectedScores: projectedScores("teamA"),
             teamBProjectedScores: projectedScores("teamB")
           };

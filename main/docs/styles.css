@@ -773,7 +773,7 @@ button.draft-player small {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 220px;
+  max-height: 440px;
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -785,25 +785,26 @@ button.draft-player small {
 .match-play-event-timeline .match-play-timeline svg text {
   font-size: 12px;
 }
-.match-play-timeline-grid,
-.match-play-timeline-zero {
+.match-play-timeline-grid {
   vector-effect: non-scaling-stroke;
 }
 .match-play-timeline-grid {
   stroke: var(--border);
   stroke-width: 1;
 }
-.match-play-timeline-zero {
-  stroke: var(--border-strong);
-  stroke-width: 1;
+.match-play-probability-area.is-team-a {
+  fill: var(--timeline-team-a, #bf5700);
 }
-.match-play-timeline-area {
-  fill: color-mix(in srgb, var(--timeline-accent, var(--text)) 22%, transparent);
+.match-play-probability-area.is-tie {
+  fill: color-mix(in srgb, var(--muted) 58%, var(--surface));
 }
-.match-play-timeline-line {
-  fill: none;
-  stroke: var(--timeline-accent, var(--text));
-  stroke-width: 3;
+.match-play-probability-area.is-team-b {
+  fill: var(--timeline-team-b, #9e1b32);
+}
+.match-play-probability-area {
+  opacity: .78;
+  stroke: var(--surface);
+  stroke-width: 1.5;
   stroke-linejoin: miter;
   vector-effect: non-scaling-stroke;
 }
