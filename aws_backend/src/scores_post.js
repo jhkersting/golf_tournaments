@@ -128,6 +128,22 @@ export function ensureMatchPlayResultLock(state, roundIndex, matchId, endedAt = 
   return { created: true, lock, match: publicMatch };
 }
 
+export function reconcileMatchPlayResultLockAfterUndo(state, roundIndex, matchId) {
+  const matchScores = state?.scores?.rounds?.[roundIndex]?.matches?.[matchId];
+  const resultLock = matchScores?.resultLock;
+  if (!resultLock) return { reopened: false, lock: null, match: null };
+
+  delete matchScores.resultLock;
+  const publicMatch = materializePublicFromState(state)?.matchPlay?.rounds?.[roundIndex]?.matches
+    ?.find((match) => String(match?.matchId || "") === String(matchId || ""));
+  const remainsComplete = publicMatch?.status === "final" || publicMatch?.status === "closed";
+  if (remainsComplete) {
+    matchScores.resultLock = resultLock;
+    return { reopened: false, lock: resultLock, match: publicMatch };
+  }
+  return { reopened: true, lock: null, match: publicMatch || null, previousLock: resultLock };
+}
+
 async function handleMatchPlayScore(event, body, tid) {
   const code = String(body.code || "").trim();
   const roundIndex = Number(body.roundIndex);
@@ -147,8 +163,10 @@ async function handleMatchPlayScore(event, body, tid) {
   let actorPlayerId = null;
   let changedScores = [];
   let matchEnded = null;
+  let matchReopened = null;
   const nextState = await updateStateWithRetry(tid, (current) => {
     matchEnded = null;
+    matchReopened = null;
     if (!current || !isTeamMatchPlay(current)) {
       const error = new Error("match-play tournament not found");
       error.statusCode = 404;
@@ -199,6 +217,7 @@ async function handleMatchPlayScore(event, body, tid) {
     }
     const conflicts = [];
     const changed = new Map();
+    let clearedSavedScore = false;
     const getEntry = (targetType, targetId) => {
       if (targetType === "player") {
         const entry = bucket.players[targetId] || {};
@@ -221,6 +240,7 @@ async function handleMatchPlayScore(event, body, tid) {
           conflicts.push({ targetType, targetId, holeIndex: index, existing, attempted: null, lastBy: metadata?.by || null, lastTs: metadata?.ts || null });
           return;
         }
+        if (existing != null) clearedSavedScore = true;
         entry.holes[index] = null;
       } else {
         const number = Number(value);
@@ -268,6 +288,15 @@ async function handleMatchPlayScore(event, body, tid) {
       error.conflicts = conflicts;
       throw error;
     }
+    if (wasComplete && clearedSavedScore) {
+      const reconciliation = reconcileMatchPlayResultLockAfterUndo(current, roundIndex, matchId);
+      if (reconciliation.reopened) {
+        matchReopened = {
+          previousResult: reconciliation.previousLock?.result || null,
+          previousStatus: reconciliation.previousLock?.status || null
+        };
+      }
+    }
     const nextCompletion = ensureMatchPlayResultLock(current, roundIndex, matchId, now);
     if (!wasComplete && nextCompletion.created) {
       matchEnded = nextCompletion.lock;
@@ -277,14 +306,14 @@ async function handleMatchPlayScore(event, body, tid) {
     current.version = Number(current.version || 0) + 1;
     return current;
   });
-  await appendEvent(tid, { type: "scores", tid, actorPlayerId, code, roundIndex, matchId, mode, holeIndex, override, entries: body.entries, matchEnded, ts: now });
+  await appendEvent(tid, { type: "scores", tid, actorPlayerId, code, roundIndex, matchId, mode, holeIndex, override, entries: body.entries, matchEnded, matchReopened, ts: now });
   await writePublicObjectsFromState(nextState);
   try {
     await notifyScoreSubscribers(tid, nextState, { actorPlayerId, code, roundIndex, matchId, mode, holeIndex, changedScores, matchEnded });
   } catch (error) {
     console.warn("Push notification dispatch failed:", error?.message || error);
   }
-  return json(200, { ok: true, version: nextState.version, updatedAt: nextState.updatedAt });
+  return json(200, { ok: true, version: nextState.version, updatedAt: nextState.updatedAt, matchReopened: !!matchReopened });
 }
 
 export async function handler(event){

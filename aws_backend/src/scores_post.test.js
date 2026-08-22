@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { ensureMatchPlayResultLock, resolveMatchPlayScoreTarget } from "./scores_post.js";
+import { ensureMatchPlayResultLock, reconcileMatchPlayResultLockAfterUndo, resolveMatchPlayScoreTarget } from "./scores_post.js";
 import { materializeMatchPlaySavedRound, materializePublicFromState } from "./utils.js";
 
 let nodeTest = null;
@@ -125,9 +125,9 @@ test("entry data exposes both team-side targets for alternate shot", () => {
   ]);
 });
 
-test("completed match result locks are created once and survive later score entry", () => {
+function lockedMatchState() {
   const holes = (values) => values.concat(Array(18).fill(null)).slice(0, 18);
-  const state = {
+  return {
     tournament: {
       tournamentId: "locked-match",
       name: "Locked Match",
@@ -159,6 +159,11 @@ test("completed match result locks are created once and survive later score entr
     updatedAt: 1,
     version: 1
   };
+}
+
+test("completed match result locks are created once and survive later score entry", () => {
+  const holes = (values) => values.concat(Array(18).fill(null)).slice(0, 18);
+  const state = lockedMatchState();
 
   const first = ensureMatchPlayResultLock(state, 0, "r1m1", 123);
   assert.equal(first.created, true);
@@ -173,6 +178,39 @@ test("completed match result locks are created once and survive later score entr
   assert.equal(materialized.display, "4&2");
   assert.equal(materialized.sideScores.A[8], 5);
   assert.equal(materialized.sideScores.B[8], 4);
+});
+
+test("undoing the clinching hole reopens a completed match", () => {
+  const state = lockedMatchState();
+  assert.equal(ensureMatchPlayResultLock(state, 0, "r1m1", 123).created, true);
+
+  state.scores.rounds[0].matches.r1m1.sides.A.holes[3] = null;
+  state.scores.rounds[0].matches.r1m1.sides.B.holes[3] = null;
+  const reconciliation = reconcileMatchPlayResultLockAfterUndo(state, 0, "r1m1");
+  const materialized = materializePublicFromState(state).matchPlay.rounds[0].matches[0];
+
+  assert.equal(reconciliation.reopened, true);
+  assert.equal(state.scores.rounds[0].matches.r1m1.resultLock, undefined);
+  assert.equal(materialized.status, "live");
+  assert.equal(materialized.result, null);
+  assert.equal(materialized.display, "3 UP thru 7");
+});
+
+test("undoing a post-finish score keeps the clinched result locked", () => {
+  const state = lockedMatchState();
+  const originalLock = ensureMatchPlayResultLock(state, 0, "r1m1", 123).lock;
+
+  state.scores.rounds[0].matches.r1m1.sides.A.holes[7] = 5;
+  state.scores.rounds[0].matches.r1m1.sides.B.holes[7] = 4;
+  state.scores.rounds[0].matches.r1m1.sides.A.holes[7] = null;
+  state.scores.rounds[0].matches.r1m1.sides.B.holes[7] = null;
+  const reconciliation = reconcileMatchPlayResultLockAfterUndo(state, 0, "r1m1");
+  const materialized = materializePublicFromState(state).matchPlay.rounds[0].matches[0];
+
+  assert.equal(reconciliation.reopened, false);
+  assert.equal(state.scores.rounds[0].matches.r1m1.resultLock.endedAt, originalLock.endedAt);
+  assert.equal(materialized.status, "closed");
+  assert.equal(materialized.display, "4&2");
 });
 
 if (!nodeTest) {
