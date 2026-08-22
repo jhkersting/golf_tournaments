@@ -2592,6 +2592,9 @@ async function renderMatchPlayEntry({
   const title = document.createElement("h1");
   title.style.margin = "0 0 4px";
   title.textContent = enter?.player?.name || players[myId]?.name || "Enter scores";
+  const playerCodeLine = document.createElement("div");
+  playerCodeLine.className = "small";
+  playerCodeLine.textContent = `Player code · ${String(code || "").trim().toUpperCase()}`;
   const teamLine = document.createElement("div");
   const teamOverview = document.createElement("div");
   teamOverview.className = "match-play-entry-overview";
@@ -2632,7 +2635,7 @@ async function renderMatchPlayEntry({
     eventTieOdds.hidden = !eventTieOdds.textContent;
   };
   renderTeamOverview();
-  summary.append(title, teamLine, teamOverview, eventTieOdds);
+  summary.append(title, playerCodeLine, teamLine, teamOverview, eventTieOdds);
   forms.appendChild(summary);
 
   const savedRounds = Array.isArray(enter?.saved) ? enter.saved : [];
