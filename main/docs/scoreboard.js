@@ -122,6 +122,7 @@ let openInlineKey = null;
 let openInlineRow = null;
 let inlineReqToken = 0;
 let openMatchPlayScorecardKey = null;
+const expandedCompletedMatchPlayRounds = new Set();
 let sortState = { key: "score", dir: "asc" };
 const AUTO_REFRESH_MS = 30_000;
 let refreshTimerId = null;
@@ -4981,19 +4982,52 @@ function renderMatchPlayScoreboard() {
     ? rounds
     : rounds.filter((round) => Number(round.roundIndex) === Number(currentRound));
   for (const round of visibleRounds) {
+    const roundIndex = Number(round.roundIndex);
+    const roundMatches = Array.isArray(round.matches) ? round.matches : [];
+    const roundComplete = roundMatches.length > 0 && roundMatches.every((match) => (
+      match.status === "final" || match.status === "closed"
+    ));
+    const roundExpanded = !roundComplete || expandedCompletedMatchPlayRounds.has(roundIndex);
     const section = document.createElement("section");
-    section.className = "match-play-round";
+    section.className = `match-play-round${roundComplete ? " is-complete" : ""}`;
     const heading = document.createElement("div");
     heading.className = "match-play-round-head";
+    const titleRow = document.createElement("div");
+    titleRow.className = "match-play-round-title-row";
     const title = document.createElement("h3");
-    title.textContent = round.name || `Round ${Number(round.roundIndex) + 1}`;
+    title.textContent = round.name || `Round ${roundIndex + 1}`;
+    titleRow.appendChild(title);
+    let completedRoundToggle = null;
+    if (roundComplete) {
+      completedRoundToggle = document.createElement("button");
+      completedRoundToggle.type = "button";
+      completedRoundToggle.className = "match-play-round-toggle secondary";
+      completedRoundToggle.textContent = roundExpanded ? "Hide" : "Show";
+      completedRoundToggle.setAttribute("aria-expanded", roundExpanded ? "true" : "false");
+      completedRoundToggle.setAttribute("aria-label", `${roundExpanded ? "Hide" : "Show"} completed ${title.textContent} round`);
+      titleRow.appendChild(completedRoundToggle);
+    }
     const meta = document.createElement("span");
     meta.className = "small";
     const nineHoleLabel = matchPlayNineHoleLabel(round);
     meta.textContent = `${matchPlayFormatLabel(round.format)} · ${round.holes || 18} holes${nineHoleLabel ? ` · ${nineHoleLabel}` : ""}${round.useHandicap ? " · handicaps" : ""}`;
-    heading.append(title, meta);
+    heading.append(titleRow, meta);
     section.appendChild(heading);
-    for (const match of round.matches || []) {
+    const roundBody = document.createElement("div");
+    roundBody.className = "match-play-round-body";
+    roundBody.hidden = !roundExpanded;
+    if (completedRoundToggle) {
+      completedRoundToggle.addEventListener("click", () => {
+        const willOpen = roundBody.hidden;
+        roundBody.hidden = !willOpen;
+        completedRoundToggle.textContent = willOpen ? "Hide" : "Show";
+        completedRoundToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+        completedRoundToggle.setAttribute("aria-label", `${willOpen ? "Hide" : "Show"} completed ${title.textContent} round`);
+        if (willOpen) expandedCompletedMatchPlayRounds.add(roundIndex);
+        else expandedCompletedMatchPlayRounds.delete(roundIndex);
+      });
+    }
+    for (const match of roundMatches) {
       const card = document.createElement("article");
       card.className = "match-play-match-card";
       const scorecardKey = `${Number(round.roundIndex)}:${String(match.matchId || "")}`;
@@ -5108,8 +5142,9 @@ function renderMatchPlayScoreboard() {
         event.preventDefault();
         toggleScorecard();
       });
-      section.append(card, scorecard);
+      roundBody.append(card, scorecard);
     }
+    section.appendChild(roundBody);
     root.appendChild(section);
   }
 

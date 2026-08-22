@@ -631,6 +631,26 @@ button.draft-player small {
 .match-play-round-head h3 {
   margin: 0;
 }
+.match-play-round-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.match-play-round-toggle,
+.match-play-round-toggle.secondary {
+  min-height: 28px;
+  padding: 4px 9px;
+  flex: 0 0 auto;
+  font-size: .72rem;
+}
+.match-play-round-body {
+  display: grid;
+  gap: 10px;
+}
+.match-play-round-body[hidden] {
+  display: none;
+}
 .match-play-match-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(120px, auto) minmax(0, 1fr);
