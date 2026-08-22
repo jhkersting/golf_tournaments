@@ -4621,7 +4621,9 @@ function buildMatchPlayProbabilityTimeline({ title, points, teamAColor, teamBCol
   const plotBottom = height - plot.bottom;
   const xFor = (point) => plot.left + Math.max(0, Math.min(1, Number(point.completed) || 0)) * plotWidth;
   const yFor = (value) => plot.top + ((100 - Math.max(0, Math.min(100, Number(value) || 0))) / 100) * (plotBottom - plot.top);
-  const normalized = (points.length ? points : [{ completed: 0, teamA: 0, tie: 100, teamB: 0 }]).map((point) => {
+  const sourcePoints = points.length ? points.map((point) => ({ ...point })) : [{ completed: 0, teamA: 0, tie: 100, teamB: 0 }];
+  if (Number(sourcePoints[0]?.completed) > 0) sourcePoints.unshift({ ...sourcePoints[0], completed: 0 });
+  const normalized = sourcePoints.map((point) => {
     const teamA = Math.max(0, Number(point.teamA) || 0);
     const tie = Math.max(0, Number(point.tie) || 0);
     const teamB = Math.max(0, Number(point.teamB) || 0);
