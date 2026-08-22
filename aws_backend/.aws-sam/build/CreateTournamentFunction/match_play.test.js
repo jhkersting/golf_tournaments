@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  createMatchPlayResultLock,
   matchPlayHoleIndices,
   materializeMatchPlay,
   normalizeMatchPlayConfiguration,
@@ -260,6 +261,31 @@ test("formats a final-hole win as UP/F instead of ampersand zero", () => {
   const match = materializeMatchPlay({ ...state, scores: state.scores }).rounds[0].matches[0];
   assert.equal(match.holesRemaining, 0);
   assert.equal(match.display, "2UP/F");
+});
+
+test("keeps a completed match result locked while accepting later hole scores", () => {
+  const state = fixture({ format: "singles", holes: 9 });
+  state.scores.rounds[0].players = {
+    A1: { holes: [3, 3, 3, 3, 4, 4, 4, null, null] },
+    B1: { holes: [4, 4, 4, 4, 4, 4, 4, null, null] }
+  };
+  const completed = materializeMatchPlay({ ...state, scores: state.scores }).rounds[0].matches[0];
+  assert.equal(completed.display, "4&2");
+  assert.equal(completed.thru, 7);
+  state.scores.rounds[0].matches.r1m1 = {
+    resultLock: createMatchPlayResultLock(completed, 123)
+  };
+  state.scores.rounds[0].players.A1.holes = [3, 3, 3, 3, 4, 4, 4, 5, 5];
+  state.scores.rounds[0].players.B1.holes = [4, 4, 4, 4, 4, 4, 4, 4, 4];
+
+  const locked = materializeMatchPlay({ ...state, scores: state.scores }).rounds[0].matches[0];
+  assert.equal(locked.display, "4&2");
+  assert.equal(locked.thru, 7);
+  assert.equal(locked.holesRemaining, 2);
+  assert.equal(locked.winnerTeamId, "A");
+  assert.equal(locked.sideScores.A[8], 5);
+  assert.equal(locked.sideScores.B[8], 4);
+  assert.equal(locked.holeResults[8], "B");
 });
 
 test("splits a completed tied match and publishes derived match-play standings", () => {

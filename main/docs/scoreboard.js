@@ -5052,10 +5052,10 @@ function renderMatchPlayScoreboard() {
       else state.textContent = match.display || "Not started";
       const detail = document.createElement("span");
       const thru = Number(match.thru || 0);
-      detail.textContent = thru > 0
-        ? `Thru ${thru}`
-        : match.status === "final" || match.status === "closed"
-          ? "Final"
+      detail.textContent = matchComplete
+        ? "Final"
+        : thru > 0
+          ? `Thru ${thru}`
           : "";
       detail.hidden = !detail.textContent;
       center.append(state, detail);

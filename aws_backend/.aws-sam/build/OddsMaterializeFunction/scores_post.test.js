@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
-import { resolveMatchPlayScoreTarget } from "./scores_post.js";
-import { materializeMatchPlaySavedRound } from "./utils.js";
+import { ensureMatchPlayResultLock, resolveMatchPlayScoreTarget } from "./scores_post.js";
+import { materializeMatchPlaySavedRound, materializePublicFromState } from "./utils.js";
 
 let nodeTest = null;
 try {
@@ -123,6 +123,56 @@ test("entry data exposes both team-side targets for alternate shot", () => {
     ["A", "match_side", "A", 4],
     ["B", "match_side", "B", 5]
   ]);
+});
+
+test("completed match result locks are created once and survive later score entry", () => {
+  const holes = (values) => values.concat(Array(18).fill(null)).slice(0, 18);
+  const state = {
+    tournament: {
+      tournamentId: "locked-match",
+      name: "Locked Match",
+      competitionType: "team_match_play",
+      matchPlay: { teamIds: ["A", "B"] }
+    },
+    rounds: [{
+      name: "Round 1",
+      format: "scramble",
+      holes: 9,
+      matches: [{
+        matchId: "r1m1",
+        teamA: { teamId: "A", playerIds: ["A1", "A2"] },
+        teamB: { teamId: "B", playerIds: ["B1", "B2"] }
+      }]
+    }],
+    courses: [{ pars: Array(18).fill(4), strokeIndex: Array.from({ length: 18 }, (_, index) => index + 1) }],
+    teams: { A: { teamName: "Alpha" }, B: { teamName: "Beta" } },
+    players: {
+      A1: { name: "A One", teamId: "A" }, A2: { name: "A Two", teamId: "A" },
+      B1: { name: "B One", teamId: "B" }, B2: { name: "B Two", teamId: "B" }
+    },
+    scores: { rounds: [{
+      matches: { r1m1: { sides: {
+        A: { holes: holes([3, 3, 3, 3, 4, 4, 4]) },
+        B: { holes: holes([4, 4, 4, 4, 4, 4, 4]) }
+      } } }
+    }] },
+    updatedAt: 1,
+    version: 1
+  };
+
+  const first = ensureMatchPlayResultLock(state, 0, "r1m1", 123);
+  assert.equal(first.created, true);
+  assert.equal(first.lock.display, "4&2");
+  state.scores.rounds[0].matches.r1m1.sides.A.holes = holes([3, 3, 3, 3, 4, 4, 4, 5, 5]);
+  state.scores.rounds[0].matches.r1m1.sides.B.holes = holes([4, 4, 4, 4, 4, 4, 4, 4, 4]);
+  const second = ensureMatchPlayResultLock(state, 0, "r1m1", 456);
+  const materialized = materializePublicFromState(state).matchPlay.rounds[0].matches[0];
+
+  assert.equal(second.created, false);
+  assert.equal(second.lock.endedAt, 123);
+  assert.equal(materialized.display, "4&2");
+  assert.equal(materialized.sideScores.A[8], 5);
+  assert.equal(materialized.sideScores.B[8], 4);
 });
 
 if (!nodeTest) {

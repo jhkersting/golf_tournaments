@@ -587,7 +587,7 @@ function matchPlayScoreUpdateSummaries(state, tournamentJson, details) {
   const allPlayerNames = [teamANames, teamBNames].filter(Boolean).join(" / ");
   const body = matchPlayNotificationStatus(match);
 
-  return changedHoles.flatMap((holeIndex) => {
+  const holeSummaries = changedHoles.flatMap((holeIndex) => {
     const rawTeamAScore = match?.sideScores?.[teamAId]?.[holeIndex];
     const rawTeamBScore = match?.sideScores?.[teamBId]?.[holeIndex];
     const teamAScore = Number(rawTeamAScore);
@@ -619,6 +619,25 @@ function matchPlayScoreUpdateSummaries(state, tournamentJson, details) {
       tag: `golf-score-${tournamentId}-${roundIndex}-${mode}-${holeIndex}-${matchId.replace(/[^a-z0-9_-]+/gi, "-")}`
     }];
   });
+  const matchEnded = !!details?.matchEnded
+    && (match?.status === "closed" || match?.status === "final")
+    && !!match?.result;
+  if (!matchEnded) return holeSummaries;
+
+  const winningNames = match?.result === teamAId
+    ? teamANames
+    : match?.result === teamBId
+      ? teamBNames
+      : "";
+  const finalBody = match?.result === "halved"
+    ? "Match halved"
+    : `${winningNames || "Match winner"} win ${String(match?.display || "").trim() || "the match"}`;
+  return [...holeSummaries, {
+    title: `${allPlayerNames || "Match"} Final`,
+    body: finalBody,
+    url,
+    tag: `golf-match-final-${tournamentId}-${roundIndex}-${matchId.replace(/[^a-z0-9_-]+/gi, "-")}`
+  }];
 }
 
 export function scoreUpdateSummaries(state, details) {

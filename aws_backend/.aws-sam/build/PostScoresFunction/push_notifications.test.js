@@ -472,6 +472,29 @@ registerTest("match play delivery formats a halved hole with both sides", () => 
   assert.equal(summaries[0].body, "1 up thru 2");
 });
 
+registerTest("match play delivery adds a one-time final notification with every player name", () => {
+  const state = buildMatchPlayState({
+    teamAHoles: [3, 3, 3, 3, 4, 4, 4],
+    teamBHoles: [4, 4, 4, 4, 4, 4, 4]
+  });
+  const summaries = scoreUpdateSummaries(state, {
+    roundIndex: 0,
+    matchId: "r1m1",
+    mode: "hole",
+    holeIndex: 6,
+    changedScores: [
+      changedScore("match_side", "A", 6),
+      changedScore("match_side", "B", 6)
+    ],
+    matchEnded: { status: "closed", result: "A" }
+  });
+
+  assert.equal(summaries.length, 2);
+  assert.equal(summaries[1].title, "J Kersting + W Parten / F Kersting + J Christensen Final");
+  assert.equal(summaries[1].body, "J Kersting + W Parten win 4&2");
+  assert.equal(summaries[1].tag, "golf-match-final-fixture-match-play-0-r1m1");
+});
+
 registerTest("chat notifications route players back into the enter page", () => {
   const state = buildState("singles");
 

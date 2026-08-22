@@ -292,6 +292,27 @@ function resultText(result, holes) {
   return result.lead === 0 ? "Halved" : `${Math.abs(result.lead)} UP`;
 }
 
+function matchIsComplete(match) {
+  return match?.status === "final" || match?.status === "closed";
+}
+
+export function createMatchPlayResultLock(match, endedAt = Date.now()) {
+  if (!matchIsComplete(match) || !match?.result) return null;
+  return {
+    status: match.status,
+    result: match.result,
+    winnerTeamId: match.winnerTeamId || null,
+    lead: Number(match.lead || 0),
+    leadTeamId: match.leadTeamId || null,
+    thru: Number(match.thru || 0),
+    holesRemaining: Number(match.holesRemaining || 0),
+    completion: match.completion || null,
+    lastHoleResult: match.lastHoleResult || null,
+    display: String(match.display || "").trim(),
+    endedAt: Number(endedAt) || Date.now()
+  };
+}
+
 function materializeMatch(match, round, roundScores, players, course) {
   const activeHoleIndices = matchPlayHoleIndices(round);
   const sideA = sideScores(match, round.format, match.teamA, roundScores, players, course, activeHoleIndices, round.useHandicap);
@@ -345,6 +366,30 @@ function materializeMatch(match, round, roundScores, players, course) {
     lastHoleResult: played.length ? holeResults[played[played.length - 1]] : null
   };
   output.display = resultText(output, round.holes);
+  const resultLock = roundScores?.matches?.[match.matchId]?.resultLock;
+  const lockedResult = String(resultLock?.result || "").trim();
+  const validLockedResult = lockedResult === "halved"
+    || lockedResult === match.teamA.teamId
+    || lockedResult === match.teamB.teamId;
+  if (validLockedResult && (resultLock?.status === "closed" || resultLock?.status === "final")) {
+    const lockedWinnerTeamId = lockedResult === "halved" ? null : lockedResult;
+    output.status = resultLock.status;
+    output.result = lockedResult;
+    output.winnerTeamId = lockedWinnerTeamId;
+    output.lead = Number(resultLock.lead || 0);
+    output.leadTeamId = lockedWinnerTeamId;
+    output.thru = Math.max(0, Number(resultLock.thru || 0));
+    output.holesRemaining = Math.max(0, Number(resultLock.holesRemaining || 0));
+    output.completion = resultLock.completion || (output.status === "closed" ? "closed_early" : "all_holes");
+    output.lastHoleResult = resultLock.lastHoleResult || null;
+    output.points = lockedResult === "halved"
+      ? { [match.teamA.teamId]: match.points / 2, [match.teamB.teamId]: match.points / 2 }
+      : {
+        [match.teamA.teamId]: lockedResult === match.teamA.teamId ? match.points : 0,
+        [match.teamB.teamId]: lockedResult === match.teamB.teamId ? match.points : 0
+      };
+    output.display = String(resultLock.display || "").trim() || resultText(output, round.holes);
+  }
   return output;
 }
 

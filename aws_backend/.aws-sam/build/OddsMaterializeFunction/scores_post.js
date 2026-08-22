@@ -1,6 +1,6 @@
-import { json, parseBody, normalizeHoles, getJson, updateStateWithRetry, appendEvent, writePublicObjectsFromState } from "./utils.js";
+import { json, parseBody, normalizeHoles, getJson, updateStateWithRetry, appendEvent, writePublicObjectsFromState, materializePublicFromState } from "./utils.js";
 import { notifyScoreSubscribers } from "./push_notifications.js";
-import { isTeamMatchPlay, matchPlayHoleIndices } from "./match_play.js";
+import { createMatchPlayResultLock, isTeamMatchPlay, matchPlayHoleIndices } from "./match_play.js";
 
 function asInt(v){
   const n = Number(v);
@@ -109,6 +109,25 @@ export function resolveMatchPlayScoreTarget(match, actorPlayerId, requestedTarge
   return { targetType: "match_side", targetId };
 }
 
+export function ensureMatchPlayResultLock(state, roundIndex, matchId, endedAt = Date.now()) {
+  const publicMatch = materializePublicFromState(state)?.matchPlay?.rounds?.[roundIndex]?.matches
+    ?.find((match) => String(match?.matchId || "") === String(matchId || ""));
+  const lock = createMatchPlayResultLock(publicMatch, endedAt);
+  if (!lock) return { created: false, lock: null, match: publicMatch || null };
+
+  state.scores = state.scores || { rounds: [] };
+  state.scores.rounds = state.scores.rounds || [];
+  state.scores.rounds[roundIndex] = state.scores.rounds[roundIndex] || { teams: {}, players: {}, groups: {}, matches: {} };
+  const roundScores = state.scores.rounds[roundIndex];
+  roundScores.matches = roundScores.matches || {};
+  const matchScores = roundScores.matches[matchId] = roundScores.matches[matchId] || { sides: {} };
+  if (matchScores.resultLock) {
+    return { created: false, lock: matchScores.resultLock, match: publicMatch };
+  }
+  matchScores.resultLock = lock;
+  return { created: true, lock, match: publicMatch };
+}
+
 async function handleMatchPlayScore(event, body, tid) {
   const code = String(body.code || "").trim();
   const roundIndex = Number(body.roundIndex);
@@ -127,7 +146,9 @@ async function handleMatchPlayScore(event, body, tid) {
   const now = Date.now();
   let actorPlayerId = null;
   let changedScores = [];
+  let matchEnded = null;
   const nextState = await updateStateWithRetry(tid, (current) => {
+    matchEnded = null;
     if (!current || !isTeamMatchPlay(current)) {
       const error = new Error("match-play tournament not found");
       error.statusCode = 404;
@@ -163,6 +184,8 @@ async function handleMatchPlayScore(event, body, tid) {
     // Resolve once before mutating score buckets so an otherwise valid player code
     // cannot write a match they are not scheduled to play.
     resolveMatchPlayScoreTarget(match, actorPlayerId, "", playerFormat);
+    const previousCompletion = ensureMatchPlayResultLock(current, roundIndex, matchId, now);
+    const wasComplete = !!previousCompletion.lock;
     current.scores = current.scores || { rounds: [] };
     current.scores.rounds = current.scores.rounds || [];
     current.scores.rounds[roundIndex] = current.scores.rounds[roundIndex] || { teams: {}, players: {}, groups: {}, matches: {} };
@@ -245,15 +268,19 @@ async function handleMatchPlayScore(event, body, tid) {
       error.conflicts = conflicts;
       throw error;
     }
+    const nextCompletion = ensureMatchPlayResultLock(current, roundIndex, matchId, now);
+    if (!wasComplete && nextCompletion.created) {
+      matchEnded = nextCompletion.lock;
+    }
     changedScores = [...changed.values()];
     current.updatedAt = now;
     current.version = Number(current.version || 0) + 1;
     return current;
   });
-  await appendEvent(tid, { type: "scores", tid, actorPlayerId, code, roundIndex, matchId, mode, holeIndex, override, entries: body.entries, ts: now });
+  await appendEvent(tid, { type: "scores", tid, actorPlayerId, code, roundIndex, matchId, mode, holeIndex, override, entries: body.entries, matchEnded, ts: now });
   await writePublicObjectsFromState(nextState);
   try {
-    await notifyScoreSubscribers(tid, nextState, { actorPlayerId, code, roundIndex, matchId, mode, holeIndex, changedScores });
+    await notifyScoreSubscribers(tid, nextState, { actorPlayerId, code, roundIndex, matchId, mode, holeIndex, changedScores, matchEnded });
   } catch (error) {
     console.warn("Push notification dispatch failed:", error?.message || error);
   }
