@@ -743,6 +743,68 @@ button.draft-player small {
 .match-play-scorecard-result .won-by-b {
   color: var(--team-b-accent, var(--text));
 }
+.match-play-event-timeline {
+  padding: 12px 14px 10px;
+  border-block: 1px solid var(--border);
+}
+.match-play-timeline-panel {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border);
+}
+.match-play-timeline-panel[hidden] {
+  display: none;
+}
+.match-play-timeline {
+  margin: 0;
+}
+.match-play-timeline figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.match-play-timeline figcaption span {
+  color: var(--timeline-accent, var(--text));
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  font-weight: 700;
+}
+.match-play-timeline svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 220px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: visible;
+}
+.match-play-timeline-grid,
+.match-play-timeline-zero {
+  vector-effect: non-scaling-stroke;
+}
+.match-play-timeline-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.match-play-timeline-zero {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.match-play-timeline-area {
+  fill: color-mix(in srgb, var(--timeline-accent, var(--text)) 22%, transparent);
+}
+.match-play-timeline-line {
+  fill: none;
+  stroke: var(--timeline-accent, var(--text));
+  stroke-width: 3;
+  stroke-linejoin: miter;
+  vector-effect: non-scaling-stroke;
+}
+.match-play-timeline-axis-title {
+  fill: var(--muted);
+  font-size: 10px;
+}
 .match-play-match-card.is-leading-a {
   border-left: 5px solid var(--team-a-accent, var(--border));
 }
