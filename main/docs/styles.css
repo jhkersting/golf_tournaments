@@ -83,6 +83,117 @@
   flex: 0 0 auto;
 }
 
+.live-viewers {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.live-viewers-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.live-viewers-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
+.live-viewer-list {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.live-viewer-chip,
+.live-viewers-empty {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.live-viewer-chip.is-you {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
+  background: color-mix(in srgb, var(--ok) 8%, var(--surface));
+  color: var(--text);
+}
+
+button.live-viewer-change {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.viewer-picker {
+  width: min(calc(100% - 28px), 430px);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(7, 18, 30, .34);
+}
+
+.viewer-picker::backdrop {
+  background: rgba(7, 14, 22, .72);
+  backdrop-filter: blur(6px);
+}
+
+.viewer-picker form {
+  display: grid;
+  gap: 11px;
+  padding: 22px;
+}
+
+.viewer-picker h2,
+.viewer-picker p {
+  margin: 0;
+}
+
+.viewer-picker h2 {
+  margin-top: 3px;
+  font-size: 24px;
+}
+
+.viewer-picker p {
+  margin-top: 5px;
+  color: var(--muted);
+}
+
+.viewer-picker-kicker {
+  color: var(--ok);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.viewer-picker-status {
+  min-height: 17px;
+  color: var(--bad) !important;
+}
+
 .draft-turn {
   --draft-accent: var(--brand);
   display: flex;
@@ -319,6 +430,24 @@ button.draft-player small {
   .draft-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .live-viewers {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .live-viewer-list {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  button.live-viewer-change {
+    margin-left: auto;
+  }
+
+  .viewer-picker form {
+    padding: 20px 18px;
   }
 
   .draft-player-list {

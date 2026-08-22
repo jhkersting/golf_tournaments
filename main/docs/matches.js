@@ -1,4 +1,5 @@
 import { API_BASE } from "./app.js";
+import { initDraftPresence } from "./draft-presence.js";
 
 const DRAFT_SESSION_KEY = "golf:draftCode";
 const POLL_INTERVAL_MS = 2000;
@@ -19,6 +20,7 @@ const PLAYERS = [
   { id: "h-coop", name: "H. Coop", handicap: 15 }
 ];
 const PLAYER_BY_ID = new Map(PLAYERS.map((player) => [player.id, player]));
+const presence = initDraftPresence({ apiBase: DRAFT_API_BASE, players: PLAYERS });
 const STAGES = [
   {
     stageId: "sherrillPairs",
@@ -126,6 +128,7 @@ function applyState(state) {
   picks = normalizePicks(state?.picks);
   lineups = normalizeLineups(state?.lineups);
   odds = state?.odds || null;
+  presence.applyViewers(state?.viewers);
 }
 
 function setSync(message, isError = false) {

@@ -51,6 +51,15 @@
       </div>
     </section>
 
+    <section class="live-viewers" aria-labelledby="live_viewers_title">
+      <div class="live-viewers-label">
+        <span class="live-viewers-dot" aria-hidden="true"></span>
+        <strong id="live_viewers_title">Watching live</strong>
+      </div>
+      <div class="live-viewer-list" id="live_viewers" aria-live="polite"></div>
+      <button type="button" class="secondary live-viewer-change" id="viewer_change">Choose name</button>
+    </section>
+
     <p class="draft-sync small" id="draft_sync" role="status"></p>
 
     <form class="card draft-login draft-login-panel" id="draft_login_form" hidden>
@@ -111,6 +120,22 @@
       <p class="draft-complete" id="draft_complete" hidden>Draft complete.</p>
     </section>
   </main>
+
+  <dialog class="viewer-picker" id="viewer_picker" aria-labelledby="viewer_picker_title">
+    <form id="viewer_form">
+      <div>
+        <span class="viewer-picker-kicker">Join the live draft</span>
+        <h2 id="viewer_picker_title">Who is watching?</h2>
+        <p>Select your name so everyone can see that you are here.</p>
+      </div>
+      <label for="viewer_select">Your name</label>
+      <select id="viewer_select" name="viewerId" required>
+        <option value="">Select your name</option>
+      </select>
+      <button type="submit">Watch live</button>
+      <p class="small viewer-picker-status" id="viewer_picker_status" role="status"></p>
+    </form>
+  </dialog>
 </body>
 
 </html>
