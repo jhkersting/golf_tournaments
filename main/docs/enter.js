@@ -3168,6 +3168,12 @@ async function main() {
   }
   rememberPlayerCode(code);
   rememberTournamentId(tid);
+  window.dispatchEvent(new CustomEvent("golf-player-context-ready", {
+    detail: {
+      tournamentId: tid,
+      playerCode: code
+    }
+  }));
   if (pageBottomActions) pageBottomActions.hidden = false;
   if (pageBulkToggleButton) {
     pageBulkToggleButton.addEventListener("click", () => {

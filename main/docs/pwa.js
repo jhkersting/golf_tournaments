@@ -3,6 +3,9 @@ import { api, qs, getRememberedPlayerCode, getRememberedTournamentId } from "./a
 const state = {
   installPromptEvent: null,
   registrationPromise: null,
+  resolvedAlertsTarget: null,
+  registeredTargetKeys: new Set(),
+  targetSyncPromises: new Map(),
   panel: null,
   statusEl: null,
   installButton: null,
@@ -26,16 +29,76 @@ function isHomePage() {
   return location.pathname.endsWith("/index.html") || location.pathname.endsWith("/") || location.pathname === "/";
 }
 
+function normalizedPlayerCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function getAlertsTarget() {
+  if (state.resolvedAlertsTarget) return state.resolvedAlertsTarget;
+
+  const queryTournamentId = String(qs("t") || "").trim();
+  const queryPlayerCode = normalizedPlayerCode(qs("code") || qs("c"));
+
+  // Enter links only contain the player code. Do not pair that code with a
+  // possibly stale remembered tournament while enter.js resolves the code.
+  if (document.body?.classList.contains("enter-page") && queryPlayerCode && !queryTournamentId) {
+    return {
+      tournamentId: "",
+      playerCode: queryPlayerCode
+    };
+  }
+
+  return {
+    tournamentId: queryTournamentId || String(getRememberedTournamentId() || "").trim(),
+    playerCode: queryPlayerCode || normalizedPlayerCode(getRememberedPlayerCode())
+  };
+}
+
 function getTournamentId() {
-  return String(qs("t") || getRememberedTournamentId() || "").trim();
+  return getAlertsTarget().tournamentId;
 }
 
 function getPlayerCode() {
-  return String(qs("code") || qs("c") || getRememberedPlayerCode() || "").trim().toUpperCase();
+  return getAlertsTarget().playerCode;
 }
 
 function hasAlertsTarget() {
   return Boolean(getTournamentId() && getPlayerCode());
+}
+
+function alertsTargetKey(target = getAlertsTarget()) {
+  const tournamentId = String(target?.tournamentId || "").trim();
+  const playerCode = normalizedPlayerCode(target?.playerCode);
+  return tournamentId && playerCode ? `${tournamentId}:${playerCode}` : "";
+}
+
+function alertsDisabledStorageKey(target = getAlertsTarget()) {
+  const key = alertsTargetKey(target);
+  return key ? `golf:scoreAlertsDisabled:${key}` : "";
+}
+
+function isAlertsAutoSyncDisabled(target = getAlertsTarget()) {
+  const key = alertsDisabledStorageKey(target);
+  if (!key) return false;
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function setAlertsAutoSyncDisabled(target, disabled) {
+  const key = alertsDisabledStorageKey(target);
+  if (!key) return;
+  try {
+    if (disabled) {
+      localStorage.setItem(key, "1");
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch (_) {
+    // The alert still works for this session when storage is unavailable.
+  }
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -121,6 +184,39 @@ async function getVapidPublicKey() {
   return publicKey;
 }
 
+async function createSubscription(registration) {
+  const publicKey = await getVapidPublicKey();
+  return registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(publicKey)
+  });
+}
+
+async function registerSubscriptionForTarget(subscription, target = getAlertsTarget()) {
+  const targetKey = alertsTargetKey(target);
+  if (!subscription || !targetKey) return false;
+
+  const inFlight = state.targetSyncPromises.get(targetKey);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    await api(`/tournaments/${encodeURIComponent(target.tournamentId)}/push/subscribe`, {
+      method: "POST",
+      body: {
+        code: target.playerCode,
+        subscription: subscription.toJSON()
+      }
+    });
+    state.registeredTargetKeys.add(targetKey);
+    return true;
+  })().finally(() => {
+    state.targetSyncPromises.delete(targetKey);
+  });
+
+  state.targetSyncPromises.set(targetKey, promise);
+  return promise;
+}
+
 function shouldRenderPanel() {
   return isHomePage() || isPlayerFlowPage();
 }
@@ -168,8 +264,8 @@ function ensurePanel() {
 
   state.alertsButton.addEventListener("click", async () => {
     state.showBannerStatus = true;
-    const hasSubscription = await refreshSubscriptionState();
-    if (hasSubscription) {
+    const isRegisteredForTarget = await refreshSubscriptionState({ syncExisting: false });
+    if (isRegisteredForTarget) {
       await disableScoreAlerts();
     } else {
       await enableScoreAlerts();
@@ -179,20 +275,50 @@ function ensurePanel() {
   return panel;
 }
 
-async function refreshSubscriptionState() {
-  const subscription = await getSubscription().catch(() => null);
+async function refreshSubscriptionState({ syncExisting = true } = {}) {
+  const target = getAlertsTarget();
+  const targetKey = alertsTargetKey(target);
+  let subscription = await getSubscription().catch(() => null);
   const alertsTarget = hasAlertsTarget();
   const promptVisible = Boolean(state.installPromptEvent) && !isStandalone();
   const hasPermission = typeof Notification !== "undefined" ? Notification.permission : "default";
-  const hidePanel = Boolean(subscription) && alertsTarget;
+  let syncError = null;
+  let isRegisteredForTarget = Boolean(subscription && targetKey && state.registeredTargetKeys.has(targetKey));
+
+  const shouldSync =
+    syncExisting &&
+    isPlayerFlowPage() &&
+    alertsTarget &&
+    hasPermission === "granted" &&
+    !isAlertsAutoSyncDisabled(target);
+
+  if (shouldSync && !isRegisteredForTarget) {
+    try {
+      if (!subscription) {
+        const registration = await registerServiceWorker();
+        if (!registration?.pushManager) {
+          throw new Error("This browser does not support push subscriptions.");
+        }
+        subscription = await createSubscription(registration);
+      }
+      isRegisteredForTarget = await registerSubscriptionForTarget(subscription, target);
+    } catch (error) {
+      state.registeredTargetKeys.delete(targetKey);
+      syncError = error;
+    }
+  }
+
+  const hidePanel = isRegisteredForTarget;
 
   if (state.panelHint) {
-    if (subscription) {
+    if (isRegisteredForTarget) {
       state.panelHint.textContent = "Score alerts enabled on this device";
     } else if (!alertsTarget) {
       state.panelHint.textContent = isHomePage()
         ? "Open a player page to connect score alerts."
         : "Open the Enter Scores page with your player code to enable alerts.";
+    } else if (subscription) {
+      state.panelHint.textContent = "Connect score alerts to this player";
     } else if (promptVisible) {
       state.panelHint.textContent = "Install the app and turn on alerts to get push notifications.";
     } else {
@@ -203,13 +329,15 @@ async function refreshSubscriptionState() {
   setInstallButtonVisible(!isStandalone());
   setAlertsButtonVisible(alertsTarget || Boolean(subscription));
 
-  if (subscription) {
+  if (isRegisteredForTarget) {
     setAlertsButtonText("Disable score alerts");
     setStatus("Alerts are active for this device.");
   } else if (alertsTarget) {
     setAlertsButtonText("Enable score alerts");
     setStatus(
-      hasPermission === "denied"
+      syncError instanceof Error
+        ? syncError.message
+        : hasPermission === "denied"
         ? "Notifications are blocked in this browser. Re-enable them in browser settings, then try again."
         : "Tap to subscribe this device to new score updates."
     );
@@ -224,7 +352,7 @@ async function refreshSubscriptionState() {
 
   setPanelVisible(!hidePanel);
 
-  return Boolean(subscription);
+  return isRegisteredForTarget;
 }
 
 async function enableScoreAlerts() {
@@ -252,31 +380,21 @@ async function enableScoreAlerts() {
   }
 
   try {
+    const target = { tournamentId: tid, playerCode: code };
     const registration = await registerServiceWorker();
     if (!registration?.pushManager) {
       setStatus("This browser does not support push subscriptions.");
       return;
     }
 
-    const publicKey = await getVapidPublicKey();
     const existing = await registration.pushManager.getSubscription();
-    const subscription =
-      existing ||
-      (await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey)
-      }));
+    const subscription = existing || (await createSubscription(registration));
 
-    await api(`/tournaments/${encodeURIComponent(tid)}/push/subscribe`, {
-      method: "POST",
-      body: {
-        code,
-        subscription: subscription.toJSON()
-      }
-    });
+    await registerSubscriptionForTarget(subscription, target);
+    setAlertsAutoSyncDisabled(target, false);
 
     setStatus("Score alerts enabled for this device.");
-    await refreshSubscriptionState();
+    await refreshSubscriptionState({ syncExisting: false });
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Could not enable score alerts.");
   }
@@ -291,11 +409,14 @@ async function disableScoreAlerts() {
   }
 
   try {
+    const target = { tournamentId: tid, playerCode: code };
     const registration = await registerServiceWorker();
     const subscription = await registration?.pushManager?.getSubscription?.();
     if (!subscription) {
+      state.registeredTargetKeys.delete(alertsTargetKey(target));
+      setAlertsAutoSyncDisabled(target, true);
       setStatus("This device does not have an active score alert subscription.");
-      await refreshSubscriptionState();
+      await refreshSubscriptionState({ syncExisting: false });
       return;
     }
 
@@ -307,8 +428,10 @@ async function disableScoreAlerts() {
       }
     });
     await subscription.unsubscribe();
+    state.registeredTargetKeys.clear();
+    setAlertsAutoSyncDisabled(target, true);
     setStatus("Score alerts disabled for this device.");
-    await refreshSubscriptionState();
+    await refreshSubscriptionState({ syncExisting: false });
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Could not disable score alerts.");
   }
@@ -347,6 +470,15 @@ window.addEventListener("appinstalled", () => {
   state.installPromptEvent = null;
   setInstallButtonVisible(false);
   setStatus("App installed.");
+});
+
+window.addEventListener("golf-player-context-ready", (event) => {
+  const tournamentId = String(event?.detail?.tournamentId || event?.detail?.tid || "").trim();
+  const playerCode = normalizedPlayerCode(event?.detail?.playerCode || event?.detail?.code);
+  if (!tournamentId || !playerCode) return;
+
+  state.resolvedAlertsTarget = { tournamentId, playerCode };
+  void refreshSubscriptionState({ syncExisting: true });
 });
 
 if (document.readyState === "loading") {
