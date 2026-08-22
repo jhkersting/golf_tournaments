@@ -2449,7 +2449,7 @@ function matchPlayEntryScoreEvents(previousTournament, nextTournament) {
   const sidePlayerNames = (side) => (side?.playerIds || [])
     .map((playerId) => compactPlayerName(players[playerId]?.name || playerId))
     .filter(Boolean)
-    .join(" + ");
+    .join(" / ");
   const events = [];
 
   for (const nextRound of nextRounds) {
@@ -2477,14 +2477,15 @@ function matchPlayEntryScoreEvents(previousTournament, nextTournament) {
           ? nextMatch.teamB
           : null;
       const winnerNames = sidePlayerNames(winningSide);
-      const teamAName = matchPlayEntryTeamName(nextMatch.teamA?.teamId, teams);
-      const teamBName = matchPlayEntryTeamName(nextMatch.teamB?.teamId, teams);
+      const allPlayerNames = [sidePlayerNames(nextMatch.teamA), sidePlayerNames(nextMatch.teamB)]
+        .filter(Boolean)
+        .join(" / ");
       const holeLabel = changedHole == null ? "Match updated" : `Hole ${changedHole + 1}`;
       const isTie = holeWinnerId === "halved";
       const title = winnerNames
         ? `${winnerNames} Win ${holeLabel}`
         : isTie
-          ? `${teamAName} + ${teamBName} Tie ${holeLabel}`
+          ? `${allPlayerNames} Tie ${holeLabel}`
           : `${holeLabel} scores updated`;
       const lead = Math.abs(Number(nextMatch?.lead) || 0);
       const status = nextMatch?.leadTeamId && lead > 0
