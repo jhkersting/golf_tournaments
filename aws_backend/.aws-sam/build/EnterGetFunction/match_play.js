@@ -284,7 +284,11 @@ function resultText(result, holes) {
   if (result.status === "not_started") return "Not started";
   if (result.status === "live") return result.lead === 0 ? `AS thru ${result.thru}` : `${Math.abs(result.lead)} UP thru ${result.thru}`;
   if (result.result === "halved") return "Halved";
-  if (result.status === "closed") return `${Math.abs(result.lead)}&${result.holesRemaining}`;
+  if (result.status === "closed") {
+    return result.holesRemaining === 0
+      ? `${Math.abs(result.lead)}UP/F`
+      : `${Math.abs(result.lead)}&${result.holesRemaining}`;
+  }
   return result.lead === 0 ? "Halved" : `${Math.abs(result.lead)} UP`;
 }
 

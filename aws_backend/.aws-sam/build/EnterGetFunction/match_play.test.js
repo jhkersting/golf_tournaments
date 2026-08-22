@@ -251,6 +251,17 @@ test("awards a completed match point to the winning second side", () => {
   assert.equal(output.winnerTeamId, "B");
 });
 
+test("formats a final-hole win as UP/F instead of ampersand zero", () => {
+  const state = fixture({ format: "singles", holes: 9 });
+  state.scores.rounds[0].players = {
+    A1: { holes: [3, 3, 4, 4, 4, 4, 4, 4, 4] },
+    B1: { holes: [4, 4, 4, 4, 4, 4, 4, 4, 4] }
+  };
+  const match = materializeMatchPlay({ ...state, scores: state.scores }).rounds[0].matches[0];
+  assert.equal(match.holesRemaining, 0);
+  assert.equal(match.display, "2UP/F");
+});
+
 test("splits a completed tied match and publishes derived match-play standings", () => {
   const state = fixture({ format: "singles", holes: 9 });
   state.scores.rounds[0].players = {
