@@ -109,6 +109,20 @@ test("normalizes front and back nine selections and rejects an invalid nine-hole
   );
 });
 
+test("normalizes a round-specific live-model handicap multiplier", () => {
+  const base = {
+    holes: 9,
+    format: "singles",
+    matches: [{ teamA: { teamId: "A", playerIds: ["A1"] }, teamB: { teamId: "B", playerIds: ["B1"] } }]
+  };
+  assert.equal(normalizeMatchPlayRounds([{ ...base, modelHandicapMultiplier: 0.5 }])[0].modelHandicapMultiplier, 0.5);
+  assert.equal(normalizeMatchPlayRounds([base])[0].modelHandicapMultiplier, 1);
+  assert.throws(
+    () => normalizeMatchPlayRounds([{ ...base, modelHandicapMultiplier: 0 }]),
+    /modelHandicapMultiplier/
+  );
+});
+
 test("accepts four-player best ball sides and derives the best available player score", () => {
   const state = fixture({ format: "best_ball", holes: 9 });
   state.players.A3 = { playerId: "A3", name: "Ari", teamId: "A", handicap: 0 };

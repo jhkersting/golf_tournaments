@@ -200,7 +200,8 @@ function materializedFixture(format, { useHandicap = false, includeFutureRound =
 function matchPlayFixture(format, {
   useHandicap = false,
   handicaps = { A1: 2, A2: 4, B1: 18, B2: 20 },
-  completedTie = false
+  completedTie = false,
+  modelHandicapMultiplier = 1
 } = {}) {
   const sideSize = format === "singles" ? 1 : 2;
   const playerIdsA = ["A1", "A2"].slice(0, sideSize);
@@ -210,6 +211,7 @@ function matchPlayFixture(format, {
     holes: 18,
     format,
     useHandicap,
+    modelHandicapMultiplier,
     courseIndex: 0,
     matches: [{
       matchId: "r1m1",
@@ -303,6 +305,18 @@ registerTest("gross-only match play still uses player handicaps as model skill",
     Number(lowA.match_play?.rounds?.[0]?.matches?.[0]?.teamAWinProbability) >
       Number(lowB.match_play?.rounds?.[0]?.matches?.[0]?.teamAWinProbability)
   );
+});
+
+registerTest("match-play live odds apply the round-specific model handicap multiplier", () => {
+  const halvedByRound = computeLiveOdds(matchPlayFixture("singles", {
+    handicaps: { A1: 4, A2: 8, B1: 20, B2: 24 },
+    modelHandicapMultiplier: 0.5
+  }), { generatedAt: FIXED_NOW });
+  const alreadyHalved = computeLiveOdds(matchPlayFixture("singles", {
+    handicaps: { A1: 2, A2: 4, B1: 10, B2: 12 },
+    modelHandicapMultiplier: 1
+  }), { generatedAt: FIXED_NOW });
+  assert.deepEqual(halvedByRound.match_play, alreadyHalved.match_play);
 });
 
 registerTest("handicap best ball publishes a valid three-way forecast", () => {

@@ -1,6 +1,6 @@
 import { maxGrossByHoleForRound } from "./round_rules.js";
 
-const MODEL_VERSION = "live-odds-latency-v12";
+const MODEL_VERSION = "live-odds-latency-v13";
 const LATENCY_MODE = "latency_first";
 const HOLE_COUNT = 18;
 const PAR_SIGMA = { 3: 0.55, 4: 0.75, 5: 0.95 };
@@ -2280,14 +2280,23 @@ function buildMatchPlayRoundContexts(tournamentJson) {
     const course = courseForRoundIndex(tournamentJson, roundIndex);
     const courseDifficulty = buildCourseDifficultyModel(course);
     const holeBaselines = buildHoleBaselines(course, courseDifficulty);
+    const modelHandicapMultiplier = Number.isFinite(Number(configuredRound?.modelHandicapMultiplier))
+      ? Math.max(0.01, Math.min(2, Number(configuredRound.modelHandicapMultiplier)))
+      : 1;
     const playerSkillShifts = new Map();
     for (const [playerId, player] of playerById.entries()) {
-      playerSkillShifts.set(playerId, skillShiftByPar(course, holeBaselines, courseDifficulty, Number(player?.handicap || 0)));
+      playerSkillShifts.set(playerId, skillShiftByPar(
+        course,
+        holeBaselines,
+        courseDifficulty,
+        Number(player?.handicap || 0) * modelHandicapMultiplier
+      ));
     }
     const context = {
       roundIndex,
       format: String(configuredRound?.format || derivedRound?.format || "singles").trim().toLowerCase(),
       useHandicap: !!configuredRound?.useHandicap,
+      modelHandicapMultiplier,
       course,
       holeBaselines,
       playerById,
