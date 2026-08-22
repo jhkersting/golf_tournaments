@@ -2924,12 +2924,15 @@ async function renderMatchPlayEntry({
       undo.type = "button";
       undo.className = "secondary";
       undo.textContent = `Undo Hole ${holeNumber} scores`;
+      const hasSavedScores = inputGroups.some((group) => group.saved[holeIndex] != null);
       const saveStatus = document.createElement("span");
       saveStatus.className = "small";
       saveStatus.setAttribute("role", "status");
       saveStatus.setAttribute("aria-live", "polite");
       saveStatus.textContent = feedbackMessage;
-      actions.append(save, undo, saveStatus);
+      actions.append(save);
+      if (hasSavedScores) actions.append(undo);
+      actions.append(saveStatus);
       editor.appendChild(actions);
 
       const moveTo = (position) => {
