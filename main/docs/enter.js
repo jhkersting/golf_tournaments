@@ -2436,12 +2436,6 @@ function matchPlayEntryMatchDisplay(match, teams) {
   return `${matchPlayEntryTeamName(match.leadTeamId, teams)} ${result}`;
 }
 
-function matchPlayEntryPointsLabel(standings, teams) {
-  return (standings || []).slice(0, 2).map((standing) => (
-    `${matchPlayEntryTeamName(standing?.teamId, teams)} ${matchPlayEntryPoints(standing?.points)} pt${Number(standing?.points) === 1 ? "" : "s"}`
-  )).join(" · ");
-}
-
 function matchPlayEntryScoreEvents(previousTournament, nextTournament) {
   const previousRounds = Array.isArray(previousTournament?.matchPlay?.rounds)
     ? previousTournament.matchPlay.rounds
@@ -2450,6 +2444,12 @@ function matchPlayEntryScoreEvents(previousTournament, nextTournament) {
     ? nextTournament.matchPlay.rounds
     : [];
   const teams = Object.fromEntries((nextTournament?.teams || []).map((team) => [team.teamId, team]));
+  const players = Object.fromEntries((nextTournament?.players || []).map((player) => [player.playerId, player]));
+  const compactPlayerName = (name) => String(name || "").replace(/\b([A-Z])\.\s/g, "$1 ").trim();
+  const sidePlayerNames = (side) => (side?.playerIds || [])
+    .map((playerId) => compactPlayerName(players[playerId]?.name || playerId))
+    .filter(Boolean)
+    .join(" + ");
   const events = [];
 
   for (const nextRound of nextRounds) {
@@ -2469,16 +2469,36 @@ function matchPlayEntryScoreEvents(previousTournament, nextTournament) {
       const nextDisplay = String(nextMatch?.display || "");
       if (changedHole == null && previousDisplay === nextDisplay && previousMatch?.status === nextMatch?.status) continue;
 
+      const thru = Number(nextMatch?.thru || 0);
+      const holeWinnerId = changedHole == null ? null : nextMatch?.holeResults?.[changedHole];
+      const winningSide = holeWinnerId === nextMatch.teamA?.teamId
+        ? nextMatch.teamA
+        : holeWinnerId === nextMatch.teamB?.teamId
+          ? nextMatch.teamB
+          : null;
+      const winnerNames = sidePlayerNames(winningSide);
       const teamAName = matchPlayEntryTeamName(nextMatch.teamA?.teamId, teams);
       const teamBName = matchPlayEntryTeamName(nextMatch.teamB?.teamId, teams);
-      const status = matchPlayEntryMatchResult(nextMatch);
-      const pointLabel = matchPlayEntryPointsLabel(nextTournament?.matchPlay?.standings, teams);
-      const thru = Number(nextMatch?.thru || 0);
+      const holeLabel = changedHole == null ? "Match updated" : `Hole ${changedHole + 1}`;
+      const isTie = holeWinnerId === "halved";
+      const title = winnerNames
+        ? `${winnerNames} Win ${holeLabel}`
+        : isTie
+          ? `${teamAName} + ${teamBName} Tie ${holeLabel}`
+          : `${holeLabel} scores updated`;
+      const lead = Math.abs(Number(nextMatch?.lead) || 0);
+      const status = nextMatch?.leadTeamId && lead > 0
+        ? `${lead} up${thru > 0 ? ` thru ${thru}` : ""}`
+        : thru > 0
+          ? `All square thru ${thru}`
+          : matchPlayEntryMatchResult(nextMatch);
       events.push({
         kind: "match",
-        title: nextRound?.name || `Round ${roundIndex + 1}`,
-        body: `${teamAName} ${status} ${teamBName}${thru > 0 ? ` · Thru ${thru}` : ""}${pointLabel ? ` · ${pointLabel}` : ""}`,
-        accent: matchPlayEntryTeamColor(nextMatch.winnerTeamId || nextMatch.leadTeamId || nextMatch.teamA?.teamId, teams)
+        title,
+        body: status,
+        accent: isTie
+          ? "var(--muted)"
+          : matchPlayEntryTeamColor(holeWinnerId || nextMatch.winnerTeamId || nextMatch.leadTeamId || nextMatch.teamA?.teamId, teams)
       });
     }
   }
