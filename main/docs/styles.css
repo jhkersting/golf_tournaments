@@ -779,6 +779,12 @@ button.draft-player small {
   font-size: 11px;
   overflow: visible;
 }
+.match-play-timeline svg text {
+  fill: var(--muted);
+}
+.match-play-event-timeline .match-play-timeline svg text {
+  font-size: 12px;
+}
 .match-play-timeline-grid,
 .match-play-timeline-zero {
   vector-effect: non-scaling-stroke;
@@ -800,10 +806,6 @@ button.draft-player small {
   stroke-width: 3;
   stroke-linejoin: miter;
   vector-effect: non-scaling-stroke;
-}
-.match-play-timeline-axis-title {
-  fill: var(--muted);
-  font-size: 10px;
 }
 .match-play-match-card.is-leading-a {
   border-left: 5px solid var(--team-a-accent, var(--border));

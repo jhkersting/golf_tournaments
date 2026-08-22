@@ -4622,7 +4622,7 @@ function matchPlayStepPath(points, xFor, yFor) {
   return path;
 }
 
-function buildMatchPlayTimeline({ title, points, color, valueLabel, axisTitle = "Round completed" }) {
+function buildMatchPlayTimeline({ title, points, color, valueLabel, ticks = [] }) {
   const width = 640;
   const height = 210;
   const plot = { left: 42, right: 14, top: 18, bottom: 34 };
@@ -4642,10 +4642,10 @@ function buildMatchPlayTimeline({ title, points, color, valueLabel, axisTitle = 
   const areaPath = linePath
     ? `${linePath} V ${zeroY.toFixed(2)} H ${xFor(points[0]).toFixed(2)} Z`
     : "";
-  const ticks = [0, 0.5, 1].map((completed) => {
-    const x = plot.left + completed * plotWidth;
+  const tickMarkup = ticks.map((tick) => {
+    const x = plot.left + Math.max(0, Math.min(1, tick.completed)) * plotWidth;
     return `<line x1="${x}" y1="${plot.top}" x2="${x}" y2="${height - plot.bottom}" class="match-play-timeline-grid" />
-      <text x="${x}" y="${height - 10}" text-anchor="middle">${Math.round(completed * 100)}%</text>`;
+      <text x="${x}" y="${height - 10}" text-anchor="${tick.anchor || "middle"}">${escapeHtml(tick.label)}</text>`;
   }).join("");
   const end = points[points.length - 1];
   const accessiblePoints = points.slice(1).map((point) => `${Math.round(point.completed * 100)}%: ${valueLabel(point.value)}`).join(", ");
@@ -4655,11 +4655,10 @@ function buildMatchPlayTimeline({ title, points, color, valueLabel, axisTitle = 
   figure.innerHTML = `
     <figcaption><strong>${escapeHtml(title)}</strong><span>${end ? escapeHtml(valueLabel(end.value)) : "—"}</span></figcaption>
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${title}. ${accessiblePoints || "No holes completed"}`)}">
-      ${ticks}
+      ${tickMarkup}
       <line x1="${plot.left}" y1="${zeroY}" x2="${width - plot.right}" y2="${zeroY}" class="match-play-timeline-zero" />
       ${areaPath ? `<path d="${areaPath}" class="match-play-timeline-area" />` : ""}
       ${linePath ? `<path d="${linePath}" class="match-play-timeline-line" />` : ""}
-      <text x="${plot.left + (plotWidth / 2)}" y="${height - 1}" text-anchor="middle" class="match-play-timeline-axis-title">${escapeHtml(axisTitle)}</text>
     </svg>`;
   return figure;
 }
@@ -4749,7 +4748,12 @@ function buildMatchPlayScorecard(round, match, players, teams, odds = null) {
     title: "Match timeline",
     points: matchPoints,
     color: matchLead < 0 ? (teams[teamBId]?.color || colorForTeam(teamBId)) : (teams[teamAId]?.color || colorForTeam(teamAId)),
-    valueLabel: (value) => value === 0 ? "All square" : `${value > 0 ? teamALabel : teamBLabel} ${Math.abs(value)} up`
+    valueLabel: (value) => value === 0 ? "All square" : `${value > 0 ? teamALabel : teamBLabel} ${Math.abs(value)} up`,
+    ticks: holeIndices.map((holeIndex, position) => ({
+      completed: (position + 1) / holeIndices.length,
+      label: String(holeIndex + 1),
+      anchor: position === holeIndices.length - 1 ? "end" : "middle"
+    }))
   }));
 
   const container = document.createElement("div");
@@ -4897,6 +4901,16 @@ function renderMatchPlayScoreboard() {
   if (raceStandings.length === 2) {
     const [teamA, teamB] = raceStandings;
     const scheduledMatches = rounds.flatMap((round) => round.matches || []);
+    let matchesBeforeRound = 0;
+    const roundTicks = rounds.map((round, index) => {
+      const tick = {
+        completed: matchesBeforeRound / Math.max(1, scheduledMatches.length),
+        label: `Round ${index + 1}`,
+        anchor: index === 0 ? "start" : "middle"
+      };
+      matchesBeforeRound += (round.matches || []).length;
+      return tick;
+    });
     let eventLead = 0;
     const eventPoints = [{ completed: 0, value: 0 }];
     scheduledMatches.forEach((match, index) => {
@@ -4914,7 +4928,7 @@ function renderMatchPlayScoreboard() {
       title: "Team event timeline",
       points: eventPoints,
       color: eventLead < 0 ? colors[1] : colors[0],
-      axisTitle: "Event completed",
+      ticks: roundTicks,
       valueLabel: (value) => value === 0
         ? "Event tied"
         : `${value > 0 ? teamA.teamName : teamB.teamName} leads by ${formatMatchPlayPoints(Math.abs(value))}`
