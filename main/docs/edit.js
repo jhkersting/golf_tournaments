@@ -1435,6 +1435,7 @@ function renderMatchPlayRounds(rounds){
     card.className = "card";
     card.dataset.roundIndex = String(roundIndex);
     card.dataset.teeRef = teeRef;
+    card.dataset.modelHandicapMultiplier = String(round?.modelHandicapMultiplier ?? 1);
     card.style.margin = "12px 0 0";
     card.innerHTML = `
       <div class="actions" style="justify-content:space-between; align-items:center;">
@@ -1804,6 +1805,7 @@ function collectMatchPlayRounds(){
         holes,
         ...(holes === 9 ? { nineHoleSide } : {}),
         useHandicap,
+        modelHandicapMultiplier: Number(card.dataset.modelHandicapMultiplier || 1),
         courseRef,
         teeRef,
         matches
@@ -2241,8 +2243,15 @@ async function resolveCoursesAndRoundsForSave(roundsDraft, primaryCourse) {
       }
     }
 
+    const selectedCourse = courses[courseIndex] || courses[0] || {};
+    const modelHandicapMultiplier = /\banchored\s+national\b/i.test(String(selectedCourse?.name || ""))
+      ? 0.5
+      : Number.isFinite(Number(round?.modelHandicapMultiplier))
+        ? Number(round.modelHandicapMultiplier)
+        : 1;
     rounds.push({
       ...round,
+      modelHandicapMultiplier,
       courseIndex
     });
   }
