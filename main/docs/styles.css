@@ -24,6 +24,9 @@
   --bad: #c02f2f;
   --link-bg: rgba(15, 93, 216, 0.06);
   --field-bg: #ffffff;
+  --mobile-header-action-bg: #151a21;
+  --mobile-header-action-hover: #252d38;
+  --mobile-header-action-text: #ffffff;
 }
 
 /* Team draft */
@@ -1034,6 +1037,9 @@ button.draft-player small {
     --bad: #ff7a7a;
     --link-bg: rgba(255, 255, 255, 0.04);
     --field-bg: #13161a;
+    --mobile-header-action-bg: #eaeff4;
+    --mobile-header-action-hover: #ffffff;
+    --mobile-header-action-text: #111820;
   }
 }
 
@@ -1057,6 +1063,9 @@ button.draft-player small {
   --bad: #ff7a7a;
   --link-bg: rgba(255, 255, 255, 0.04);
   --field-bg: #13161a;
+  --mobile-header-action-bg: #eaeff4;
+  --mobile-header-action-hover: #ffffff;
+  --mobile-header-action-text: #111820;
 }
 
 * {
@@ -1174,15 +1183,15 @@ header {
 }
 
 .mobile-header-link-dark {
-  border-color: #151a21 !important;
-  background: #151a21 !important;
-  color: #ffffff !important;
+  border-color: var(--mobile-header-action-bg) !important;
+  background: var(--mobile-header-action-bg) !important;
+  color: var(--mobile-header-action-text) !important;
 }
 
 .mobile-header-link-dark:hover {
-  border-color: #252d38 !important;
-  background: #252d38 !important;
-  color: #ffffff !important;
+  border-color: var(--mobile-header-action-hover) !important;
+  background: var(--mobile-header-action-hover) !important;
+  color: var(--mobile-header-action-text) !important;
 }
 
 .menu-toggle {
@@ -1544,7 +1553,6 @@ header {
 }
 
 .card {
-  background: var(--surface);
   border-bottom: 1px solid var(--text);
   border-radius: 0px;
   padding: 18px;
