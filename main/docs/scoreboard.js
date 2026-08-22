@@ -4629,7 +4629,7 @@ function buildMatchPlayProbabilityTimeline({ title, points, teamAColor, teamBCol
     const teamB = Math.max(0, Number(point.teamB) || 0);
     const total = Math.max(1, teamA + tie + teamB);
     return { completed: point.completed, teamA: teamA / total * 100, tie: tie / total * 100, teamB: teamB / total * 100 };
-  });
+  }).sort((a, b) => Number(a.completed) - Number(b.completed));
   const areaBetween = (lowerFor, upperFor, className) => {
     const first = normalized[0];
     let path = `M ${xFor(first).toFixed(2)} ${yFor(upperFor(first)).toFixed(2)}`;
@@ -4641,9 +4641,18 @@ function buildMatchPlayProbabilityTimeline({ title, points, teamAColor, teamBCol
     path += ` L ${xFor(last).toFixed(2)} ${yFor(lowerFor(last)).toFixed(2)}`;
     for (let index = normalized.length - 2; index >= 0; index -= 1) {
       const point = normalized[index];
-      path += ` H ${xFor(point).toFixed(2)} V ${yFor(lowerFor(point)).toFixed(2)}`;
+      path += ` V ${yFor(lowerFor(point)).toFixed(2)} H ${xFor(point).toFixed(2)}`;
     }
     return `<path d="${path} Z" class="match-play-probability-area ${className}" />`;
+  };
+  const boundaryPath = (valueFor) => {
+    const first = normalized[0];
+    let path = `M ${xFor(first).toFixed(2)} ${yFor(valueFor(first)).toFixed(2)}`;
+    for (let index = 1; index < normalized.length; index += 1) {
+      const point = normalized[index];
+      path += ` H ${xFor(point).toFixed(2)} V ${yFor(valueFor(point)).toFixed(2)}`;
+    }
+    return path;
   };
   const tickMarkup = ticks.map((tick) => {
     const x = plot.left + Math.max(0, Math.min(1, tick.completed)) * plotWidth;
@@ -4661,6 +4670,8 @@ function buildMatchPlayProbabilityTimeline({ title, points, teamAColor, teamBCol
       ${areaBetween(() => 0, (point) => point.teamA, "is-team-a")}
       ${areaBetween((point) => point.teamA, (point) => point.teamA + point.tie, "is-tie")}
       ${areaBetween((point) => point.teamA + point.tie, () => 100, "is-team-b")}
+      <path d="${boundaryPath((point) => point.teamA)}" class="match-play-probability-boundary" />
+      <path d="${boundaryPath((point) => point.teamA + point.tie)}" class="match-play-probability-boundary" />
       ${tickMarkup}
     </svg>`;
   return figure;

@@ -803,8 +803,12 @@ button.draft-player small {
 }
 .match-play-probability-area {
   opacity: .78;
-  stroke: var(--surface);
-  stroke-width: 1.5;
+  stroke: none;
+}
+.match-play-probability-boundary {
+  fill: none;
+  stroke: color-mix(in srgb, var(--surface) 82%, transparent);
+  stroke-width: 2;
   stroke-linejoin: miter;
   vector-effect: non-scaling-stroke;
 }
