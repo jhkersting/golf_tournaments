@@ -129,7 +129,9 @@ function compactMatchPlay(matchPlay) {
       [
         compactProjectedScores(match?.teamAProjectedScores),
         compactProjectedScores(match?.teamBProjectedScores)
-      ]
+      ],
+      Math.max(0, Math.round(Number(match?.thru) || 0)),
+      Math.max(1, Math.round(Number(match?.holes) || 18))
     ])))
   ];
 }
@@ -153,7 +155,16 @@ function cloneHistoryShape(history, roundCount) {
         { ...(source?.[1] || {}) },
         { ...(source?.[2] || {}) }
       ];
-    })
+    }),
+    m: {
+      e: Array.isArray(base?.m?.e) ? base.m.e.map((point) => point.slice()) : [],
+      r: Array.from({ length: Math.max(roundCount, base?.m?.r?.length || 0) }, (_, roundIndex) => {
+        const source = base?.m?.r?.[roundIndex];
+        return Object.fromEntries(Object.entries(source && typeof source === "object" ? source : {}).map(
+          ([matchId, points]) => [matchId, Array.isArray(points) ? points.map((point) => point.slice()) : []]
+        ));
+      })
+    }
   };
 }
 
@@ -208,7 +219,12 @@ function trimHistory(history, maxSnapshots) {
       trimHistoryMaps(roundScopes?.[0], dropCount),
       trimHistoryMaps(roundScopes?.[1], dropCount),
       trimHistoryMaps(roundScopes?.[2], dropCount)
-    ]))
+    ])),
+    m: {
+      e: (history?.m?.e || []).filter((point) => Number(point?.[0]) >= dropCount)
+        .map((point) => [Number(point[0]) - dropCount, ...point.slice(1)]),
+      r: (history?.m?.r || []).map((matches) => trimHistoryMaps(matches, dropCount))
+    }
   };
   return next;
 }
@@ -217,6 +233,37 @@ function appendScopeHistory(targetScopes, compactScope, snapshotIndex) {
   appendRowSeries(targetScopes[0], compactScope?.[0], true, snapshotIndex);
   appendRowSeries(targetScopes[1], compactScope?.[1], false, snapshotIndex);
   appendRowSeries(targetScopes[2], compactScope?.[2], false, snapshotIndex);
+}
+
+function appendMatchPlayHistory(history, compactMatchPlay, snapshotIndex) {
+  if (!Array.isArray(compactMatchPlay?.[0]) || compactMatchPlay[0].length !== 2) return;
+  const eventOdds = Array.isArray(compactMatchPlay?.[1]) ? compactMatchPlay[1] : [0, 0, 0];
+  const rounds = Array.isArray(compactMatchPlay?.[2]) ? compactMatchPlay[2] : [];
+  const roundProgress = rounds.map((matches) => {
+    const rows = Array.isArray(matches) ? matches : [];
+    if (!rows.length) return 0;
+    return rows.reduce((sum, match) => sum + Math.min(1, Math.max(0, Number(match?.[7]) || 0) / Math.max(1, Number(match?.[8]) || 1)), 0) / rows.length;
+  });
+  const eventProgress = roundProgress.length
+    ? roundProgress.reduce((sum, value) => sum + value, 0) / roundProgress.length
+    : 0;
+  const eventPoint = [snapshotIndex, eventProgress, ...eventOdds.slice(0, 3)];
+  const priorEvent = history.m.e[history.m.e.length - 1];
+  if (!priorEvent || JSON.stringify(priorEvent.slice(1)) !== JSON.stringify(eventPoint.slice(1))) history.m.e.push(eventPoint);
+
+  rounds.forEach((matches, roundIndex) => {
+    if (!history.m.r[roundIndex]) history.m.r[roundIndex] = {};
+    for (const match of matches || []) {
+      const matchId = String(match?.[0] || "");
+      if (!matchId) continue;
+      const progress = Math.min(1, Math.max(0, Number(match?.[7]) || 0) / Math.max(1, Number(match?.[8]) || 1));
+      const point = [snapshotIndex, progress, Number(match?.[3]) || 0, Number(match?.[4]) || 0, Number(match?.[5]) || 0];
+      const prior = Array.isArray(history.m.r[roundIndex][matchId]) ? history.m.r[roundIndex][matchId] : [];
+      const last = prior[prior.length - 1];
+      if (!last || JSON.stringify(last.slice(1)) !== JSON.stringify(point.slice(1))) prior.push(point);
+      history.m.r[roundIndex][matchId] = prior;
+    }
+  });
 }
 
 export function compactLiveOddsPayload(liveOdds = {}) {
@@ -252,6 +299,7 @@ export function appendCompactLiveOddsHistory(previousHistory, previousCompactOdd
     if (!Array.isArray(history.r[roundIndex])) history.r[roundIndex] = [{}, {}, {}];
     appendScopeHistory(history.r[roundIndex], roundScopes[roundIndex] || [[], [], []], snapshotIndex);
   }
+  appendMatchPlayHistory(history, nextCompactOdds?.m, snapshotIndex);
 
   return trimHistory(history, maxSnapshots);
 }

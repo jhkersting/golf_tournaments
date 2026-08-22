@@ -403,6 +403,11 @@ registerTest("compact live odds preserves the match-play event and stable match 
   assert.equal(Number.isFinite(match.teamAProjectedScores[0].projectedScore), true);
   assert.equal(compact.m[2][0][0][6][0][0][0], match.teamAProjectedScores[0].holeIndex);
   assert.equal(Number.isInteger(compact.m[2][0][0][6][0][0][1]), true);
+  assert.equal(compact.m[2][0][0][7], 0);
+  assert.equal(compact.m[2][0][0][8], match.holes);
+  const history = appendCompactLiveOddsHistory(null, null, compact, { snapshotTimeMs: Date.parse(FIXED_NOW), version: 1 });
+  assert.deepEqual(history.m.e[0].slice(1), [0, ...compact.m[1]]);
+  assert.deepEqual(history.m.r[0].r1m1[0].slice(1), [0, ...compact.m[2][0][0].slice(3, 6)]);
 });
 
 registerTest("materializePublicFromState preserves zero and negative net hole scores", () => {
