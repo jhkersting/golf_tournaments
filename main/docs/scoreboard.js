@@ -4986,16 +4986,22 @@ function renderMatchPlayScoreboard() {
       card.title = "View match scorecard";
       const teamAColor = teams[match.teamA?.teamId]?.color || colorForTeam(match.teamA?.teamId);
       const teamBColor = teams[match.teamB?.teamId]?.color || colorForTeam(match.teamB?.teamId);
-      card.style.setProperty("--team-a-accent", teamAColor);
-      card.style.setProperty("--team-b-accent", teamBColor);
-      if (match.leadTeamId === match.teamA?.teamId) card.classList.add("is-leading-a");
-      if (match.leadTeamId === match.teamB?.teamId) card.classList.add("is-leading-b");
+      const leftTeamId = String(raceStandings[0]?.teamId || match.teamA?.teamId || "");
+      const leftIsTeamA = String(match.teamA?.teamId || "") === leftTeamId;
+      const leftSide = leftIsTeamA ? match.teamA : match.teamB;
+      const rightSide = leftIsTeamA ? match.teamB : match.teamA;
+      const leftColor = leftIsTeamA ? teamAColor : teamBColor;
+      const rightColor = leftIsTeamA ? teamBColor : teamAColor;
+      card.style.setProperty("--team-a-accent", leftColor);
+      card.style.setProperty("--team-b-accent", rightColor);
+      if (match.leadTeamId === leftSide?.teamId) card.classList.add("is-leading-a");
+      if (match.leadTeamId === rightSide?.teamId) card.classList.add("is-leading-b");
       const matchComplete = match.status === "final" || match.status === "closed";
       const completedWinnerId = match.winnerTeamId || (
         matchComplete && match.result && match.result !== "halved" ? match.result : null
       );
-      if (completedWinnerId === match.teamA?.teamId) card.classList.add("is-final-winner-a");
-      if (completedWinnerId === match.teamB?.teamId) card.classList.add("is-final-winner-b");
+      if (completedWinnerId === leftSide?.teamId) card.classList.add("is-final-winner-a");
+      if (completedWinnerId === rightSide?.teamId) card.classList.add("is-final-winner-b");
       const side = (sideData, sideKey) => {
         const node = document.createElement("div");
         node.className = `match-play-side match-play-side-${sideKey}`;
@@ -5033,7 +5039,7 @@ function renderMatchPlayScoreboard() {
           : "";
       detail.hidden = !detail.textContent;
       center.append(state, detail);
-      card.append(side(match.teamA, "a"), center, side(match.teamB, "b"));
+      card.append(side(leftSide, "a"), center, side(rightSide, "b"));
       const odds = matchPlayMatchOdds(round.roundIndex, match.matchId);
       if (odds) {
         const probability = document.createElement("div");
@@ -5042,18 +5048,20 @@ function renderMatchPlayScoreboard() {
           const numeric = Number(value);
           return Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
         };
-        probability.style.setProperty("--team-a-probability", `${probabilityValue(odds.teamAWinProbability)}%`);
+        const leftWinProbability = leftIsTeamA ? odds.teamAWinProbability : odds.teamBWinProbability;
+        const rightWinProbability = leftIsTeamA ? odds.teamBWinProbability : odds.teamAWinProbability;
+        probability.style.setProperty("--team-a-probability", `${probabilityValue(leftWinProbability)}%`);
         probability.style.setProperty("--tie-probability", `${probabilityValue(odds.halveProbability)}%`);
-        probability.style.setProperty("--team-b-probability", `${probabilityValue(odds.teamBWinProbability)}%`);
+        probability.style.setProperty("--team-b-probability", `${probabilityValue(rightWinProbability)}%`);
         const addProbability = (label, value, className) => {
           const item = document.createElement("span");
           item.className = className;
           item.textContent = `${label} ${formatPercent(value, { exactExtremes: true })}`;
           probability.appendChild(item);
         };
-        addProbability("Win", odds.teamAWinProbability, "match-play-match-probability-a");
+        addProbability("Win", leftWinProbability, "match-play-match-probability-a");
         addProbability("Halve", odds.halveProbability, "match-play-match-probability-tie");
-        addProbability("Win", odds.teamBWinProbability, "match-play-match-probability-b");
+        addProbability("Win", rightWinProbability, "match-play-match-probability-b");
         card.appendChild(probability);
       }
       const scorecard = document.createElement("div");

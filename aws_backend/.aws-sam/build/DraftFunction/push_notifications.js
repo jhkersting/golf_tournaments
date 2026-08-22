@@ -7,6 +7,7 @@ import {
   updateStateWithRetry,
   normalizeChatMessageText,
 } from "./utils.js";
+import { isTeamMatchPlay } from "./match_play.js";
 
 function normalizePublicKey() {
   return String(process.env.VAPID_PUBLIC_KEY || "").trim();
@@ -535,6 +536,91 @@ export function scoreNotificationEntries(state, tournamentJson, details) {
   return notifications;
 }
 
+function compactMatchPlayPlayerName(name) {
+  return String(name || "")
+    .replace(/\b([A-Z])\.\s/g, "$1 ")
+    .trim();
+}
+
+function matchPlaySidePlayerNames(state, tournamentJson, side) {
+  return (side?.playerIds || [])
+    .map((playerId) => compactMatchPlayPlayerName(playerNameForId(state, tournamentJson, playerId)))
+    .filter(Boolean)
+    .join(" + ");
+}
+
+function matchPlayNotificationStatus(match) {
+  const thru = Number(match?.thru || 0);
+  const lead = Math.abs(Number(match?.lead) || 0);
+  if (match?.leadTeamId && lead > 0) {
+    return `${lead} up${thru > 0 ? ` thru ${thru}` : ""}`;
+  }
+  if (thru > 0) return `All square thru ${thru}`;
+  return String(match?.display || "Match updated").trim() || "Match updated";
+}
+
+function matchPlayScoreUpdateSummaries(state, tournamentJson, details) {
+  const roundIndex = Number(details?.roundIndex);
+  const matchId = String(details?.matchId || "").trim();
+  if (!Number.isInteger(roundIndex) || roundIndex < 0 || !matchId) return [];
+
+  const round = (tournamentJson?.matchPlay?.rounds || []).find(
+    (item) => Number(item?.roundIndex) === roundIndex
+  ) || tournamentJson?.matchPlay?.rounds?.[roundIndex];
+  const match = (round?.matches || []).find((item) => String(item?.matchId || "") === matchId);
+  if (!match) return [];
+
+  const changedHoles = Array.from(new Set(
+    (Array.isArray(details?.changedScores) ? details.changedScores : [])
+      .map((change) => Number(change?.holeIndex))
+      .filter((holeIndex) => Number.isInteger(holeIndex) && holeIndex >= 0 && holeIndex <= 17)
+  )).sort((left, right) => left - right);
+  if (!changedHoles.length) return [];
+
+  const tournamentId = String(state?.tournament?.tournamentId || "").trim();
+  const url = `./scoreboard.html?t=${encodeURIComponent(tournamentId)}`;
+  const mode = String(details?.mode || "bulk").trim().toLowerCase();
+  const teamAId = String(match?.teamA?.teamId || "").trim();
+  const teamBId = String(match?.teamB?.teamId || "").trim();
+  const teamANames = matchPlaySidePlayerNames(state, tournamentJson, match?.teamA);
+  const teamBNames = matchPlaySidePlayerNames(state, tournamentJson, match?.teamB);
+  const allPlayerNames = [teamANames, teamBNames].filter(Boolean).join(" / ");
+  const body = matchPlayNotificationStatus(match);
+
+  return changedHoles.flatMap((holeIndex) => {
+    const rawTeamAScore = match?.sideScores?.[teamAId]?.[holeIndex];
+    const rawTeamBScore = match?.sideScores?.[teamBId]?.[holeIndex];
+    const teamAScore = Number(rawTeamAScore);
+    const teamBScore = Number(rawTeamBScore);
+    const holeWinnerId = match?.holeResults?.[holeIndex];
+    if (
+      rawTeamAScore == null ||
+      rawTeamBScore == null ||
+      !Number.isFinite(teamAScore) ||
+      !Number.isFinite(teamBScore) ||
+      !holeWinnerId
+    ) return [];
+
+    const winningNames = holeWinnerId === teamAId
+      ? teamANames
+      : holeWinnerId === teamBId
+        ? teamBNames
+        : "";
+    const title = winningNames
+      ? `${winningNames} Win Hole ${holeIndex + 1}`
+      : holeWinnerId === "halved"
+        ? `${allPlayerNames} Tie Hole ${holeIndex + 1}`
+        : `Hole ${holeIndex + 1} scores updated`;
+
+    return [{
+      title,
+      body,
+      url,
+      tag: `golf-score-${tournamentId}-${roundIndex}-${mode}-${holeIndex}-${matchId.replace(/[^a-z0-9_-]+/gi, "-")}`
+    }];
+  });
+}
+
 export function scoreUpdateSummaries(state, details) {
   const roundIndex = Number(details?.roundIndex);
   const tournamentId = String(state?.tournament?.tournamentId || "").trim();
@@ -545,6 +631,9 @@ export function scoreUpdateSummaries(state, details) {
   if (!Number.isInteger(roundIndex) || roundIndex < 0) return [];
 
   const tournamentJson = materializePublicFromState(state);
+  if (isTeamMatchPlay(state)) {
+    return matchPlayScoreUpdateSummaries(state, tournamentJson, details);
+  }
   const notifications = scoreNotificationEntries(state, tournamentJson, details);
   if (!notifications.length) return [];
 

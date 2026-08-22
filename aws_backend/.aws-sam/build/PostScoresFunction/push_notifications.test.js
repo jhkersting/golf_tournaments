@@ -101,6 +101,85 @@ function buildState(format, {
   return state;
 }
 
+function buildMatchPlayState({
+  format = "scramble",
+  teamAHoles = [4, 4, 5, 4],
+  teamBHoles = [5, 5, 4, 5]
+} = {}) {
+  const playerFormat = format === "singles" || format === "best_ball";
+  const teamAPlayerIds = format === "singles" ? ["P1"] : ["P1", "P2"];
+  const teamBPlayerIds = format === "singles" ? ["P3"] : ["P3", "P4"];
+  const higherScores = (holes) => holes.map((score) => score == null ? null : Number(score) + 1);
+  const playerScores = playerFormat
+    ? {
+        P1: scoreEntry(teamAHoles),
+        P3: scoreEntry(teamBHoles),
+        ...(format === "best_ball" ? {
+          P2: scoreEntry(higherScores(teamAHoles)),
+          P4: scoreEntry(higherScores(teamBHoles))
+        } : {})
+      }
+    : {};
+  const matchScores = playerFormat
+    ? {}
+    : {
+        r1m1: {
+          sides: {
+            A: scoreEntry(teamAHoles),
+            B: scoreEntry(teamBHoles)
+          }
+        }
+      };
+
+  return {
+    tournament: {
+      tournamentId: "fixture-match-play",
+      name: "Match Play Fixture",
+      dates: "2026-08-21",
+      competitionType: "team_match_play",
+      matchPlay: { teamIds: ["A", "B"] }
+    },
+    rounds: [{
+      name: "Front 9 Scramble",
+      holes: 9,
+      nineHoleSide: "front",
+      format,
+      useHandicap: false,
+      courseIndex: 0,
+      matches: [{
+        matchId: "r1m1",
+        teamA: { teamId: "A", playerIds: teamAPlayerIds },
+        teamB: { teamId: "B", playerIds: teamBPlayerIds }
+      }]
+    }],
+    courses: [{
+      name: "Fixture Course",
+      pars: PARS.slice(),
+      strokeIndex: STROKE_INDEX.slice()
+    }],
+    teams: {
+      A: { teamId: "A", teamName: "Alpha" },
+      B: { teamId: "B", teamName: "Beta" }
+    },
+    players: {
+      P1: { playerId: "P1", name: "J. Kersting", teamId: "A", handicap: 0 },
+      P2: { playerId: "P2", name: "W. Parten", teamId: "A", handicap: 0 },
+      P3: { playerId: "P3", name: "F. Kersting", teamId: "B", handicap: 0 },
+      P4: { playerId: "P4", name: "J. Christensen", teamId: "B", handicap: 0 }
+    },
+    scores: {
+      rounds: [{
+        players: playerScores,
+        teams: {},
+        groups: {},
+        matches: matchScores
+      }]
+    },
+    updatedAt: 1,
+    version: 1
+  };
+}
+
 function summaryBodies(summaries) {
   return summaries.map((summary) => summary.body);
 }
@@ -311,6 +390,86 @@ registerTest("clear operations do not send notifications", () => {
   });
 
   assert.deepEqual(summaries, []);
+});
+
+registerTest("match play delivery uses the same two-line winner toast text", () => {
+  const state = buildMatchPlayState();
+  const summaries = scoreUpdateSummaries(state, {
+    roundIndex: 0,
+    matchId: "r1m1",
+    mode: "hole",
+    holeIndex: 1,
+    changedScores: [
+      changedScore("match_side", "A", 1),
+      changedScore("match_side", "B", 1)
+    ]
+  });
+
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].title, "J Kersting + W Parten Win Hole 2");
+  assert.equal(summaries[0].body, "2 up thru 4");
+  assert.equal(summaries[0].url, "./scoreboard.html?t=fixture-match-play");
+});
+
+for (const [format, expectedTitle] of [
+  ["alternate_shot", "J Kersting + W Parten Win Hole 2"],
+  ["best_ball", "J Kersting + W Parten Win Hole 2"],
+  ["singles", "J Kersting Win Hole 2"]
+]) {
+  registerTest(`match play ${format} delivery uses match result text`, () => {
+    const state = buildMatchPlayState({ format });
+    const summaries = scoreUpdateSummaries(state, {
+      roundIndex: 0,
+      matchId: "r1m1",
+      mode: "hole",
+      holeIndex: 1,
+      changedScores: [changedScore(format === "singles" || format === "best_ball" ? "player" : "match_side", "P1", 1)]
+    });
+
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].title, expectedTitle);
+    assert.equal(summaries[0].body, "2 up thru 4");
+  });
+}
+
+registerTest("match play delivery waits until both side scores determine the hole", () => {
+  const state = buildMatchPlayState({
+    teamAHoles: [4, 4],
+    teamBHoles: [5]
+  });
+  const summaries = scoreUpdateSummaries(state, {
+    roundIndex: 0,
+    matchId: "r1m1",
+    mode: "hole",
+    holeIndex: 1,
+    changedScores: [changedScore("match_side", "A", 1)]
+  });
+
+  assert.deepEqual(summaries, []);
+});
+
+registerTest("match play delivery formats a halved hole with both sides", () => {
+  const state = buildMatchPlayState({
+    teamAHoles: [4, 4],
+    teamBHoles: [5, 4]
+  });
+  const summaries = scoreUpdateSummaries(state, {
+    roundIndex: 0,
+    matchId: "r1m1",
+    mode: "hole",
+    holeIndex: 1,
+    changedScores: [
+      changedScore("match_side", "A", 1),
+      changedScore("match_side", "B", 1)
+    ]
+  });
+
+  assert.equal(summaries.length, 1);
+  assert.equal(
+    summaries[0].title,
+    "J Kersting + W Parten / F Kersting + J Christensen Tie Hole 2"
+  );
+  assert.equal(summaries[0].body, "1 up thru 2");
 });
 
 registerTest("chat notifications route players back into the enter page", () => {
