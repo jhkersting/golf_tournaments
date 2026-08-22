@@ -15,14 +15,18 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=mobile-header-20260821" />
   <title>Create Tournament</title>
 </head>
 <body>
 <header>
   <div class="nav">
     <div class="brand"><span class="dot"></span> Golf Tournament</div>
-    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
+    <div class="mobile-header-actions">
+      <a href="./enter.html" data-enter-link class="mobile-header-link mobile-header-link-dark">Enter</a>
+      <a href="./scoreboard.html" data-scoreboard-link class="mobile-header-link mobile-header-link-dark">Scores</a>
+      <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
+    </div>
     <div class="actions">
       <a href="./index.html">Home</a>
       <a href="./enter.html">Enter Scores</a>

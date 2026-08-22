@@ -15,22 +15,19 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=mobile-header-20260821" />
   <title>Enter Scores</title>
 
-  <style>
-    .mobile-header-link-secondary {
-      right: 105px;
-    }
-  </style>
 </head>
 <body class="enter-page">
 <header>
   <div class="nav">
     <div class="brand"><span class="dot"></span> <span data-brand-title>Golf Tournament</span></div>
-    <a href="./scoreboard.html" class="mobile-header-link mobile-header-link-primary" data-scoreboard-link>Scores</a>
-    <a href="./hole-map.html" class="mobile-header-link mobile-header-link-secondary" data-map-link>Map</a>
-    <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
+    <div class="mobile-header-actions">
+      <a href="./hole-map.html" class="mobile-header-link" data-map-link>Map</a>
+      <a href="./scoreboard.html" class="mobile-header-link mobile-header-link-dark" data-scoreboard-link>Scores</a>
+      <button type="button" class="menu-toggle" data-menu-toggle aria-label="Toggle menu" aria-expanded="false">☰</button>
+    </div>
     <div class="actions">
       <a href="./index.html">Home</a>
       <a href="./enter.html">Enter Scores</a>

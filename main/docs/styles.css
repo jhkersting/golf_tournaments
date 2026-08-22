@@ -1169,6 +1169,22 @@ header {
   display: none;
 }
 
+.mobile-header-actions {
+  display: contents;
+}
+
+.mobile-header-link-dark {
+  border-color: #151a21 !important;
+  background: #151a21 !important;
+  color: #ffffff !important;
+}
+
+.mobile-header-link-dark:hover {
+  border-color: #252d38 !important;
+  background: #252d38 !important;
+  color: #ffffff !important;
+}
+
 .menu-toggle {
   display: none;
   width: 25px;
@@ -3538,42 +3554,39 @@ th.dots {
 
   .menu-toggle {
     display: inline-flex;
-    position: absolute;
-    top: 12px;
-    right: 10px;
+    position: static;
   }
 
   .brand {
-    padding-right: 52px;
+    min-width: 0;
+    padding-right: 150px;
   }
 
-  .enter-page .brand,
-  .scoreboard-page .brand {
-    padding-right: 220px;
+  .brand [data-brand-title] {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .hole-map-page .brand {
-    padding-right: 148px;
+  .mobile-header-actions {
+    display: flex;
+    position: absolute;
+    top: 12px;
+    right: 10px;
+    align-items: center;
+    gap: 6px;
   }
 
   .mobile-header-link {
     display: inline-flex;
-    position: absolute;
-    top: 12px;
+    position: static;
     min-height: 25px;
     border-radius: 5px !important;
     padding: 1px 5px !important;
     font-size: 12px !important;
     align-items: center;
     justify-content: center;
-  }
-
-  .mobile-header-link-primary {
-    right: 40px;
-  }
-
-  .mobile-header-link-secondary {
-    right: 136px;
   }
 
   .main-action-link {
