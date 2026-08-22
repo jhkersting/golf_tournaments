@@ -4634,14 +4634,18 @@ function buildMatchPlayProbabilityTimeline({ title, points, teamAColor, teamBCol
     const first = normalized[0];
     let path = `M ${xFor(first).toFixed(2)} ${yFor(upperFor(first)).toFixed(2)}`;
     for (let index = 1; index < normalized.length; index += 1) {
+      const previous = normalized[index - 1];
       const point = normalized[index];
-      path += ` H ${xFor(point).toFixed(2)} V ${yFor(upperFor(point)).toFixed(2)}`;
+      const midpoint = (xFor(previous) + xFor(point)) / 2;
+      path += ` H ${midpoint.toFixed(2)} V ${yFor(upperFor(point)).toFixed(2)} H ${xFor(point).toFixed(2)}`;
     }
     const last = normalized[normalized.length - 1];
     path += ` L ${xFor(last).toFixed(2)} ${yFor(lowerFor(last)).toFixed(2)}`;
-    for (let index = normalized.length - 2; index >= 0; index -= 1) {
+    for (let index = normalized.length - 1; index > 0; index -= 1) {
       const point = normalized[index];
-      path += ` V ${yFor(lowerFor(point)).toFixed(2)} H ${xFor(point).toFixed(2)}`;
+      const previous = normalized[index - 1];
+      const midpoint = (xFor(previous) + xFor(point)) / 2;
+      path += ` H ${midpoint.toFixed(2)} V ${yFor(lowerFor(previous)).toFixed(2)} H ${xFor(previous).toFixed(2)}`;
     }
     return `<path d="${path} Z" class="match-play-probability-area ${className}" />`;
   };
@@ -4649,8 +4653,10 @@ function buildMatchPlayProbabilityTimeline({ title, points, teamAColor, teamBCol
     const first = normalized[0];
     let path = `M ${xFor(first).toFixed(2)} ${yFor(valueFor(first)).toFixed(2)}`;
     for (let index = 1; index < normalized.length; index += 1) {
+      const previous = normalized[index - 1];
       const point = normalized[index];
-      path += ` H ${xFor(point).toFixed(2)} V ${yFor(valueFor(point)).toFixed(2)}`;
+      const midpoint = (xFor(previous) + xFor(point)) / 2;
+      path += ` H ${midpoint.toFixed(2)} V ${yFor(valueFor(point)).toFixed(2)} H ${xFor(point).toFixed(2)}`;
     }
     return path;
   };
