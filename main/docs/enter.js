@@ -2449,7 +2449,7 @@ function matchPlayEntryScoreEvents(previousTournament, nextTournament) {
   const sidePlayerNames = (side) => (side?.playerIds || [])
     .map((playerId) => compactPlayerName(players[playerId]?.name || playerId))
     .filter(Boolean)
-    .join(" / ");
+    .join(" + ");
   const events = [];
 
   for (const nextRound of nextRounds) {
