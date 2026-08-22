@@ -379,10 +379,16 @@ registerTest("completed halved matches and tied events settle exactly", () => {
 registerTest("compact live odds preserves the match-play event and stable match ids", () => {
   const odds = computeLiveOdds(matchPlayFixture("scramble"), { generatedAt: FIXED_NOW });
   const compact = compactLiveOddsPayload(odds);
+  const match = odds.match_play?.rounds?.[0]?.matches?.[0];
   assert.deepEqual(compact?.m?.[0], ["A", "B"]);
   assert.equal(compact?.m?.[2]?.[0]?.[0]?.[0], "r1m1");
   assert.equal(compact.m[1].reduce((sum, value) => sum + Number(value || 0), 0), 100);
-  assert.equal(compact.m[2][0][0].slice(3).reduce((sum, value) => sum + Number(value || 0), 0), 100);
+  assert.equal(compact.m[2][0][0].slice(3, 6).reduce((sum, value) => sum + Number(value || 0), 0), 100);
+  assert.ok(match.teamAProjectedScores.length > 0);
+  assert.equal(match.teamBProjectedScores.length, match.teamAProjectedScores.length);
+  assert.equal(Number.isFinite(match.teamAProjectedScores[0].projectedScore), true);
+  assert.equal(compact.m[2][0][0][6][0][0][0], match.teamAProjectedScores[0].holeIndex);
+  assert.equal(Number.isInteger(compact.m[2][0][0][6][0][0][1]), true);
 });
 
 registerTest("materializePublicFromState preserves zero and negative net hole scores", () => {

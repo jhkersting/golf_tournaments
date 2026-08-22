@@ -1,6 +1,6 @@
 import { maxGrossByHoleForRound } from "./round_rules.js";
 
-const MODEL_VERSION = "live-odds-latency-v12";
+const MODEL_VERSION = "live-odds-latency-v14";
 const LATENCY_MODE = "latency_first";
 const HOLE_COUNT = 18;
 const PAR_SIGMA = { 3: 0.55, 4: 0.75, 5: 0.95 };
@@ -2280,14 +2280,23 @@ function buildMatchPlayRoundContexts(tournamentJson) {
     const course = courseForRoundIndex(tournamentJson, roundIndex);
     const courseDifficulty = buildCourseDifficultyModel(course);
     const holeBaselines = buildHoleBaselines(course, courseDifficulty);
+    const modelHandicapMultiplier = Number.isFinite(Number(configuredRound?.modelHandicapMultiplier))
+      ? Math.max(0.01, Math.min(2, Number(configuredRound.modelHandicapMultiplier)))
+      : 1;
     const playerSkillShifts = new Map();
     for (const [playerId, player] of playerById.entries()) {
-      playerSkillShifts.set(playerId, skillShiftByPar(course, holeBaselines, courseDifficulty, Number(player?.handicap || 0)));
+      playerSkillShifts.set(playerId, skillShiftByPar(
+        course,
+        holeBaselines,
+        courseDifficulty,
+        Number(player?.handicap || 0) * modelHandicapMultiplier
+      ));
     }
     const context = {
       roundIndex,
       format: String(configuredRound?.format || derivedRound?.format || "singles").trim().toLowerCase(),
       useHandicap: !!configuredRound?.useHandicap,
+      modelHandicapMultiplier,
       course,
       holeBaselines,
       playerById,
@@ -2470,13 +2479,22 @@ function computeMatchPlayOdds(tournamentJson, { generatedAt, modelVersion }) {
         roundIndex: context.roundIndex,
         matches: context.matches.map((match, matchIndex) => {
           const percentages = integerPercentTriplet(matchCounts[roundIndex][matchIndex], simulationCount);
+          const projectedScores = (sideKey) => context.activeHoleIndices
+            .filter((holeIndex) => ![match.teamA?.teamId, match.teamB?.teamId, "halved"].includes(match.actual?.holeResults?.[holeIndex]))
+            .map((holeIndex) => {
+              const projectedScore = Number(match.distributions?.[sideKey]?.[holeIndex]?.mean);
+              return Number.isFinite(projectedScore) ? { holeIndex, projectedScore: round2(projectedScore) } : null;
+            })
+            .filter(Boolean);
           return {
             matchId: match.matchId,
             teamAId: String(match.teamA?.teamId || ""),
             teamBId: String(match.teamB?.teamId || ""),
             teamAWinProbability: percentages[0],
             halveProbability: percentages[1],
-            teamBWinProbability: percentages[2]
+            teamBWinProbability: percentages[2],
+            teamAProjectedScores: projectedScores("teamA"),
+            teamBProjectedScores: projectedScores("teamB")
           };
         })
       }))

@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { applyDraftAction, normalizeDraftState, roleForCode } from "./draft.js";
+import {
+  DRAFT_VIEWER_TTL_MS,
+  applyDraftAction,
+  draftViewerList,
+  normalizeDraftPresence,
+  normalizeDraftState,
+  roleForCode
+} from "./draft.js";
 import { draftTeamAt, emptyLineups, snakeTeamAt, teamRosters } from "./draft_event.js";
 
 let nodeTest = null;
@@ -53,6 +60,34 @@ test("normalization removes invalid and duplicate picks", () => {
   assert.deepEqual(normalizeDraftState({ picks: ["d-davidson", "bad", "d-davidson", "j-royse"], version: 2 }), {
     picks: ["d-davidson", "j-royse"], lineups: emptyLineups(), odds: null, version: 2, updatedAt: 0
   });
+});
+
+test("viewer presence keeps valid recent sessions and expires stale viewers", () => {
+  const now = 100_000;
+  const raw = {
+    sessions: {
+      "session-valid-0001": { playerId: "f-kersting", lastSeen: now - 1_000 },
+      "session-second-002": { playerId: "j-kersting", lastSeen: now - 2_000 },
+      "session-stale-0003": { playerId: "h-coop", lastSeen: now - DRAFT_VIEWER_TTL_MS - 1 },
+      "bad": { playerId: "j-royse", lastSeen: now },
+      "session-unknown-04": { playerId: "not-a-player", lastSeen: now }
+    },
+    updatedAt: now - 1_000
+  };
+  const normalized = normalizeDraftPresence(raw, now);
+  assert.deepEqual(Object.keys(normalized.sessions), ["session-valid-0001", "session-second-002"]);
+  assert.deepEqual(draftViewerList(raw, now), [
+    { playerId: "j-kersting", name: "J. Kersting" },
+    { playerId: "f-kersting", name: "F. Kersting" }
+  ]);
+});
+
+test("viewer presence displays one name when the same player has multiple sessions", () => {
+  const now = 200_000;
+  assert.deepEqual(draftViewerList({ sessions: {
+    "session-frank-0001": { playerId: "f-kersting", lastSeen: now },
+    "session-frank-0002": { playerId: "f-kersting", lastSeen: now - 500 }
+  } }, now), [{ playerId: "f-kersting", name: "F. Kersting" }]);
 });
 
 test("lineup picks unlock only after the draft and follow one continuous matchup snake", () => {

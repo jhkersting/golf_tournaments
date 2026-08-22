@@ -200,7 +200,8 @@ function materializedFixture(format, { useHandicap = false, includeFutureRound =
 function matchPlayFixture(format, {
   useHandicap = false,
   handicaps = { A1: 2, A2: 4, B1: 18, B2: 20 },
-  completedTie = false
+  completedTie = false,
+  modelHandicapMultiplier = 1
 } = {}) {
   const sideSize = format === "singles" ? 1 : 2;
   const playerIdsA = ["A1", "A2"].slice(0, sideSize);
@@ -210,6 +211,7 @@ function matchPlayFixture(format, {
     holes: 18,
     format,
     useHandicap,
+    modelHandicapMultiplier,
     courseIndex: 0,
     matches: [{
       matchId: "r1m1",
@@ -305,6 +307,18 @@ registerTest("gross-only match play still uses player handicaps as model skill",
   );
 });
 
+registerTest("match-play live odds apply the round-specific model handicap multiplier", () => {
+  const halvedByRound = computeLiveOdds(matchPlayFixture("singles", {
+    handicaps: { A1: 4, A2: 8, B1: 20, B2: 24 },
+    modelHandicapMultiplier: 0.5
+  }), { generatedAt: FIXED_NOW });
+  const alreadyHalved = computeLiveOdds(matchPlayFixture("singles", {
+    handicaps: { A1: 2, A2: 4, B1: 10, B2: 12 },
+    modelHandicapMultiplier: 1
+  }), { generatedAt: FIXED_NOW });
+  assert.deepEqual(halvedByRound.match_play, alreadyHalved.match_play);
+});
+
 registerTest("handicap best ball publishes a valid three-way forecast", () => {
   const odds = computeLiveOdds(matchPlayFixture("best_ball", {
     useHandicap: true,
@@ -365,10 +379,16 @@ registerTest("completed halved matches and tied events settle exactly", () => {
 registerTest("compact live odds preserves the match-play event and stable match ids", () => {
   const odds = computeLiveOdds(matchPlayFixture("scramble"), { generatedAt: FIXED_NOW });
   const compact = compactLiveOddsPayload(odds);
+  const match = odds.match_play?.rounds?.[0]?.matches?.[0];
   assert.deepEqual(compact?.m?.[0], ["A", "B"]);
   assert.equal(compact?.m?.[2]?.[0]?.[0]?.[0], "r1m1");
   assert.equal(compact.m[1].reduce((sum, value) => sum + Number(value || 0), 0), 100);
-  assert.equal(compact.m[2][0][0].slice(3).reduce((sum, value) => sum + Number(value || 0), 0), 100);
+  assert.equal(compact.m[2][0][0].slice(3, 6).reduce((sum, value) => sum + Number(value || 0), 0), 100);
+  assert.ok(match.teamAProjectedScores.length > 0);
+  assert.equal(match.teamBProjectedScores.length, match.teamAProjectedScores.length);
+  assert.equal(Number.isFinite(match.teamAProjectedScores[0].projectedScore), true);
+  assert.equal(compact.m[2][0][0][6][0][0][0], match.teamAProjectedScores[0].holeIndex);
+  assert.equal(Number.isInteger(compact.m[2][0][0][6][0][0][1]), true);
 });
 
 registerTest("materializePublicFromState preserves zero and negative net hole scores", () => {

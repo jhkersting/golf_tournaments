@@ -1,6 +1,6 @@
 import { maxGrossByHoleForRound } from "./round_rules.js";
 
-const MODEL_VERSION = "live-odds-latency-v13";
+const MODEL_VERSION = "live-odds-latency-v14";
 const LATENCY_MODE = "latency_first";
 const HOLE_COUNT = 18;
 const PAR_SIGMA = { 3: 0.55, 4: 0.75, 5: 0.95 };
@@ -2479,13 +2479,22 @@ function computeMatchPlayOdds(tournamentJson, { generatedAt, modelVersion }) {
         roundIndex: context.roundIndex,
         matches: context.matches.map((match, matchIndex) => {
           const percentages = integerPercentTriplet(matchCounts[roundIndex][matchIndex], simulationCount);
+          const projectedScores = (sideKey) => context.activeHoleIndices
+            .filter((holeIndex) => ![match.teamA?.teamId, match.teamB?.teamId, "halved"].includes(match.actual?.holeResults?.[holeIndex]))
+            .map((holeIndex) => {
+              const projectedScore = Number(match.distributions?.[sideKey]?.[holeIndex]?.mean);
+              return Number.isFinite(projectedScore) ? { holeIndex, projectedScore: round2(projectedScore) } : null;
+            })
+            .filter(Boolean);
           return {
             matchId: match.matchId,
             teamAId: String(match.teamA?.teamId || ""),
             teamBId: String(match.teamB?.teamId || ""),
             teamAWinProbability: percentages[0],
             halveProbability: percentages[1],
-            teamBWinProbability: percentages[2]
+            teamBWinProbability: percentages[2],
+            teamAProjectedScores: projectedScores("teamA"),
+            teamBProjectedScores: projectedScores("teamB")
           };
         })
       }))

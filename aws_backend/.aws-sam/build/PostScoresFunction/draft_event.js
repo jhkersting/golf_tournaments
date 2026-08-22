@@ -19,6 +19,8 @@ export const DRAFT_PLAYERS = [
 ];
 
 export const DRAFT_PLAYER_IDS = new Set(DRAFT_PLAYERS.map((player) => player.playerId));
+export const DRAFT_ODDS_PROJECTION_VERSION = "draft-picks-75-25-anchored-half-v3";
+export const ANCHORED_MODEL_HANDICAP_MULTIPLIER = 1 / 2;
 export const LINEUP_STAGES = [
   { stageId: "sherrillPairs", label: "Sherrill pairs", groupSize: 2, selections: 6 },
   { stageId: "anchoredPairs", label: "Anchored scramble pairs", groupSize: 2, selections: 6 },
@@ -92,15 +94,40 @@ export function teamRosters(picksInput) {
   return rosters;
 }
 
+export function projectDraftPickHandicaps(playersInput) {
+  const ranked = (Array.isArray(playersInput) ? playersInput : [])
+    .map((player, index) => ({
+      playerId: String(player?.playerId || `player-${index}`),
+      handicap: Number(player?.handicap)
+    }))
+    .filter((player) => Number.isFinite(player.handicap))
+    .sort((a, b) => a.handicap - b.handicap || a.playerId.localeCompare(b.playerId));
+  const expected = Array(ranked.length).fill(0);
+
+  function visit(remaining, pickOffset, branchProbability) {
+    if (!remaining.length) return;
+    const choices = remaining.length === 1
+      ? [{ index: 0, probability: 1 }]
+      : [{ index: 0, probability: 0.75 }, { index: 1, probability: 0.25 }];
+    for (const choice of choices) {
+      const probability = branchProbability * choice.probability;
+      expected[pickOffset] += probability * remaining[choice.index].handicap;
+      visit(remaining.filter((_, index) => index !== choice.index), pickOffset + 1, probability);
+    }
+  }
+
+  visit(ranked, 0, 1);
+  return expected.map((handicap) => Math.round(handicap * 100) / 100);
+}
+
 function completedRosters(picksInput) {
   const rosters = teamRosters(picksInput);
   const picked = new Set((Array.isArray(picksInput) ? picksInput : []).filter((id) => DRAFT_PLAYER_IDS.has(id)));
-  const remaining = DRAFT_PLAYERS
-    .filter((player) => !picked.has(player.playerId))
-    .map((player) => ({ ...player, availableWeight: 1 }));
+  const remaining = DRAFT_PLAYERS.filter((player) => !picked.has(player.playerId));
+  const projectedHandicaps = projectDraftPickHandicaps(remaining);
   for (let pickIndex = picked.size; pickIndex < DRAFT_PLAYERS.length; pickIndex += 1) {
     const teamId = draftTeamAt(pickIndex);
-    const handicap = takeWeightedHandicap(remaining);
+    const handicap = projectedHandicaps[pickIndex - picked.size];
     rosters[teamId].push({
       playerId: `projected-draft-${pickIndex}`,
       name: "Projected player",
@@ -170,6 +197,30 @@ function roundMatches(roundIndex, groups, points = 1) {
   }));
 }
 
+function anchoredModelGroups(groups, playersById) {
+  const modelPlayers = new Map();
+  const adjusted = { jake: [], jack: [] };
+  for (const teamId of ["jake", "jack"]) {
+    adjusted[teamId] = groups[teamId].map((group) => group.map((playerId) => {
+      const player = playersById.get(playerId);
+      if (!player) return playerId;
+      const modelPlayerId = `anchored-model-${playerId}`;
+      if (!modelPlayers.has(modelPlayerId)) {
+        modelPlayers.set(modelPlayerId, {
+          ...player,
+          playerId: modelPlayerId,
+          handicap: Math.round(Number(player.handicap || 0) * ANCHORED_MODEL_HANDICAP_MULTIPLIER * 100) / 100,
+          displayPlayerId: player.playerId,
+          displayHandicap: Number(player.handicap || 0),
+          anchoredModelAdjustment: true
+        });
+      }
+      return modelPlayerId;
+    }));
+  }
+  return { groups: adjusted, players: Array.from(modelPlayers.values()) };
+}
+
 function selectCourses(catalogInput) {
   const courses = catalogInput?.courses || catalogInput || {};
   const values = Array.isArray(courses) ? courses : Object.values(courses);
@@ -192,11 +243,16 @@ export function buildDraftEventTournament(state, courseCatalog = {}) {
   for (const player of [...sherrill.players, ...anchoredPairs.players, ...anchoredSingles.players]) {
     playersById.set(player.playerId, player);
   }
+  const anchoredPairModel = anchoredModelGroups(anchoredPairs.groups, playersById);
+  const anchoredSinglesModel = anchoredModelGroups(anchoredSingles.groups, playersById);
+  for (const player of [...anchoredPairModel.players, ...anchoredSinglesModel.players]) {
+    playersById.set(player.playerId, player);
+  }
   const rounds = [
     { name: "Sherrill Front Scramble", holes: 9, nineHoleSide: "front", format: "scramble", useHandicap: false, courseIndex: 0, matches: roundMatches(0, sherrill.groups) },
     { name: "Sherrill Back Alternate Shot", holes: 9, nineHoleSide: "back", format: "alternate_shot", useHandicap: false, courseIndex: 0, matches: roundMatches(1, sherrill.groups) },
-    { name: "Anchored Front Scramble", holes: 9, nineHoleSide: "front", format: "scramble", useHandicap: false, courseIndex: 1, matches: roundMatches(2, anchoredPairs.groups) },
-    { name: "Anchored Back Singles", holes: 9, nineHoleSide: "back", format: "singles", useHandicap: false, courseIndex: 1, matches: roundMatches(3, anchoredSingles.groups) }
+    { name: "Anchored Front Scramble", holes: 9, nineHoleSide: "front", format: "scramble", useHandicap: false, courseIndex: 1, matches: roundMatches(2, anchoredPairModel.groups) },
+    { name: "Anchored Back Singles", holes: 9, nineHoleSide: "back", format: "singles", useHandicap: false, courseIndex: 1, matches: roundMatches(3, anchoredSinglesModel.groups) }
   ];
   return {
     version: Number(state?.version || 0),
@@ -228,12 +284,20 @@ export function computeDraftEventOdds(state, courseCatalog = {}) {
   const eventTeams = new Map((result?.match_play?.event?.teams || []).map((team) => [team.teamId, team.winProbability]));
   const lineups = normalizeLineups(state?.lineups);
   const stageForRound = ["sherrillPairs", "sherrillPairs", "anchoredPairs", "anchoredSingles"];
+  const publicOddsPlayer = (player) => ({
+    playerId: player?.displayPlayerId || player?.playerId,
+    name: player?.name,
+    handicap: Number(player?.displayHandicap ?? player?.handicap ?? 0),
+    projected: !!player?.projected
+  });
   return {
     version: Number(state?.version || 0),
     generatedAt: result.generatedAt,
     modelVersion: result.modelVersion,
     simCount: result.simCount,
-    projectionMethod: "handicap-weighted remaining players",
+    projectionVersion: DRAFT_ODDS_PROJECTION_VERSION,
+    projectionMethod: "team draft next-best handicap 75%, second-best 25%; handicap-weighted remaining match slots; Anchored model handicaps halved",
+    courseAdjustments: { anchoredNationalHandicapMultiplier: ANCHORED_MODEL_HANDICAP_MULTIPLIER },
     event: {
       jakeWinProbability: Number(eventTeams.get("jake") || 0),
       tieProbability: Number(result?.match_play?.event?.tieProbability || 0),
@@ -250,12 +314,12 @@ export function computeDraftEventOdds(state, courseCatalog = {}) {
           .find((entry) => entry.matchId === match.matchId)?.teamA.playerIds
           .map((playerId) => playersById.get(playerId))
           .filter(Boolean)
-          .map(({ playerId, name, handicap, projected }) => ({ playerId, name, handicap, projected: !!projected })) || [],
+          .map(publicOddsPlayer) || [],
         jackPlayers: tournament.tournament.rounds[roundIndex].matches
           .find((entry) => entry.matchId === match.matchId)?.teamB.playerIds
           .map((playerId) => playersById.get(playerId))
           .filter(Boolean)
-          .map(({ playerId, name, handicap, projected }) => ({ playerId, name, handicap, projected: !!projected })) || [],
+          .map(publicOddsPlayer) || [],
         provisional: ["teamA", "teamB"].some((side) => (
           tournament.tournament.rounds[roundIndex].matches
             .find((entry) => entry.matchId === match.matchId)?.[side].playerIds

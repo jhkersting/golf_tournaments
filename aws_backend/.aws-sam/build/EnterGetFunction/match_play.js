@@ -21,6 +21,15 @@ function positiveNumber(value, fallback) {
   return number > 0 ? Number(number.toFixed(3)) : fallback;
 }
 
+function modelHandicapMultiplier(value, roundIndex) {
+  if (value === null || value === undefined || value === "") return 1;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0 || number > 2) {
+    fail(`rounds[${roundIndex}].modelHandicapMultiplier must be greater than 0 and no more than 2.`);
+  }
+  return Number(number.toFixed(3));
+}
+
 function normalizeFormat(value) {
   const raw = text(value).toLowerCase().replace(/[\s-]+/g, "_");
   if (raw === "bestball" || raw === "best_ball") return "best_ball";
@@ -149,6 +158,7 @@ export function normalizeMatchPlayRounds(roundsIn, existingRounds = [], defaultP
       nineHoleSide: normalizeNineHoleSide(round.nineHoleSide, holes, roundIndex),
       format,
       useHandicap: !!round.useHandicap,
+      modelHandicapMultiplier: modelHandicapMultiplier(round.modelHandicapMultiplier, roundIndex),
       courseIndex: Number.isInteger(Number(round.courseIndex)) && Number(round.courseIndex) >= 0
         ? Number(round.courseIndex)
         : 0,
@@ -347,6 +357,7 @@ export function materializeMatchPlay({ tournament, rounds, teams, players, score
       nineHoleSide: round.nineHoleSide,
       format: round.format,
       useHandicap: round.useHandicap,
+      modelHandicapMultiplier: round.modelHandicapMultiplier,
       matches
     };
   });

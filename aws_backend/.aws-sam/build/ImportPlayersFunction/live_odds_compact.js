@@ -104,6 +104,14 @@ function compactMatchPlay(matchPlay) {
   if (!matchPlay || !Array.isArray(matchPlay?.teamIds) || matchPlay.teamIds.length !== 2) return null;
   const teamIds = matchPlay.teamIds.map((teamId) => String(teamId || ""));
   const eventTeams = new Map((matchPlay?.event?.teams || []).map((row) => [String(row?.teamId || ""), row]));
+  const compactProjectedScores = (scores) => (scores || [])
+    .map((item) => {
+      const holeIndex = Number(item?.holeIndex);
+      const projectedScore = roundTenthsInt(item?.projectedScore);
+      if (!Number.isInteger(holeIndex) || holeIndex < 0 || projectedScore == null) return null;
+      return [holeIndex, projectedScore];
+    })
+    .filter(Boolean);
   return [
     teamIds,
     [
@@ -117,7 +125,11 @@ function compactMatchPlay(matchPlay) {
       String(match?.teamBId || ""),
       roundPercentInt(match?.teamAWinProbability),
       roundPercentInt(match?.halveProbability),
-      roundPercentInt(match?.teamBWinProbability)
+      roundPercentInt(match?.teamBWinProbability),
+      [
+        compactProjectedScores(match?.teamAProjectedScores),
+        compactProjectedScores(match?.teamBProjectedScores)
+      ]
     ])))
   ];
 }

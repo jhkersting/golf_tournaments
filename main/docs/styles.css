@@ -708,6 +708,21 @@ button.draft-player small {
   font-weight: 800;
   text-decoration: none;
 }
+.match-play-scorecard-table td.has-projection {
+  position: relative;
+}
+.match-play-projected-score {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: .48rem;
+  font-weight: 500;
+  line-height: 1;
+  opacity: .72;
+  pointer-events: none;
+}
 .match-play-scorecard-team-a .is-hole-winner {
   background: color-mix(in srgb, var(--team-a-accent, var(--surface)) 14%, var(--surface) 86%);
 }

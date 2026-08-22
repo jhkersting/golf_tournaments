@@ -582,7 +582,15 @@ function expandCompactLiveOddsPayload(oddsJson, tournamentJson) {
             teamBId: String(match?.[2] || ""),
             teamAWinProbability: Number(match?.[3] || 0),
             halveProbability: Number(match?.[4] || 0),
-            teamBWinProbability: Number(match?.[5] || 0)
+            teamBWinProbability: Number(match?.[5] || 0),
+            teamAProjectedScores: (match?.[6]?.[0] || []).map((item) => ({
+              holeIndex: Number(item?.[0]),
+              projectedScore: Number(item?.[1]) / 10
+            })),
+            teamBProjectedScores: (match?.[6]?.[1] || []).map((item) => ({
+              holeIndex: Number(item?.[0]),
+              projectedScore: Number(item?.[1]) / 10
+            }))
           }))
         }))
       }
@@ -4603,7 +4611,7 @@ function matchPlayRoundHoleIndices(round) {
   return Array.from({ length: 9 }, (_, index) => start + index);
 }
 
-function buildMatchPlayScorecard(round, match, players, teams) {
+function buildMatchPlayScorecard(round, match, players, teams, odds = null) {
   const holeIndices = matchPlayRoundHoleIndices(round);
   const pars = getCoursePars(Number(round?.roundIndex));
   const teamAId = String(match?.teamA?.teamId || "");
@@ -4611,6 +4619,11 @@ function buildMatchPlayScorecard(round, match, players, teams) {
   const teamAScores = Array.isArray(match?.sideScores?.[teamAId]) ? match.sideScores[teamAId] : [];
   const teamBScores = Array.isArray(match?.sideScores?.[teamBId]) ? match.sideScores[teamBId] : [];
   const holeResults = Array.isArray(match?.holeResults) ? match.holeResults : [];
+  const allowProjections = !["final", "closed"].includes(String(match?.status || "").toLowerCase());
+  const projectedScores = {
+    [teamAId]: new Map((odds?.teamAProjectedScores || []).map((item) => [Number(item?.holeIndex), Number(item?.projectedScore)])),
+    [teamBId]: new Map((odds?.teamBProjectedScores || []).map((item) => [Number(item?.holeIndex), Number(item?.projectedScore)]))
+  };
   const sideLabel = (sideData) => {
     const names = (sideData?.playerIds || []).map((playerId) => players[playerId]?.name || playerId).filter(Boolean);
     return names.join(" / ") || teams[sideData?.teamId]?.teamName || sideData?.teamId || "Team";
@@ -4623,7 +4636,11 @@ function buildMatchPlayScorecard(round, match, players, teams) {
     const value = Number(scores[holeIndex]);
     const isPlayed = Number.isFinite(value) && value > 0;
     const winnerClass = winnerTeamId === teamId ? " is-hole-winner" : "";
-    return `<td class="mono${winnerClass}">${isPlayed ? value : "—"}</td>`;
+    const projection = projectedScores[teamId]?.get(holeIndex);
+    const projectionMarkup = !isPlayed && allowProjections && Number.isFinite(projection)
+      ? `<span class="match-play-projected-score" title="Projected score ${projection.toFixed(1)}">${projection.toFixed(1)}</span>`
+      : "";
+    return `<td class="mono${winnerClass}${projectionMarkup ? " has-projection" : ""}">${isPlayed ? value : "—"}${projectionMarkup}</td>`;
   };
 
   const wrap = document.createElement("div");
@@ -4905,7 +4922,7 @@ function renderMatchPlayScoreboard() {
       scorecard.hidden = openMatchPlayScorecardKey !== scorecardKey;
       scorecard.style.setProperty("--team-a-accent", teamAColor);
       scorecard.style.setProperty("--team-b-accent", teamBColor);
-      scorecard.appendChild(buildMatchPlayScorecard(round, match, players, teams));
+      scorecard.appendChild(buildMatchPlayScorecard(round, match, players, teams, odds));
       const toggleScorecard = () => {
         const willOpen = scorecard.hidden;
         for (const openScorecard of root.querySelectorAll(".match-play-scorecard:not([hidden])")) {
