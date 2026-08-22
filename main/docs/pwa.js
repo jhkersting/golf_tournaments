@@ -3,6 +3,9 @@ import { api, qs, getRememberedPlayerCode, getRememberedTournamentId } from "./a
 const state = {
   installPromptEvent: null,
   registrationPromise: null,
+  readyRegistration: null,
+  vapidPublicKey: "",
+  vapidPublicKeyPromise: null,
   resolvedAlertsTarget: null,
   registeredTargetKeys: new Set(),
   targetSyncPromises: new Map(),
@@ -135,6 +138,33 @@ function setAlertsButtonText(text) {
   state.alertsButton.textContent = text;
 }
 
+function setAlertsButtonMode(enabled) {
+  if (!state.alertsButton) return;
+  state.alertsButton.dataset.alertsAction = enabled ? "disable" : "enable";
+  setAlertsButtonText(enabled ? "Disable score alerts" : "Enable score alerts");
+}
+
+function setAlertsButtonReady(ready) {
+  if (!state.alertsButton) return;
+  state.alertsButton.disabled = !ready;
+}
+
+function showAlertsToast(title, body) {
+  window.dispatchEvent(new CustomEvent("golf-pwa-toast", {
+    detail: {
+      title: String(title || "Score alerts").trim() || "Score alerts",
+      body: String(body || "").trim()
+    }
+  }));
+}
+
+function subscriptionErrorMessage(error) {
+  const name = String(error?.name || "").trim();
+  const message = String(error?.message || "").trim();
+  const detail = [name, message].filter(Boolean).join(": ");
+  return detail || "The phone could not create a push subscription.";
+}
+
 function setPanelVisible(visible) {
   if (!state.panel) return;
   state.panel.hidden = !visible;
@@ -157,8 +187,14 @@ async function registerServiceWorker() {
   if (!state.registrationPromise) {
     state.registrationPromise = navigator.serviceWorker
       .register(new URL("./sw.js", import.meta.url), { scope: "./" })
+      .then(async (registration) => {
+        const readyRegistration = await navigator.serviceWorker.ready;
+        state.readyRegistration = readyRegistration || registration;
+        return state.readyRegistration;
+      })
       .catch((error) => {
         state.registrationPromise = null;
+        state.readyRegistration = null;
         throw error;
       });
   }
@@ -176,16 +212,32 @@ async function getSubscription() {
 }
 
 async function getVapidPublicKey() {
-  const response = await api("/push/vapid-public-key");
-  const publicKey = String(response?.publicKey || "").trim();
-  if (!publicKey) {
-    throw new Error("Push notifications are not configured for this deployment yet.");
+  if (state.vapidPublicKey) return state.vapidPublicKey;
+  if (!state.vapidPublicKeyPromise) {
+    state.vapidPublicKeyPromise = api("/push/vapid-public-key")
+      .then((response) => {
+        const publicKey = String(response?.publicKey || "").trim();
+        if (!publicKey) {
+          throw new Error("Push notifications are not configured for this deployment yet.");
+        }
+        state.vapidPublicKey = publicKey;
+        return publicKey;
+      })
+      .catch((error) => {
+        state.vapidPublicKeyPromise = null;
+        throw error;
+      });
   }
-  return publicKey;
+  return state.vapidPublicKeyPromise;
 }
 
-async function createSubscription(registration) {
-  const publicKey = await getVapidPublicKey();
+function createSubscription(registration, publicKey = state.vapidPublicKey) {
+  if (!registration?.pushManager) {
+    throw new Error("This browser does not support push subscriptions.");
+  }
+  if (!publicKey) {
+    throw new Error("Score alerts are still preparing. Tap Enable score alerts again.");
+  }
   return registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(publicKey)
@@ -233,7 +285,7 @@ function ensurePanel() {
   panel.setAttribute("aria-label", "App options");
   panel.innerHTML = `
     <button type="button" class="pwa-banner-button" data-pwa-install aria-describedby="pwa_banner_hint pwa_banner_status">Install app</button>
-    <button type="button" class="pwa-banner-button" data-pwa-alerts aria-describedby="pwa_banner_hint pwa_banner_status">Enable score alerts</button>
+    <button type="button" class="pwa-banner-button" data-pwa-alerts aria-describedby="pwa_banner_hint pwa_banner_status" disabled>Enable score alerts</button>
     <span class="pwa-banner-hint" id="pwa_banner_hint" data-pwa-state>Loading…</span>
     <span class="pwa-banner-status" id="pwa_banner_status" data-pwa-status role="status" aria-live="polite"></span>
   `;
@@ -262,13 +314,14 @@ function ensurePanel() {
     }
   });
 
-  state.alertsButton.addEventListener("click", async () => {
+  state.alertsButton.addEventListener("click", () => {
     state.showBannerStatus = true;
-    const isRegisteredForTarget = await refreshSubscriptionState({ syncExisting: false });
-    if (isRegisteredForTarget) {
-      await disableScoreAlerts();
+    if (state.alertsButton?.dataset.alertsAction === "disable") {
+      void disableScoreAlerts();
     } else {
-      await enableScoreAlerts();
+      // Keep this call directly connected to the tap. iOS requires the push
+      // subscription request to retain transient user activation.
+      void enableScoreAlerts();
     }
   });
 
@@ -294,14 +347,12 @@ async function refreshSubscriptionState({ syncExisting = true } = {}) {
 
   if (shouldSync && !isRegisteredForTarget) {
     try {
-      if (!subscription) {
-        const registration = await registerServiceWorker();
-        if (!registration?.pushManager) {
-          throw new Error("This browser does not support push subscriptions.");
-        }
-        subscription = await createSubscription(registration);
+      // Existing subscriptions can be paired with the current player in the
+      // background. Creating a new one must remain directly tied to a tap on
+      // browsers such as iOS Safari.
+      if (subscription) {
+        isRegisteredForTarget = await registerSubscriptionForTarget(subscription, target);
       }
-      isRegisteredForTarget = await registerSubscriptionForTarget(subscription, target);
     } catch (error) {
       state.registeredTargetKeys.delete(targetKey);
       syncError = error;
@@ -330,10 +381,10 @@ async function refreshSubscriptionState({ syncExisting = true } = {}) {
   setAlertsButtonVisible(alertsTarget || Boolean(subscription));
 
   if (isRegisteredForTarget) {
-    setAlertsButtonText("Disable score alerts");
+    setAlertsButtonMode(true);
     setStatus("Alerts are active for this device.");
   } else if (alertsTarget) {
-    setAlertsButtonText("Enable score alerts");
+    setAlertsButtonMode(false);
     setStatus(
       syncError instanceof Error
         ? syncError.message
@@ -342,7 +393,7 @@ async function refreshSubscriptionState({ syncExisting = true } = {}) {
         : "Tap to subscribe this device to new score updates."
     );
   } else {
-    setAlertsButtonText("Enable score alerts");
+    setAlertsButtonMode(false);
     setStatus(
       isHomePage()
         ? "Open a player page to connect a tournament and player code."
@@ -364,39 +415,55 @@ async function enableScoreAlerts() {
   }
 
   if (!("Notification" in window)) {
-    setStatus("This browser does not support notifications.");
+    const message = "This browser does not support notifications.";
+    setStatus(message);
+    showAlertsToast("Score alerts not enabled", message);
+    return;
+  }
+
+  const target = { tournamentId: tid, playerCode: code };
+  const registration = state.readyRegistration;
+  const publicKey = state.vapidPublicKey;
+  if (!registration?.pushManager || !publicKey) {
+    const message = "Score alerts are still preparing. Tap Enable score alerts again.";
+    setStatus(message);
+    showAlertsToast("Score alerts not enabled", message);
+    void Promise.allSettled([registerServiceWorker(), getVapidPublicKey()]).then(() => {
+      setAlertsButtonReady(Boolean(state.readyRegistration?.pushManager && state.vapidPublicKey));
+    });
     return;
   }
 
   if (Notification.permission === "default") {
     const permission = await Notification.requestPermission().catch(() => "denied");
     if (permission !== "granted") {
-      setStatus("Notification permission was not granted.");
+      const message = "Notification permission was not granted.";
+      setStatus(message);
+      showAlertsToast("Score alerts not enabled", message);
       return;
     }
   } else if (Notification.permission !== "granted") {
-    setStatus("Notifications are blocked in this browser. Re-enable them in browser settings first.");
+    const message = "Notifications are blocked in this browser. Re-enable them in browser settings first.";
+    setStatus(message);
+    showAlertsToast("Score alerts not enabled", message);
     return;
   }
 
   try {
-    const target = { tournamentId: tid, playerCode: code };
-    const registration = await registerServiceWorker();
-    if (!registration?.pushManager) {
-      setStatus("This browser does not support push subscriptions.");
-      return;
-    }
-
-    const existing = await registration.pushManager.getSubscription();
-    const subscription = existing || (await createSubscription(registration));
+    // Do not await a state check before this call. Starting subscribe here
+    // preserves the user activation required by iOS web push.
+    const subscription = await createSubscription(registration, publicKey);
 
     await registerSubscriptionForTarget(subscription, target);
     setAlertsAutoSyncDisabled(target, false);
 
     setStatus("Score alerts enabled for this device.");
+    showAlertsToast("Score alerts enabled", "This phone will receive team match play score updates.");
     await refreshSubscriptionState({ syncExisting: false });
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : "Could not enable score alerts.");
+    const message = subscriptionErrorMessage(error);
+    setStatus(message);
+    showAlertsToast("Score alerts not enabled", message);
   }
 }
 
@@ -444,17 +511,24 @@ async function initPushUi() {
     return;
   }
 
-  try {
-    await registerServiceWorker();
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : "Service worker registration failed.");
+  const [registrationResult, keyResult] = await Promise.allSettled([
+    registerServiceWorker(),
+    getVapidPublicKey()
+  ]);
+  if (registrationResult.status === "rejected") {
+    setStatus(registrationResult.reason instanceof Error ? registrationResult.reason.message : "Service worker registration failed.");
     setAlertsButtonVisible(false);
+  }
+  if (keyResult.status === "rejected") {
+    setStatus(keyResult.reason instanceof Error ? keyResult.reason.message : "Score alert configuration failed to load.");
   }
 
   if (!("Notification" in window)) {
     setAlertsButtonVisible(false);
     setStatus("This browser does not support notifications.");
   }
+
+  setAlertsButtonReady(Boolean(state.readyRegistration?.pushManager && state.vapidPublicKey));
 
   await refreshSubscriptionState();
 }

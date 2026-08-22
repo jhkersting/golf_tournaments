@@ -865,18 +865,25 @@ export async function notifyScoreSubscribers(tid, state, details = {}) {
 }
 
 export async function handler(event) {
+  let method = "";
+  let path = "";
+  let tid = "";
+  let route = "unknown";
   try {
-    const method = String(event?.requestContext?.http?.method || event?.httpMethod || "").toUpperCase();
-    const path = String(event?.rawPath || event?.path || event?.resource || "").toLowerCase();
-    const tid = String(event?.pathParameters?.tid || "").trim();
+    method = String(event?.requestContext?.http?.method || event?.httpMethod || "").toUpperCase();
+    path = String(event?.rawPath || event?.path || event?.resource || "").toLowerCase();
+    tid = String(event?.pathParameters?.tid || "").trim();
 
     if (method === "GET") {
+      route = "vapid-public-key";
       const publicKey = normalizePublicKey();
       if (!publicKey) {
+        console.log(JSON.stringify({ event: "push_request", method, route, tid, statusCode: 503 }));
         return json(503, {
           error: "push notifications are not configured"
         });
       }
+      console.log(JSON.stringify({ event: "push_request", method, route, tid, statusCode: 200 }));
       return json(200, {
         ok: true,
         publicKey
@@ -893,14 +900,21 @@ export async function handler(event) {
     }
 
     if (path.endsWith("/push/subscribe")) {
-      return await upsertSubscription(tid, body.code, body.subscription);
+      route = "subscribe";
+      const response = await upsertSubscription(tid, body.code, body.subscription);
+      console.log(JSON.stringify({ event: "push_request", method, route, tid, statusCode: response.statusCode }));
+      return response;
     }
 
     if (path.endsWith("/push/unsubscribe")) {
-      return await removeSubscription(tid, body.code, body.endpoint || body.subscription?.endpoint);
+      route = "unsubscribe";
+      const response = await removeSubscription(tid, body.code, body.endpoint || body.subscription?.endpoint);
+      console.log(JSON.stringify({ event: "push_request", method, route, tid, statusCode: response.statusCode }));
+      return response;
     }
 
     if (path.endsWith("/chat")) {
+      route = "chat";
       if (method !== "POST") {
         return json(405, { error: "Method not allowed" }, { Allow: "POST,OPTIONS" });
       }
@@ -909,6 +923,14 @@ export async function handler(event) {
 
     return json(404, { error: "unknown push route" });
   } catch (error) {
+    console.error(JSON.stringify({
+      event: "push_request_error",
+      method,
+      route,
+      tid,
+      statusCode: error?.statusCode || 500,
+      error: error?.message || "Server error"
+    }));
     return json(error?.statusCode || 500, { error: error?.message || "Server error" });
   }
 }

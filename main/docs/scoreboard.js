@@ -1364,7 +1364,19 @@ function setRecentUpdatedRowsFromEvents(events) {
 function renderScoreNotifierEvent(event) {
   if (!scoreNotifier || !event) return;
   scoreNotifier.innerHTML = "";
-  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+  scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat");
+
+  if (event.kind === "pwa") {
+    scoreNotifier.classList.add("score-chat");
+    const kicker = document.createElement("div");
+    kicker.className = "score-notifier-kicker";
+    kicker.textContent = String(event.title || "Score alerts").trim() || "Score alerts";
+    const line = document.createElement("div");
+    line.className = "score-notifier-line score-notifier-message";
+    line.textContent = String(event.body || "").trim();
+    scoreNotifier.append(kicker, line);
+    return;
+  }
 
   const diffToPar = Number(event.diffToPar);
   let toneClass = "score-even";
@@ -1417,7 +1429,7 @@ function pumpScoreNotifierQueue() {
         return;
       }
       scoreNotifier.innerHTML = "";
-      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark");
+      scoreNotifier.classList.remove("score-under", "score-over", "score-even", "score-light", "score-dark", "score-chat");
     }, SCORE_NOTIFIER_GAP_MS);
   }, SCORE_NOTIFIER_SHOW_MS);
 }
@@ -1427,6 +1439,14 @@ function showScoreNotifier(events) {
   scoreNotifierQueue.push(...events);
   pumpScoreNotifierQueue();
 }
+
+window.addEventListener("golf-pwa-toast", (event) => {
+  showScoreNotifier([{
+    kind: "pwa",
+    title: event?.detail?.title,
+    body: event?.detail?.body
+  }]);
+});
 
 function holesPlayedForRow(row) {
   const thru = Number(row?.thru);

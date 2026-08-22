@@ -1861,6 +1861,10 @@ window.addEventListener("golf-chat-toast", (event) => {
   showChatToast(event?.detail || {});
 });
 
+window.addEventListener("golf-pwa-toast", (event) => {
+  showChatToast(event?.detail || {});
+});
+
 function sortTickerEntries(entries) {
   entries.sort((a, b) => {
     if (a.hasData !== b.hasData) return a.hasData ? -1 : 1;
